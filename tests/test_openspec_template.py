@@ -29,9 +29,15 @@ class OpenSpecTemplateTests(unittest.TestCase):
         template = get_openspec_tasks_template("ja")
         self.assertIn("persona_defaults.phase_order", template)
         self.assertIn("persona_defaults", template)
+        self.assertIn("- personas: [{\"id\":\"implementer\"", template)
         self.assertIn("フェーズ担当", template)
         self.assertIn("テンプレート利用ルール", template)
         self.assertIn("固定行は削除しない", template)
+        self.assertIn("1行JSON", template)
+        self.assertIn("実行主体は `teammate-*`", template)
+        self.assertIn("必要なフェーズだけ選ぶ", template)
+        self.assertIn("未指定フェーズはグローバル既定を使う", template)
+        self.assertIn("- フェーズ担当: implement=implementer; review=code-reviewer", template)
         self.assertIn("## 1. 実装タスク", template)
         self.assertIn("## 2. 検証項目", template)
 
@@ -39,9 +45,14 @@ class OpenSpecTemplateTests(unittest.TestCase):
         template = get_openspec_tasks_template("en")
         self.assertIn("persona_defaults.phase_order", template)
         self.assertIn("persona_defaults", template)
+        self.assertIn("- personas: [{\"id\":\"implementer\"", template)
         self.assertIn("phase assignments", template)
         self.assertIn("Template Usage Rules", template)
-        self.assertIn("execution.enabled: true", template)
+        self.assertIn("one-line JSON", template)
+        self.assertIn("execution falls back to `teammate-*`", template)
+        self.assertIn("choose only needed pairs", template)
+        self.assertIn("unspecified phases keep global defaults", template)
+        self.assertIn("- phase assignments: implement=implementer; review=code-reviewer", template)
         self.assertIn("## 1. Implementation", template)
         self.assertIn("## 2. Verification Checklist", template)
 
@@ -50,12 +61,16 @@ class OpenSpecTemplateTests(unittest.TestCase):
         self.assertEqual([task["id"] for task in compiled["tasks"]], ["1.1", "1.2"])
         self.assertIn("persona_defaults", compiled)
         self.assertEqual(compiled["persona_defaults"]["phase_order"], ["implement", "review", "spec_check", "test"])
+        self.assertIn("personas", compiled)
+        self.assertGreaterEqual(len(compiled["personas"]), 4)
 
     def test_en_template_is_compile_compatible(self) -> None:
         compiled = self._compile_template("en")
         self.assertEqual([task["id"] for task in compiled["tasks"]], ["1.1", "1.2"])
         self.assertIn("persona_defaults", compiled)
         self.assertEqual(compiled["persona_defaults"]["phase_order"], ["implement", "review", "spec_check", "test"])
+        self.assertIn("personas", compiled)
+        self.assertGreaterEqual(len(compiled["personas"]), 4)
 
     def test_cli_print_openspec_template_ja(self) -> None:
         stdout = io.StringIO()

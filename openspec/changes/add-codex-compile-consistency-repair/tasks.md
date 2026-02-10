@@ -19,3 +19,4 @@
 - [ ] 不整合を返す Codex 応答で `task_config` が補正される
 - [ ] 不正 patch はコンパイル失敗になる
 - [ ] `--skip-codex-consistency` で既存挙動互換になる
+- [ ] OpenSpec 作成時に、`tasks.md` の各タスクへ `フェーズ担当` / `phase assignments` が記載されていることを確認する
