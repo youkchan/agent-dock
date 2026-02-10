@@ -154,7 +154,7 @@ export OPENAI_API_KEY="YOUR_KEY"
 export TEAMMATE_ADAPTER="subprocess"
 export TEAMMATE_COMMAND="bash ./codex_wrapper.sh"
 export CODEX_STREAM_LOGS="1"
-export CODEX_STREAM_VIEW="assistant"
+export CODEX_STREAM_VIEW="all_compact"
 python -m team_orchestrator.cli --config examples/sample_tasks.json --state-dir /tmp/codex_agent_openai_state
 ```
 
@@ -207,8 +207,12 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
   - `0` でログ非表示
 - `CODEX_STREAM_VIEW`:
   - `all`（既定）で Codex の実行ログをそのまま表示
+  - `all_compact` で `all` 相当を表示しつつ、`exec` セクションの長い1行を短縮表示
   - `assistant` で `user`/`thinking`/`codex` のみ表示し、`exec`・diff・コマンド出力を非表示
   - `thinking` で `thinking`/`codex` のみ表示（`user` も非表示）
+- `CODEX_STREAM_EXEC_MAX_CHARS`:
+  - `CODEX_STREAM_VIEW=all_compact` のときだけ使用
+  - `exec` セクションの1行あたり最大表示文字数（既定 `180`）
 - `CODEX_REASONING_EFFORT`:
   - `codex exec` の `model_reasoning_effort` を上書き（例: `minimal`, `low`, `medium`, `high`）
   - 未指定時は `~/.codex/config.toml` 側の設定値を使用
@@ -452,7 +456,7 @@ export TARGET_PROJECT_DIR="$(pwd)"
 export TEAMMATE_ADAPTER="subprocess"
 export TEAMMATE_COMMAND="bash ./codex_wrapper.sh"
 export CODEX_STREAM_LOGS="1"
-export CODEX_STREAM_VIEW="assistant"
+export CODEX_STREAM_VIEW="all_compact"
 ```
 
 ## 実運用時の注意
