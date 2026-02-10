@@ -52,6 +52,9 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - Templateアダプタは使用しない。
 - `ORCHESTRATOR_PROVIDER=mock` はテスト目的でのみ使用し、本番/実運用実行では使用しない。
 - 実運用では `ORCHESTRATOR_PROVIDER=openai`（または将来追加される実プロバイダ）を明示する。
+- 指示されていない変更を行わない。
+- 過剰な修正を行わない。
+- 回答と変更内容を冗長にしすぎない。
 
 ## 指示の優先順
 - ルートの `AGENTS.md` はこのリポジトリ全体に適用する。

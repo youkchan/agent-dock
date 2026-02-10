@@ -94,10 +94,17 @@ def compile_change_to_config(
     }
     _apply_persona_directives(payload, persona_directives)
     payload = _apply_overrides(payload, Path(overrides_root) / f"{change_id}.yaml")
-    _validate_compiled_payload(payload, change_id=change_id)
-    _validate_persona_payload(payload, change_id=change_id)
-    payload["tasks"] = sorted(payload["tasks"], key=lambda item: item["id"])
-    return payload
+    return validate_compiled_config(payload, change_id=change_id)
+
+
+def validate_compiled_config(payload: dict[str, Any], *, change_id: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise OpenSpecCompileError("compiled payload must be an object")
+    normalized_payload = copy.deepcopy(payload)
+    _validate_compiled_payload(normalized_payload, change_id=change_id)
+    _validate_persona_payload(normalized_payload, change_id=change_id)
+    normalized_payload["tasks"] = sorted(normalized_payload["tasks"], key=lambda item: item["id"])
+    return normalized_payload
 
 
 def _parse_tasks_markdown(
@@ -774,6 +781,14 @@ def _validate_persona_payload(payload: dict[str, Any], *, change_id: str) -> Non
                     if unknown_phases:
                         formatted = ", ".join(unknown_phases)
                         raise OpenSpecCompileError(f"unknown persona phase(s) in task {task_id}: {formatted}")
+                if not isinstance(phase_overrides, dict) or not phase_overrides:
+                    raise OpenSpecCompileError(
+                        f"task {task_id} must define phase assignments via persona_policy.phase_overrides"
+                    )
+            else:
+                raise OpenSpecCompileError(
+                    f"task {task_id} must define phase assignments via persona_policy.phase_overrides"
+                )
             if normalized_policy is None:
                 task.pop("persona_policy", None)
             else:

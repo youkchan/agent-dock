@@ -1,9 +1,9 @@
 ## 1. 実装タスク
-- [ ] 1.1 Codex 整合性レビュー用インターフェースを追加する
+- [x] 1.1 Codex 整合性レビュー用インターフェースを追加する
   - 成果物: OpenSpec change + compiled payload を受けるレビュークライアント
 - [ ] 1.2 Codex 応答スキーマ検証と patch 適用ロジックを実装する
   - 成果物: `tasks_append` / `tasks_update` / `teammates` の安全適用
-- [ ] 1.3 `compile-openspec` へレビュー段を統合する
+- [x] 1.3 `compile-openspec` へレビュー段を統合する
   - 成果物: コンパイル後レビュー -> 補正 -> 再バリデーションの実行順
 - [ ] 1.4 CLI オプションを追加する
   - 成果物: `--skip-codex-consistency`, `--codex-consistency-command`

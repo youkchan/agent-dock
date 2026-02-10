@@ -10,11 +10,19 @@ from typing import Any
 
 from .adapter import TemplateTeammateAdapter
 from .codex_adapter import SubprocessCodexAdapter
+from .codex_consistency import (
+    CodexConsistencyError,
+    CodexConsistencyReviewClient,
+    apply_consistency_patch,
+    build_consistency_review_request,
+    validate_consistency_review_response,
+)
 from .models import Task
 from .openspec_compiler import (
     OpenSpecCompileError,
     compile_change_to_config,
     default_compiled_output_path,
+    validate_compiled_config,
     write_compiled_config,
 )
 from .openspec_template import (
@@ -27,7 +35,6 @@ from .persona_catalog import PersonaDefinition, load_personas_from_payload
 from .persona_policy import normalize_persona_defaults, normalize_task_persona_policy
 from .provider import build_provider_from_env
 from .state_store import StateStore
-
 
 def _load_tasks(
     config_path: Path,
@@ -97,6 +104,80 @@ def _parse_command(raw: str, label: str) -> list[str]:
     if not parts:
         raise ValueError(f"{label} is empty")
     return parts
+
+
+def _resolve_codex_consistency_command(command_override: str | None = None) -> list[str]:
+    explicit = (command_override or "").strip()
+    if explicit:
+        return _parse_command(explicit, "codex consistency command")
+    raw = os.getenv("CODEX_CONSISTENCY_COMMAND", "").strip()
+    if raw:
+        return _parse_command(raw, "codex consistency command")
+    raise ValueError(
+        "codex consistency command is not configured. "
+        "Set --codex-consistency-command or CODEX_CONSISTENCY_COMMAND."
+    )
+
+
+def _record_codex_consistency_meta(
+    payload: dict[str, Any],
+    *,
+    checked: bool,
+    consistent_before_patch: bool,
+    patched: bool,
+    issues_count: int,
+) -> dict[str, Any]:
+    meta = payload.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+        payload["meta"] = meta
+    meta["codex_consistency"] = {
+        "checked": checked,
+        "consistent_before_patch": consistent_before_patch,
+        "patched": patched,
+        "issues_count": int(issues_count),
+    }
+    return payload
+
+
+def _apply_compile_consistency_review(
+    *,
+    change_id: str,
+    openspec_root: Path,
+    payload: dict[str, Any],
+    command_override: str | None = None,
+) -> dict[str, Any]:
+    try:
+        request = build_consistency_review_request(
+            change_id=change_id,
+            compiled_task_config=payload,
+            openspec_root=openspec_root,
+        )
+        client = CodexConsistencyReviewClient(
+            command=_resolve_codex_consistency_command(command_override)
+        )
+        raw_result = client.review(request)
+        result = validate_consistency_review_response(raw_result)
+        patch = result.get("patch")
+        if result["is_consistent"] or not isinstance(patch, dict):
+            return _record_codex_consistency_meta(
+                payload,
+                checked=True,
+                consistent_before_patch=bool(result["is_consistent"]),
+                patched=False,
+                issues_count=len(result["issues"]),
+            )
+        patched = apply_consistency_patch(payload, patch)
+        validated = validate_compiled_config(patched, change_id=change_id)
+        return _record_codex_consistency_meta(
+            validated,
+            checked=True,
+            consistent_before_patch=False,
+            patched=True,
+            issues_count=len(result["issues"]),
+        )
+    except (CodexConsistencyError, ValueError) as error:
+        raise OpenSpecCompileError(str(error)) from error
 
 
 def _default_teammate_command() -> str:
@@ -289,6 +370,16 @@ def _build_compile_parser() -> argparse.ArgumentParser:
         default="",
         help="Override teammates for compile (comma-separated)",
     )
+    parser.add_argument(
+        "--skip-codex-consistency",
+        action="store_true",
+        help="Skip codex consistency review and output base compiled config",
+    )
+    parser.add_argument(
+        "--codex-consistency-command",
+        default="",
+        help="Override codex consistency command (required unless CODEX_CONSISTENCY_COMMAND is set)",
+    )
     return parser
 
 
@@ -467,6 +558,21 @@ def _compile_openspec(args: argparse.Namespace) -> int:
         overrides_root=args.overrides_root,
         teammates=_parse_teammates_arg(args.teammates),
     )
+    if not args.skip_codex_consistency:
+        payload = _apply_compile_consistency_review(
+            change_id=args.change_id,
+            openspec_root=args.openspec_root,
+            payload=payload,
+            command_override=args.codex_consistency_command,
+        )
+    else:
+        payload = _record_codex_consistency_meta(
+            payload,
+            checked=False,
+            consistent_before_patch=True,
+            patched=False,
+            issues_count=0,
+        )
     output_path = args.output or default_compiled_output_path(
         change_id=args.change_id,
         task_config_root=args.task_config_root,
