@@ -1,0 +1,29 @@
+{
+  "teammates": ["teammate-a", "teammate-b"],
+  "tasks": [
+    {
+      "id": "T-001",
+      "title": "Define interface contracts",
+      "description": "Create shared contracts before coding.",
+      "target_paths": ["src/contracts/*"],
+      "depends_on": [],
+      "requires_plan": true
+    },
+    {
+      "id": "T-002",
+      "title": "Implement coordinator state flow",
+      "description": "Build pending/in_progress/completed transitions.",
+      "target_paths": ["src/orchestrator/*"],
+      "depends_on": ["T-001"],
+      "requires_plan": true
+    },
+    {
+      "id": "T-003",
+      "title": "Add telemetry output",
+      "description": "Emit run summary for operators.",
+      "target_paths": ["src/logging/*"],
+      "depends_on": ["T-002"],
+      "requires_plan": false
+    }
+  ]
+}

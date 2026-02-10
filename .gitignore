@@ -1,0 +1,45 @@
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local environment files (do not commit secrets)
+.env
+.env.*
+!.env.orchestrator
+!.env.example
+!.env.*.example
+
+# Runtime/state outputs
+.team_state/
+*.log
+
+# Generated task configs (keep overrides managed in git)
+task_configs/*.json
+task_configs/*.tmp
+task_configs/**/*.tmp

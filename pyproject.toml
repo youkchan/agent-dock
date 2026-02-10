@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-agent-teams-like"
+version = "0.1.0"
+description = "Generic coordination runtime inspired by agent teams"
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+openai = [
+  "openai>=1.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

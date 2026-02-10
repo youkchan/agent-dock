@@ -1,0 +1,30 @@
+teammates:
+  - teammate-a
+  - teammate-b
+
+tasks:
+  T-001:
+    target_paths:
+      - team_orchestrator/openspec_compiler.py
+      - docs/thin_orchestrator_spec.md
+    requires_plan: true
+  T-002:
+    target_paths:
+      - team_orchestrator/openspec_compiler.py
+      - tests/test_openspec_compiler.py
+  T-003:
+    target_paths:
+      - team_orchestrator/openspec_compiler.py
+      - task_configs/overrides/add-openspec-task-config-compiler.yaml
+  T-004:
+    target_paths:
+      - team_orchestrator/cli.py
+      - README.md
+  T-005:
+    target_paths:
+      - team_orchestrator/cli.py
+      - tests/test_openspec_compiler.py
+  T-006:
+    target_paths:
+      - tests/test_openspec_compiler.py
+      - README.md
