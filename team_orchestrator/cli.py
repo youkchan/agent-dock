@@ -94,6 +94,18 @@ def _parse_command(raw: str, label: str) -> list[str]:
     return parts
 
 
+def _default_teammate_command() -> str:
+    wrapper_path = Path(sys.argv[0]).resolve().parent / "codex_wrapper.sh"
+    if not wrapper_path.is_file():
+        raise ValueError(
+            "subprocess adapter requires command settings. "
+            "Set TEAMMATE_COMMAND or both TEAMMATE_PLAN_COMMAND and TEAMMATE_EXECUTE_COMMAND, "
+            "or pass --teammate-command / --plan-command / --execute-command. "
+            f"Default wrapper was not found: {wrapper_path}"
+        )
+    return f"bash {shlex.quote(str(wrapper_path))}"
+
+
 def _parse_teammates_arg(raw: str) -> list[str] | None:
     value = (raw or "").strip()
     if not value:
@@ -114,8 +126,14 @@ def _build_teammate_adapter(args: argparse.Namespace):
     if adapter_name == "template":
         return TemplateTeammateAdapter()
     shared = (args.teammate_command or "").strip()
-    plan_raw = (args.plan_command or "").strip() or shared
-    execute_raw = (args.execute_command or "").strip() or shared
+    plan_raw = (args.plan_command or "").strip()
+    execute_raw = (args.execute_command or "").strip()
+    if not shared and (not plan_raw or not execute_raw):
+        shared = _default_teammate_command()
+    if not plan_raw:
+        plan_raw = shared
+    if not execute_raw:
+        execute_raw = shared
     if not plan_raw or not execute_raw:
         raise ValueError(
             "subprocess adapter requires command settings. "
@@ -207,7 +225,7 @@ def _build_run_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--teammate-command",
         default=os.getenv("TEAMMATE_COMMAND", ""),
-        help="Shared command used for plan/execute (subprocess adapter)",
+        help="Shared command used for plan/execute (subprocess adapter). Default: bash <agent-dock-dir>/codex_wrapper.sh",
     )
     parser.add_argument(
         "--plan-command",

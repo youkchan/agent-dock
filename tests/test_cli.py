@@ -4,6 +4,7 @@ import argparse
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from team_orchestrator.adapter import TemplateTeammateAdapter
 from team_orchestrator.cli import (
@@ -54,8 +55,55 @@ class CliAdapterSelectionTests(unittest.TestCase):
             execute_command="",
             command_timeout=120,
         )
-        with self.assertRaises(ValueError):
-            _build_teammate_adapter(args)
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir(parents=True, exist_ok=True)
+            fake_exec = fake_bin / "agent-dock"
+            fake_exec.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            with mock.patch("sys.argv", [str(fake_exec)]):
+                with self.assertRaisesRegex(ValueError, r"Default wrapper was not found"):
+                    _build_teammate_adapter(args)
+
+    def test_build_subprocess_adapter_uses_wrapper_next_to_executable_by_default(self) -> None:
+        args = argparse.Namespace(
+            teammate_adapter="subprocess",
+            teammate_command="",
+            plan_command="",
+            execute_command="",
+            command_timeout=120,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir(parents=True, exist_ok=True)
+            fake_exec = fake_bin / "agent-dock"
+            fake_exec.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            wrapper = fake_bin / "codex_wrapper.sh"
+            wrapper.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            with mock.patch("sys.argv", [str(fake_exec)]):
+                adapter = _build_teammate_adapter(args)
+            self.assertIsInstance(adapter, SubprocessCodexAdapter)
+            wrapper_resolved = str(wrapper.resolve())
+            self.assertEqual(adapter.plan_command, ["bash", wrapper_resolved])
+            self.assertEqual(adapter.execute_command, ["bash", wrapper_resolved])
+
+    def test_build_subprocess_adapter_with_plan_and_execute_does_not_need_default_wrapper(self) -> None:
+        args = argparse.Namespace(
+            teammate_adapter="subprocess",
+            teammate_command="",
+            plan_command="echo plan",
+            execute_command="echo exec",
+            command_timeout=120,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir(parents=True, exist_ok=True)
+            fake_exec = fake_bin / "agent-dock"
+            fake_exec.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+            with mock.patch("sys.argv", [str(fake_exec)]):
+                adapter = _build_teammate_adapter(args)
+        self.assertIsInstance(adapter, SubprocessCodexAdapter)
+        self.assertEqual(adapter.plan_command, ["echo", "plan"])
+        self.assertEqual(adapter.execute_command, ["echo", "exec"])
 
 
 class CliPersonaCatalogTests(unittest.TestCase):
