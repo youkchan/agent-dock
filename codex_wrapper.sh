@@ -250,8 +250,9 @@ PY
 TMP_OUTPUT="$(mktemp)"
 TMP_DOTENV_SNAPSHOT="$(mktemp)"
 TMP_STREAM_LOG="$(mktemp)"
+TMP_PROMPT_FILE="$(mktemp)"
 TMP_PROMPT_LOG="${CODEX_PROMPT_LOG_PATH:-/tmp/codex_wrapper_last_prompt.txt}"
-trap 'rm -f "$TMP_OUTPUT" "$TMP_DOTENV_SNAPSHOT" "$TMP_STREAM_LOG"' EXIT
+trap 'rm -f "$TMP_OUTPUT" "$TMP_DOTENV_SNAPSHOT" "$TMP_STREAM_LOG" "$TMP_PROMPT_FILE"' EXIT
 
 snapshot_dotenv_files() {
   TARGET_PROJECT_DIR="$TARGET_PROJECT_DIR" SNAPSHOT_PATH="$TMP_DOTENV_SNAPSHOT" python3 - <<'PY'
@@ -322,6 +323,7 @@ CMD=(
   "RUST_BACKTRACE=$CODEX_RUST_BACKTRACE"
   "$CODEX_BIN" exec
   -C "$TARGET_PROJECT_DIR"
+  --output-last-message "$TMP_OUTPUT"
 )
 
 if [[ "$CODEX_SKIP_GIT_REPO_CHECK" == "1" ]]; then
@@ -346,13 +348,18 @@ else
   CMD+=(-s "$CODEX_SANDBOX")
 fi
 
+CMD+=("-")
+
 if [[ "${CODEX_WRAPPER_DEBUG:-0}" == "1" ]]; then
   printf '%s' "$PROMPT" > "$TMP_PROMPT_LOG" || true
   echo "[codex_wrapper] prompt_chars=${#PROMPT} prompt_log=$TMP_PROMPT_LOG" >&2
+  echo "[codex_wrapper] prompt_stdin=$TMP_PROMPT_FILE" >&2
   printf '[codex_wrapper] cmd=' >&2
   printf '%q ' "${CMD[@]}" >&2
   printf '\n' >&2
 fi
+
+printf '%s' "$PROMPT" > "$TMP_PROMPT_FILE"
 
 if [[ "$CODEX_DENY_DOTENV" != "0" ]]; then
   snapshot_dotenv_files
@@ -456,8 +463,7 @@ PY
 }
 
 run_codex_command() {
-  local cmd_with_prompt=("${CMD[@]}" "$PROMPT")
-  "${cmd_with_prompt[@]}"
+  "${CMD[@]}" < "$TMP_PROMPT_FILE"
 }
 
 extract_result_block() {

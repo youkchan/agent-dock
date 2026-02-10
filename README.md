@@ -313,6 +313,7 @@ CLI からは次の優先順でコマンドを解決します:
 - `TEAMMATE_PLAN_COMMAND` / `TEAMMATE_EXECUTE_COMMAND`
 - `--teammate-command`
 - `TEAMMATE_COMMAND`
+- `agent-dock` 実行ファイルと同じディレクトリにある `codex_wrapper.sh`（`bash <that-path>/codex_wrapper.sh`）
 
 このリポジトリには `codex_wrapper.sh` を同梱しています。  
 まずは次で動かせます:

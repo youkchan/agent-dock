@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -18,3 +18,12 @@ openai = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["team_orchestrator*"]
+
+[tool.setuptools]
+script-files = ["codex_wrapper.sh"]
+
+[project.scripts]
+agent-dock = "team_orchestrator.cli:main"
