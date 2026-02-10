@@ -429,8 +429,19 @@ function trim(s) {
   sub(/[[:space:]]+$/, "", s)
   return s
 }
+function emit_line(current_mode, raw_line, max_chars) {
+  if ((current_mode == "exec" || current_mode == "codex") && max_chars > 0 && length(raw_line) > max_chars) {
+    print substr(raw_line, 1, max_chars) "..."
+    fflush()
+    return
+  }
+  print raw_line
+  fflush()
+}
 BEGIN {
   mode = "default"
+  in_codex_diff = 0
+  codex_diff_lines = 0
 }
 {
   line = $0
@@ -440,38 +451,86 @@ BEGIN {
   lowered = tolower(trim(plain))
 
   if (lowered == "thinking") {
+    if (in_codex_diff) {
+      print "[all_compact] codex diff omitted lines=" codex_diff_lines
+      fflush()
+      in_codex_diff = 0
+      codex_diff_lines = 0
+    }
     mode = "thinking"
     print line
     fflush()
     next
   }
   if (lowered == "codex") {
+    if (in_codex_diff) {
+      print "[all_compact] codex diff omitted lines=" codex_diff_lines
+      fflush()
+      in_codex_diff = 0
+      codex_diff_lines = 0
+    }
     mode = "codex"
     print line
     fflush()
     next
   }
   if (lowered == "user") {
+    if (in_codex_diff) {
+      print "[all_compact] codex diff omitted lines=" codex_diff_lines
+      fflush()
+      in_codex_diff = 0
+      codex_diff_lines = 0
+    }
     mode = "user"
     print line
     fflush()
     next
   }
   if (index(lowered, "exec") == 1) {
+    if (in_codex_diff) {
+      print "[all_compact] codex diff omitted lines=" codex_diff_lines
+      fflush()
+      in_codex_diff = 0
+      codex_diff_lines = 0
+    }
     mode = "exec"
     print line
     fflush()
     next
   }
 
-  if (mode == "exec" && exec_max_chars > 0 && length(line) > exec_max_chars) {
-    print substr(line, 1, exec_max_chars) "..."
-    fflush()
-    next
+  if (mode == "codex") {
+    if (!in_codex_diff && (index(lowered, "file update:") == 1 || index(lowered, "diff --git ") == 1)) {
+      in_codex_diff = 1
+      codex_diff_lines = 1
+      next
+    }
+    if (in_codex_diff) {
+      if (
+        lowered == "tokens used" ||
+        index(lowered, "result:") == 1 ||
+        index(lowered, "summary:") == 1 ||
+        index(lowered, "changed_files:") == 1 ||
+        index(lowered, "checks:") == 1
+      ) {
+        print "[all_compact] codex diff omitted lines=" codex_diff_lines
+        fflush()
+        in_codex_diff = 0
+        codex_diff_lines = 0
+      } else {
+        codex_diff_lines++
+        next
+      }
+    }
   }
 
-  print line
-  fflush()
+  emit_line(mode, line, exec_max_chars)
+}
+END {
+  if (in_codex_diff) {
+    print "[all_compact] codex diff omitted lines=" codex_diff_lines
+    fflush()
+  }
 }'
 }
 

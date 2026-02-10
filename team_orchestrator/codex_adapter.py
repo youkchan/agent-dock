@@ -36,7 +36,7 @@ class SubprocessCodexAdapter(TeammateAdapter):
             return
         for line in chunk.splitlines():
             text = line.rstrip("\r")
-            if not text:
+            if not text.strip():
                 continue
             progress_callback(source, text)
 

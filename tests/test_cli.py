@@ -106,6 +106,20 @@ class CliAdapterSelectionTests(unittest.TestCase):
         self.assertEqual(adapter.plan_command, ["echo", "plan"])
         self.assertEqual(adapter.execute_command, ["echo", "exec"])
 
+    def test_subprocess_adapter_emit_progress_skips_whitespace_only_lines(self) -> None:
+        received: list[tuple[str, str]] = []
+
+        def _collector(source: str, text: str) -> None:
+            received.append((source, text))
+
+        SubprocessCodexAdapter._emit_progress(
+            progress_callback=_collector,
+            source="stderr",
+            chunk="  \n\t\nok-line\n",
+        )
+
+        self.assertEqual(received, [("stderr", "ok-line")])
+
 
 class CliPersonaCatalogTests(unittest.TestCase):
     def _base_payload(self) -> dict:
