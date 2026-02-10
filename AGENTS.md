@@ -49,6 +49,9 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - すべてのタスクで `target_paths` を定義し、並行編集の重複を避ける。
 - 全タスク完了または idle 上限でループを停止する。
 - 追跡性のため、メールボックスとタスクボード状態を永続化する。
+- Templateアダプタは使用しない。
+- `ORCHESTRATOR_PROVIDER=mock` はテスト目的でのみ使用し、本番/実運用実行では使用しない。
+- 実運用では `ORCHESTRATOR_PROVIDER=openai`（または将来追加される実プロバイダ）を明示する。
 
 ## 指示の優先順
 - ルートの `AGENTS.md` はこのリポジトリ全体に適用する。

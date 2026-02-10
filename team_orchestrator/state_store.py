@@ -13,6 +13,7 @@ import fcntl
 from .models import Task
 
 PlanAction = Literal["approve", "reject", "revise"]
+DEFAULT_TASK_PROGRESS_LOG_LIMIT = 200
 
 
 @dataclass
@@ -304,6 +305,65 @@ class StateStore:
             now = time()
             task.updated_at = now
             task.completed_at = now
+            state["tasks"][task_id] = task.to_dict()
+            self._touch_progress(state)
+            return task
+
+    def requeue_in_progress_tasks(self) -> list[Task]:
+        recovered: list[Task] = []
+        with self._locked_state() as state:
+            tasks: dict[str, dict] = state["tasks"]
+            for task_id in sorted(tasks.keys()):
+                task = Task.from_dict(tasks[task_id])
+                if task.status != "in_progress":
+                    continue
+                previous_owner = task.owner or "unknown"
+                task.status = "pending"
+                task.owner = None
+                task.block_reason = None
+                task.updated_at = time()
+                task.progress_log.append(
+                    {
+                        "timestamp": time(),
+                        "source": "system",
+                        "text": f"resume recovery: requeued from in_progress (owner={previous_owner})",
+                    }
+                )
+                if len(task.progress_log) > DEFAULT_TASK_PROGRESS_LOG_LIMIT:
+                    task.progress_log = task.progress_log[-DEFAULT_TASK_PROGRESS_LOG_LIMIT:]
+                tasks[task_id] = task.to_dict()
+                recovered.append(task)
+            if recovered:
+                self._touch_progress(state)
+        return recovered
+
+    def append_task_progress_log(
+        self,
+        task_id: str,
+        source: str,
+        text: str,
+        max_entries: int = DEFAULT_TASK_PROGRESS_LOG_LIMIT,
+    ) -> Task:
+        normalized_source = source.strip() or "unknown"
+        normalized_text = text.strip()
+        if not normalized_text:
+            raise ValueError("progress log text is empty")
+        limit = max(1, max_entries)
+        with self._locked_state() as state:
+            raw = state["tasks"].get(task_id)
+            if not raw:
+                raise KeyError(f"task not found: {task_id}")
+            task = Task.from_dict(raw)
+            task.progress_log.append(
+                {
+                    "timestamp": time(),
+                    "source": normalized_source,
+                    "text": normalized_text,
+                }
+            )
+            if len(task.progress_log) > limit:
+                task.progress_log = task.progress_log[-limit:]
+            task.updated_at = time()
             state["tasks"][task_id] = task.to_dict()
             self._touch_progress(state)
             return task

@@ -9,7 +9,7 @@ from .adapter import TeammateAdapter
 from .persona_catalog import PersonaDefinition, default_personas
 from .persona_pipeline import PersonaEvaluationPipeline
 from .provider import OrchestratorProvider, build_provider_from_env, validate_decision_json
-from .state_store import StateStore
+from .state_store import DEFAULT_TASK_PROGRESS_LOG_LIMIT, StateStore
 
 
 @dataclass
@@ -21,6 +21,7 @@ class OrchestratorConfig:
     max_idle_rounds: int = 20
     max_idle_seconds: int = 120
     no_progress_event_interval: int = 3
+    task_progress_log_limit: int = DEFAULT_TASK_PROGRESS_LOG_LIMIT
     tick_seconds: float = 0.0
     human_approval: bool | None = None
     auto_approve_fallback: bool | None = None
@@ -89,6 +90,20 @@ class AgentTeamsLikeOrchestrator:
         if teammate:
             payload["teammate"] = teammate
         return payload
+
+    def _append_task_progress_log(self, task_id: str, source: str, text: str) -> None:
+        try:
+            self.store.append_task_progress_log(
+                task_id=task_id,
+                source=source,
+                text=text,
+                max_entries=self.config.task_progress_log_limit,
+            )
+        except Exception as error:
+            self._log(
+                f"[progress-log] append failed task={task_id} "
+                f"source={source} reason={self._short(str(error), 120)}"
+            )
 
     def _evaluate_persona_comments(
         self,
@@ -318,6 +333,35 @@ class AgentTeamsLikeOrchestrator:
             "applied_plan_actions": applied_plan_actions,
         }
 
+    def _auto_release_nonplan_approvals(self) -> list[str]:
+        released: list[str] = []
+        for task in self.store.list_tasks():
+            if task.status != "needs_approval":
+                continue
+            if task.requires_plan and task.plan_status == "submitted":
+                continue
+            receiver = task.owner or task.planner or self.config.lead_id
+            try:
+                updated = self.store.apply_task_update(task_id=task.id, new_status="pending")
+            except Exception as error:
+                self._log(
+                    f"[lead] skip fallback approval release task={task.id} "
+                    f"reason={self._short(str(error), 180)}"
+                )
+                continue
+            released.append(updated.id)
+            self.store.send_message(
+                sender=self.config.lead_id,
+                receiver=receiver,
+                content=f"approval cleared by fallback for {updated.id}",
+                task_id=updated.id,
+            )
+            self._log(
+                f"[lead] fallback released approval task={updated.id} "
+                f"status={updated.status}"
+            )
+        return released
+
     def _teammate_process_plan(self, teammate_id: str) -> tuple[bool, list[dict[str, str]]]:
         task = self.store.claim_plan_task(teammate_id=teammate_id)
         if not task:
@@ -344,13 +388,37 @@ class AgentTeamsLikeOrchestrator:
         task = self.store.claim_execution_task(teammate_id=teammate_id)
         if not task:
             return False, []
+        if task.progress_log:
+            self._log(
+                f"[{teammate_id}] resume task={task.id} "
+                f"progress_log_entries={len(task.progress_log)}"
+            )
+        self._append_task_progress_log(
+            task_id=task.id,
+            source="system",
+            text=f"execution started teammate={teammate_id}",
+        )
+        task_for_execution = self.store.get_task(task.id) or task
+
+        def _on_progress(source: str, text: str) -> None:
+            self._append_task_progress_log(task_id=task.id, source=source, text=text)
+
         try:
-            result = self.adapter.execute_task(teammate_id=teammate_id, task=task)
+            result = self.adapter.execute_task(
+                teammate_id=teammate_id,
+                task=task_for_execution,
+                progress_callback=_on_progress,
+            )
         except Exception as error:
             blocked = self.store.mark_task_blocked(
                 task_id=task.id,
                 teammate_id=teammate_id,
                 reason=self._short(str(error), 180),
+            )
+            self._append_task_progress_log(
+                task_id=blocked.id,
+                source="system",
+                text=f"execution blocked: {blocked.block_reason or 'blocked'}",
             )
             self.store.send_message(
                 sender=teammate_id,
@@ -368,6 +436,11 @@ class AgentTeamsLikeOrchestrator:
                 )
             ]
         completed = self.store.complete_task(task_id=task.id, teammate_id=teammate_id, result_summary=result)
+        self._append_task_progress_log(
+            task_id=completed.id,
+            source="system",
+            text=f"execution completed: {self._short(result, 160)}",
+        )
         self.store.send_message(
             sender=teammate_id,
             receiver=self.config.lead_id,
@@ -498,6 +571,13 @@ class AgentTeamsLikeOrchestrator:
                             self._log(
                                 f"[lead] fallback approved task={updated.id} "
                                 f"status={updated.status} plan_status={updated.plan_status}"
+                            )
+                    if auto_approve_fallback and not human_approval:
+                        released = self._auto_release_nonplan_approvals()
+                        if released:
+                            self._log(
+                                f"[lead] fallback released nonplan approvals "
+                                f"tasks={','.join(released)}"
                             )
                 except Exception as error:
                     stop_reason = "provider_error"

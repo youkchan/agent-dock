@@ -32,6 +32,7 @@ class Task:
     plan_feedback: str | None = None
     result_summary: str | None = None
     block_reason: str | None = None
+    progress_log: list[dict[str, Any]] = field(default_factory=list)
     created_at: float = field(default_factory=time)
     updated_at: float = field(default_factory=time)
     completed_at: float | None = None
@@ -56,6 +57,7 @@ class Task:
             "plan_feedback": self.plan_feedback,
             "result_summary": self.result_summary,
             "block_reason": self.block_reason,
+            "progress_log": self.progress_log,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "completed_at": self.completed_at,
@@ -78,6 +80,7 @@ class Task:
             plan_feedback=raw.get("plan_feedback"),
             result_summary=raw.get("result_summary"),
             block_reason=raw.get("block_reason"),
+            progress_log=[dict(item) for item in raw.get("progress_log", []) if isinstance(item, dict)],
             created_at=raw.get("created_at", time()),
             updated_at=raw.get("updated_at", time()),
             completed_at=raw.get("completed_at"),

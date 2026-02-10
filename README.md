@@ -54,6 +54,38 @@ python -m unittest discover -s tests -v
 ORCHESTRATOR_PROVIDER=mock python -m team_orchestrator.cli --teammate-adapter template --config examples/sample_tasks.json
 ```
 
+## `--resume` で再開実行する
+同じ `state-dir` を使って再開する場合は `--resume` を付けて起動します。
+
+```bash
+python -m team_orchestrator.cli \
+  --config examples/sample_tasks.json \
+  --state-dir /tmp/codex_agent_state \
+  --resume
+```
+
+起動時には次の情報が表示されます。
+- `[run] run_mode=new-run|resume-run`
+- `[run] progress_log_ref=<state.json>::tasks.<task_id>.progress_log`
+
+注意:
+- `--resume` なしで起動すると常に `new-run` になり、既存タスク状態（`completed` / `blocked` / `progress_log` 含む）は再初期化されます。
+- `--resume` 指定時に state 内タスクが存在する場合、`id` / `requires_plan` / `depends_on` / `target_paths` が入力 task_config と一致しないと失敗します。
+- `--resume` を付けても、state が未作成または task が空なら `new-run` として初期投入されます。
+- `--resume` では `in_progress` のまま残ったタスクを自動で `pending` に戻して再試行可能にします（`[run] resume_requeued_in_progress=...` を表示）。
+- この自動復旧を無効にする場合は `--no-resume-requeue-in-progress` を指定します。
+
+## progress log の使い方
+Teammate 実行中の出力は、各タスクの `progress_log` に追記されます（`timestamp` / `source` / `text`）。
+
+```bash
+jq '.tasks["T-001"].progress_log' /tmp/codex_agent_state/state.json
+```
+
+運用上のポイント:
+- 1 タスクあたり保持される `progress_log` は最新 200 件までです（古いものからローテーション）。
+- `codex_wrapper.sh` の execute プロンプトには、`existing_progress_log_count` と直近ログ（最大 8 件）が渡されるため、途中再開時の文脈として利用できます。
+
 ## OpenSpec から実行する
 運用フロー:
 1. `openspec/changes/<change-id>/tasks.md` を入力にコンパイル
@@ -145,6 +177,7 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
   - 実行専用コマンド（`TEAMMATE_COMMAND` より優先）
 - `TEAMMATE_COMMAND_TIMEOUT`:
   - 外部コマンドのタイムアウト秒（既定 `120`）
+  - 暫定運用では `900` を推奨（長時間の Codex 実行を途中停止させないため）
 - `TEAMMATE_STREAM_LOGS`:
   - `1`（既定）で Teammate 外部コマンドの実行中ログを端末へ表示
   - `0` で stderr を内部捕捉（エラー時のみ本文へ表示）
@@ -153,7 +186,8 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
   - `0` でログ非表示
 - `CODEX_STREAM_VIEW`:
   - `all`（既定）で Codex の実行ログをそのまま表示
-  - `assistant` でヘッダ/`user`/`thinking`/`codex` を表示し、`exec` とコマンド出力を非表示
+  - `assistant` で `user`/`thinking`/`codex` のみ表示し、`exec`・diff・コマンド出力を非表示
+  - `thinking` で `thinking`/`codex` のみ表示（`user` も非表示）
 - `CODEX_REASONING_EFFORT`:
   - `codex exec` の `model_reasoning_effort` を上書き（例: `minimal`, `low`, `medium`, `high`）
   - 未指定時は `~/.codex/config.toml` 側の設定値を使用
@@ -202,6 +236,7 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
   - `critical`: 対象タスクを `needs_approval` へ遷移
   - `blocker`: `can_block=true` のペルソナのみ即停止（`stop_reason=persona_blocker:<id>`）
   - `can_block=false` の `blocker` は `critical` 相当へフォールバック
+  - `ORCHESTRATOR_AUTO_APPROVE_FALLBACK=1` の場合、`requires_plan=false` の `needs_approval` は Lead 側で `pending` へ自動復帰
 - コメント上限:
   - 1イベントあたり最大2件（重大度優先 + 決定的ソート）
 

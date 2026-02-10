@@ -49,6 +49,17 @@ def _safe_int_env(name: str, default: int) -> int:
         return default
 
 
+def _safe_bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
 def _parse_command(raw: str, label: str) -> list[str]:
     parts = shlex.split(raw)
     if not parts:
@@ -138,6 +149,11 @@ def _build_run_parser() -> argparse.ArgumentParser:
         default=Path(".team_state"),
         help="Directory to store shared state",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from existing state in --state-dir if tasks are present",
+    )
     parser.add_argument("--lead-id", default="lead")
     parser.add_argument("--max-rounds", type=int, default=200)
     parser.add_argument("--max-idle-rounds", type=int, default=20)
@@ -181,6 +197,12 @@ def _build_run_parser() -> argparse.ArgumentParser:
         type=int,
         default=_safe_int_env("TEAMMATE_COMMAND_TIMEOUT", 120),
         help="Timeout seconds for subprocess teammate commands",
+    )
+    parser.add_argument(
+        "--resume-requeue-in-progress",
+        action=argparse.BooleanOptionalAction,
+        default=_safe_bool_env("RESUME_REQUEUE_IN_PROGRESS", True),
+        help="On resume-run, requeue in-progress tasks to pending before execution",
     )
     return parser
 
@@ -244,6 +266,82 @@ def _resolve_tasks_for_run(args: argparse.Namespace) -> tuple[list[Task], list[s
     return _load_tasks(config_path)
 
 
+def _state_file_path(state_dir: Path) -> Path:
+    return state_dir / "state.json"
+
+
+def _normalize_string_list(values: list[str]) -> list[str]:
+    return sorted([str(value).strip() for value in values if str(value).strip()])
+
+
+def _validate_resume_task_config_consistency(config_tasks: list[Task], state_tasks: list[Task]) -> None:
+    config_by_id = {task.id: task for task in config_tasks}
+    state_by_id = {task.id: task for task in state_tasks}
+
+    mismatches: list[str] = []
+    config_ids = set(config_by_id.keys())
+    state_ids = set(state_by_id.keys())
+    missing_in_state = sorted(config_ids - state_ids)
+    extra_in_state = sorted(state_ids - config_ids)
+    if missing_in_state or extra_in_state:
+        mismatches.append(f"task_ids(missing_in_state={missing_in_state}, extra_in_state={extra_in_state})")
+
+    for task_id in sorted(config_ids.intersection(state_ids)):
+        config_task = config_by_id[task_id]
+        state_task = state_by_id[task_id]
+        if config_task.requires_plan != state_task.requires_plan:
+            mismatches.append(
+                f"{task_id}:requires_plan(config={config_task.requires_plan}, state={state_task.requires_plan})"
+            )
+        config_depends_on = _normalize_string_list(config_task.depends_on)
+        state_depends_on = _normalize_string_list(state_task.depends_on)
+        if config_depends_on != state_depends_on:
+            mismatches.append(f"{task_id}:depends_on(config={config_depends_on}, state={state_depends_on})")
+        config_target_paths = _normalize_string_list(config_task.target_paths)
+        state_target_paths = _normalize_string_list(state_task.target_paths)
+        if config_target_paths != state_target_paths:
+            mismatches.append(f"{task_id}:target_paths(config={config_target_paths}, state={state_target_paths})")
+
+    if mismatches:
+        raise ValueError("resume task_config mismatch: " + "; ".join(mismatches))
+
+
+def _should_bootstrap_run_state(*, resume: bool, has_existing_state: bool, has_tasks_in_state: bool) -> bool:
+    if not resume:
+        return True
+    if not has_existing_state:
+        return True
+    return not has_tasks_in_state
+
+
+def _resolve_run_mode(*, resume: bool, has_existing_state: bool, has_tasks_in_state: bool) -> str:
+    should_bootstrap = _should_bootstrap_run_state(
+        resume=resume,
+        has_existing_state=has_existing_state,
+        has_tasks_in_state=has_tasks_in_state,
+    )
+    return "new-run" if should_bootstrap else "resume-run"
+
+
+def _bootstrap_run_state(
+    store: StateStore,
+    tasks: list[Task],
+    resume: bool,
+    has_existing_state: bool = True,
+    tasks_in_state: list[Task] | None = None,
+) -> None:
+    existing_tasks = tasks_in_state if tasks_in_state is not None else store.list_tasks()
+    has_tasks_in_state = bool(existing_tasks)
+    if not _should_bootstrap_run_state(
+        resume=resume,
+        has_existing_state=has_existing_state,
+        has_tasks_in_state=has_tasks_in_state,
+    ):
+        _validate_resume_task_config_consistency(config_tasks=tasks, state_tasks=existing_tasks)
+        return
+    store.bootstrap_tasks(tasks, replace=True)
+
+
 def _run_orchestrator(args: argparse.Namespace) -> int:
     if args.provider:
         os.environ["ORCHESTRATOR_PROVIDER"] = args.provider
@@ -252,8 +350,28 @@ def _run_orchestrator(args: argparse.Namespace) -> int:
     tasks, teammates, personas = _resolve_tasks_for_run(args)
     if not tasks:
         raise ValueError("No tasks found in config")
+    has_existing_state = _state_file_path(args.state_dir).exists()
     store = StateStore(state_dir=args.state_dir)
-    store.bootstrap_tasks(tasks, replace=True)
+    tasks_in_state = store.list_tasks()
+    run_mode = _resolve_run_mode(
+        resume=args.resume,
+        has_existing_state=has_existing_state,
+        has_tasks_in_state=bool(tasks_in_state),
+    )
+    print(f"[run] run_mode={run_mode}")
+    print(f"[run] progress_log_ref={_state_file_path(args.state_dir)}::tasks.<task_id>.progress_log")
+    _bootstrap_run_state(
+        store=store,
+        tasks=tasks,
+        resume=args.resume,
+        has_existing_state=has_existing_state,
+        tasks_in_state=tasks_in_state,
+    )
+    if run_mode == "resume-run" and args.resume_requeue_in_progress:
+        recovered = store.requeue_in_progress_tasks()
+        if recovered:
+            recovered_ids = ",".join(task.id for task in recovered)
+            print(f"[run] resume_requeued_in_progress={recovered_ids}")
     config = OrchestratorConfig(
         lead_id=args.lead_id,
         teammate_ids=teammates or None,

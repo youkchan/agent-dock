@@ -111,6 +111,45 @@ class StateStoreTests(unittest.TestCase):
             self.assertIsNotNone(executable)
             self.assertEqual(executable.id, "A")
 
+    def test_task_progress_log_append_and_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp))
+            store.bootstrap_tasks([Task(id="A", title="task A", target_paths=["src/a.ts"])], replace=True)
+
+            store.append_task_progress_log("A", "stdout", "line-1", max_entries=3)
+            store.append_task_progress_log("A", "stdout", "line-2", max_entries=3)
+            store.append_task_progress_log("A", "stderr", "line-3", max_entries=3)
+            store.append_task_progress_log("A", "stdout", "line-4", max_entries=3)
+
+            task = store.get_task("A")
+            if task is None:
+                self.fail("task should exist")
+            self.assertEqual(len(task.progress_log), 3)
+            self.assertEqual([entry["text"] for entry in task.progress_log], ["line-2", "line-3", "line-4"])
+            self.assertEqual(task.progress_log[-1]["source"], "stdout")
+            self.assertIn("timestamp", task.progress_log[-1])
+
+    def test_requeue_in_progress_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp))
+            store.bootstrap_tasks(
+                [
+                    Task(id="A", title="task A", status="in_progress", owner="tm-1", target_paths=["src/a.ts"]),
+                    Task(id="B", title="task B", status="pending", target_paths=["src/b.ts"]),
+                ],
+                replace=True,
+            )
+
+            recovered = store.requeue_in_progress_tasks()
+            self.assertEqual([task.id for task in recovered], ["A"])
+            task_a = store.get_task("A")
+            if task_a is None:
+                self.fail("task A should exist")
+            self.assertEqual(task_a.status, "pending")
+            self.assertIsNone(task_a.owner)
+            self.assertTrue(task_a.progress_log)
+            self.assertIn("resume recovery", task_a.progress_log[-1]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

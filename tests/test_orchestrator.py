@@ -86,6 +86,119 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(result["stop_reason"], "human_approval_required")
             self.assertEqual(result["provider_calls"], 0)
 
+    def test_execution_progress_logs_are_appended_and_preserved(self) -> None:
+        class StreamingAdapter:
+            def build_plan(self, teammate_id, task):
+                del teammate_id
+                del task
+                return "plan"
+
+            def execute_task(self, teammate_id, task, progress_callback=None):
+                del teammate_id
+                del task
+                if progress_callback is not None:
+                    progress_callback("stdout", "step-1")
+                    progress_callback("stderr", "step-2")
+                return "done"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks(
+                [
+                    Task(
+                        id="T1",
+                        title="task1",
+                        target_paths=["src/a.ts"],
+                        progress_log=[
+                            {
+                                "timestamp": 1.0,
+                                "source": "stdout",
+                                "text": "previous-step",
+                            }
+                        ],
+                    ),
+                ]
+            )
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=StreamingAdapter(),
+                provider=MockOrchestratorProvider(),
+                config=OrchestratorConfig(
+                    teammate_ids=["tm-1"],
+                    max_rounds=5,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                ),
+            )
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "all_tasks_completed")
+            task = store.get_task("T1")
+            self.assertIsNotNone(task)
+            if task is None:
+                self.fail("task should exist")
+            logged_texts = [entry["text"] for entry in task.progress_log]
+            self.assertIn("previous-step", logged_texts)
+            self.assertIn("step-1", logged_texts)
+            self.assertIn("step-2", logged_texts)
+            self.assertTrue(any(entry["source"] == "system" for entry in task.progress_log))
+
+    def test_execution_adapter_receives_latest_progress_log_snapshot(self) -> None:
+        class SnapshotAdapter:
+            def __init__(self) -> None:
+                self.seen_progress_texts: list[str] = []
+
+            def build_plan(self, teammate_id, task):
+                del teammate_id
+                del task
+                return "plan"
+
+            def execute_task(self, teammate_id, task, progress_callback=None):
+                del teammate_id
+                del progress_callback
+                self.seen_progress_texts = [
+                    str(entry.get("text", ""))
+                    for entry in task.progress_log
+                    if isinstance(entry, dict)
+                ]
+                return "done"
+
+        adapter = SnapshotAdapter()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks(
+                [
+                    Task(
+                        id="T1",
+                        title="task1",
+                        target_paths=["src/a.ts"],
+                        progress_log=[
+                            {
+                                "timestamp": 1.0,
+                                "source": "stdout",
+                                "text": "existing-log",
+                            }
+                        ],
+                    ),
+                ]
+            )
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=adapter,
+                provider=MockOrchestratorProvider(),
+                config=OrchestratorConfig(
+                    teammate_ids=["tm-1"],
+                    max_rounds=5,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                ),
+            )
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "all_tasks_completed")
+            self.assertIn("existing-log", adapter.seen_progress_texts)
+            self.assertTrue(
+                any(text.startswith("execution started teammate=") for text in adapter.seen_progress_texts)
+            )
+
     def test_persona_blocker_stops_immediately(self) -> None:
         class KickoffBlockerPipeline:
             def evaluate_events(self, events):
@@ -187,6 +300,7 @@ class OrchestratorTests(unittest.TestCase):
                     max_rounds=1,
                     max_idle_rounds=5,
                     max_idle_seconds=60,
+                    auto_approve_fallback=False,
                     personas=[
                         PersonaDefinition(
                             id="reviewer-x",
@@ -204,6 +318,76 @@ class OrchestratorTests(unittest.TestCase):
             task = store.get_task("T1")
             self.assertIsNotNone(task)
             self.assertEqual(task.status, "needs_approval")
+
+    def test_persona_critical_can_be_released_by_auto_approve_fallback(self) -> None:
+        class KickoffCriticalPipeline:
+            def evaluate_events(self, events):
+                for event in events:
+                    if event.get("type") == "Kickoff":
+                        return [
+                            PersonaComment(
+                                persona_id="reviewer-x",
+                                severity="critical",
+                                task_id="T1",
+                                event_type="Kickoff",
+                                detail="needs approval",
+                            )
+                        ]
+                return []
+
+        class SilentProvider:
+            provider_name = "silent-provider"
+
+            def run(self, snapshot_json):
+                del snapshot_json
+                return {
+                    "decisions": [],
+                    "task_updates": [],
+                    "messages": [],
+                    "stop": {"should_stop": False, "reason_short": ""},
+                    "meta": {
+                        "provider": "silent-provider",
+                        "model": "mock",
+                        "token_budget": {"input": 4000, "output": 800},
+                        "elapsed_ms": 1,
+                    },
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks(
+                [
+                    Task(id="T1", title="task1", depends_on=["UNKNOWN"], target_paths=["src/a.ts"]),
+                ]
+            )
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=TemplateTeammateAdapter(),
+                provider=SilentProvider(),
+                config=OrchestratorConfig(
+                    teammate_ids=["tm-1"],
+                    max_rounds=2,
+                    max_idle_rounds=10,
+                    max_idle_seconds=60,
+                    auto_approve_fallback=True,
+                    personas=[
+                        PersonaDefinition(
+                            id="reviewer-x",
+                            role="custom",
+                            focus="quality checks",
+                            can_block=False,
+                            enabled=True,
+                        )
+                    ],
+                ),
+                persona_pipeline=KickoffCriticalPipeline(),
+            )
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "max_rounds")
+            task = store.get_task("T1")
+            self.assertIsNotNone(task)
+            self.assertEqual(task.status, "pending")
+            self.assertEqual(result["summary"]["needs_approval"], 0)
 
     def test_persona_warn_is_rechecked_in_next_round(self) -> None:
         class KickoffWarnPipeline:
@@ -449,6 +633,7 @@ class OrchestratorTests(unittest.TestCase):
                     max_rounds=1,
                     max_idle_rounds=3,
                     max_idle_seconds=60,
+                    auto_approve_fallback=False,
                     personas=[
                         PersonaDefinition(
                             id="reviewer-x",

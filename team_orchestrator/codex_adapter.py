@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
+import threading
 from dataclasses import dataclass, field
 
-from .adapter import TeammateAdapter
+from .adapter import ProgressCallback, TeammateAdapter
 from .models import Task
 
 
@@ -24,30 +26,87 @@ class SubprocessCodexAdapter(TeammateAdapter):
     timeout_seconds: int = 120
     extra_env: dict[str, str] = field(default_factory=dict)
 
-    def _run(self, command: list[str], payload: dict) -> str:
+    @staticmethod
+    def _emit_progress(
+        progress_callback: ProgressCallback | None,
+        source: str,
+        chunk: str,
+    ) -> None:
+        if progress_callback is None:
+            return
+        for line in chunk.splitlines():
+            text = line.rstrip("\r")
+            if not text:
+                continue
+            progress_callback(source, text)
+
+    def _run(
+        self,
+        command: list[str],
+        payload: dict,
+        progress_callback: ProgressCallback | None = None,
+    ) -> str:
         stream_logs = os.getenv("TEAMMATE_STREAM_LOGS", "1").strip() == "1"
-        stderr_target = None if stream_logs else subprocess.PIPE
-        process = subprocess.run(
+        process = subprocess.Popen(
             command,
-            input=json.dumps(payload, ensure_ascii=True),
             text=True,
             stdout=subprocess.PIPE,
-            stderr=stderr_target,
-            timeout=self.timeout_seconds,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE,
             env={**os.environ, **self.extra_env},
-            check=False,
+            bufsize=1,
         )
+        assert process.stdin is not None
+        assert process.stdout is not None
+        assert process.stderr is not None
+        process.stdin.write(json.dumps(payload, ensure_ascii=True))
+        process.stdin.close()
+
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+
+        def _consume(pipe, source: str, chunks: list[str], mirror_stderr: bool = False) -> None:
+            for chunk in iter(pipe.readline, ""):
+                chunks.append(chunk)
+                self._emit_progress(progress_callback=progress_callback, source=source, chunk=chunk)
+                if mirror_stderr:
+                    print(chunk, end="", file=sys.stderr, flush=True)
+            pipe.close()
+
+        stdout_thread = threading.Thread(
+            target=_consume,
+            args=(process.stdout, "stdout", stdout_chunks),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=_consume,
+            args=(process.stderr, "stderr", stderr_chunks, stream_logs),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        timeout_reached = False
+        try:
+            process.wait(timeout=self.timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timeout_reached = True
+            process.kill()
+            process.wait()
+
+        stdout_thread.join()
+        stderr_thread.join()
+
+        stdout_text = "".join(stdout_chunks).strip()
+        stderr_text = "".join(stderr_chunks).strip()
+        if timeout_reached:
+            raise RuntimeError(f"command timed out: {' '.join(command)} ({self.timeout_seconds}s)")
         if process.returncode != 0:
-            stderr = (
-                process.stderr.strip()
-                if isinstance(process.stderr, str)
-                else "see stderr logs above (set TEAMMATE_STREAM_LOGS=0 to capture stderr)"
-            )
+            stderr = stderr_text or "no stderr"
             raise RuntimeError(f"command failed: {' '.join(command)} :: {stderr}")
-        output = process.stdout.strip()
-        if not output:
+        if not stdout_text:
             raise RuntimeError(f"empty response from command: {' '.join(command)}")
-        return output
+        return stdout_text
 
     def build_plan(self, teammate_id: str, task: Task) -> str:
         payload = {
@@ -57,10 +116,15 @@ class SubprocessCodexAdapter(TeammateAdapter):
         }
         return self._run(self.plan_command, payload)
 
-    def execute_task(self, teammate_id: str, task: Task) -> str:
+    def execute_task(
+        self,
+        teammate_id: str,
+        task: Task,
+        progress_callback: ProgressCallback | None = None,
+    ) -> str:
         payload = {
             "mode": "execute",
             "teammate_id": teammate_id,
             "task": task.to_dict(),
         }
-        return self._run(self.execute_command, payload)
+        return self._run(self.execute_command, payload, progress_callback=progress_callback)
