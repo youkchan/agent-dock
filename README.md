@@ -222,7 +222,119 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
   - `requires_plan`
 - `personas[]`（任意）:
   - `id`, `role`, `focus`, `can_block`, `enabled`
+  - `execution`（任意）:
+    - `enabled`（bool）
+    - `command_ref`（non-empty string）
+    - `sandbox`（non-empty string）
+    - `timeout_sec`（positive integer）
   - 同名 `id` はデフォルト定義を完全上書き、非同名 `id` は追加
+- `persona_defaults`（任意）:
+  - `phase_order`: フェーズ順序（例: `["implement", "review", "spec_check", "test"]`）
+  - `phase_policies`:
+    - `active_personas`: コメント参加可能なペルソナ
+    - `executor_personas`: 実行主体になれるペルソナ
+    - `state_transition_personas`: `critical` / `blocker` で状態遷移できるペルソナ
+- `tasks[].persona_policy`（任意）:
+  - `disable_personas`: 当該タスクで実行/評価の両方から除外するペルソナ
+  - `phase_overrides`: タスク単位のフェーズ別上書き
+
+## ペルソナ実行モード設定例
+```json
+{
+  "teammates": ["teammate-a", "teammate-b"],
+  "personas": [
+    {
+      "id": "implementer",
+      "role": "implementer",
+      "focus": "implementation ownership",
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "code-reviewer",
+      "role": "reviewer",
+      "focus": "quality and regression review",
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-checker",
+      "role": "spec_guard",
+      "focus": "spec conformance check",
+      "can_block": false,
+      "enabled": true
+    }
+  ],
+  "persona_defaults": {
+    "phase_order": ["implement", "review"],
+    "phase_policies": {
+      "implement": {
+        "active_personas": ["implementer"],
+        "executor_personas": ["implementer"],
+        "state_transition_personas": ["implementer"]
+      },
+      "review": {
+        "active_personas": ["code-reviewer", "spec-checker"],
+        "executor_personas": ["code-reviewer"],
+        "state_transition_personas": ["code-reviewer"]
+      }
+    }
+  },
+  "tasks": [
+    {
+      "id": "1.1",
+      "title": "README/運用手順を更新する",
+      "target_paths": ["README.md"],
+      "depends_on": [],
+      "requires_plan": false,
+      "persona_policy": {
+        "disable_personas": ["spec-checker"],
+        "phase_overrides": {
+          "review": {
+            "active_personas": ["code-reviewer"],
+            "executor_personas": ["code-reviewer"],
+            "state_transition_personas": ["code-reviewer"]
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+## フェーズ設計ガイド
+- 推奨の既定順序は `implement -> review -> spec_check -> test` です。
+- `active_personas` は同一フェーズで複数指定できます（複数コメントを許可）。
+- `executor_personas` は実行 claim 対象を決めます。フェーズ内に少なくとも1つ必要です。
+- `state_transition_personas` はコメント参加権限とは独立です。ここに含まれないペルソナの `critical` / `blocker` は状態遷移できません。
+- `blocker` は `can_block=true` かつ `state_transition_personas` に含まれる場合のみ即停止します。
+
+## 移行手順（teammate 実行から persona 実行へ）
+1. 既存 `teammates` 構成を維持したまま `personas` を追加する（最初は `execution.enabled=false` でも可）。
+2. 実行主体にしたいペルソナだけ `execution.enabled=true` にする。
+3. `persona_defaults.phase_order` と `phase_policies` を定義し、`executor_personas` を各フェーズに割り当てる。
+4. 必要なタスクに `tasks[].persona_policy`（`disable_personas`, `phase_overrides`）を追加する。
+5. `python -m unittest discover -s tests -v` を実行し、phase handoff と fallback を確認してから本番反映する。
+
+## 制約と失敗条件
+- `personas[].execution` は `enabled/command_ref/sandbox/timeout_sec` をすべて含む必要があります。
+- `persona_defaults` / `persona_policy` で未知ペルソナを参照すると起動またはコンパイルは失敗します。
+- OpenSpec コンパイル時、未知フェーズ（`phase_order` にないフェーズ）を `phase_policies` / `phase_overrides` へ指定すると失敗します。
+- `disable_personas` は実行主体選定とコメント評価の両方に適用されます。
+- `personas` が未指定、または有効な `execution.enabled=true` が0件のときは `teammates` 実行へフォールバックします。
+- 有効な実行主体（persona または teammate）が1件もない構成は起動できません。
 
 ## ペルソナ品質ゲート
 - デフォルト4ペルソナ:
@@ -239,30 +351,6 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
   - `ORCHESTRATOR_AUTO_APPROVE_FALLBACK=1` の場合、`requires_plan=false` の `needs_approval` は Lead 側で `pending` へ自動復帰
 - コメント上限:
   - 1イベントあたり最大2件（重大度優先 + 決定的ソート）
-
-設定例:
-```json
-{
-  "teammates": ["teammate-a", "teammate-b"],
-  "personas": [
-    {
-      "id": "implementer",
-      "role": "custom",
-      "focus": "project specific implementation checks",
-      "can_block": false,
-      "enabled": true
-    },
-    {
-      "id": "custom-auditor",
-      "role": "custom",
-      "focus": "security and release readiness checks",
-      "can_block": true,
-      "enabled": true
-    }
-  ],
-  "tasks": []
-}
-```
 
 ## 出力例
 ```text

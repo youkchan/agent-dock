@@ -8,7 +8,13 @@ from .openspec_compiler import (
     write_compiled_config,
 )
 from .orchestrator import AgentTeamsLikeOrchestrator, OrchestratorConfig
-from .persona_catalog import PersonaDefinition, PersonaRole, default_personas, load_personas
+from .persona_catalog import (
+    PersonaDefinition,
+    PersonaExecutionConfig,
+    PersonaRole,
+    default_personas,
+    load_personas,
+)
 from .persona_pipeline import PersonaComment, PersonaEvaluationPipeline, PersonaSeverity
 from .provider import (
     DecisionValidationError,
@@ -30,6 +36,7 @@ __all__ = [
     "TemplateTeammateAdapter",
     "SubprocessCodexAdapter",
     "PersonaDefinition",
+    "PersonaExecutionConfig",
     "PersonaRole",
     "PersonaSeverity",
     "PersonaComment",

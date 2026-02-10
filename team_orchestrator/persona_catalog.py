@@ -6,8 +6,26 @@ from typing import Any, Literal, cast
 PersonaRole = Literal["implementer", "reviewer", "spec_guard", "test_guard", "custom"]
 
 _REQUIRED_KEYS = ("id", "role", "focus", "can_block", "enabled")
-_ALLOWED_KEYS = set(_REQUIRED_KEYS)
+_OPTIONAL_KEYS = ("execution",)
+_ALLOWED_KEYS = set(_REQUIRED_KEYS + _OPTIONAL_KEYS)
 _ALLOWED_ROLES = {"implementer", "reviewer", "spec_guard", "test_guard", "custom"}
+_ALLOWED_EXECUTION_KEYS = {"enabled", "command_ref", "sandbox", "timeout_sec"}
+
+
+@dataclass(frozen=True)
+class PersonaExecutionConfig:
+    enabled: bool = False
+    command_ref: str = "default"
+    sandbox: str = "workspace-write"
+    timeout_sec: int = 900
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "command_ref": self.command_ref,
+            "sandbox": self.sandbox,
+            "timeout_sec": self.timeout_sec,
+        }
 
 
 @dataclass(frozen=True)
@@ -17,15 +35,19 @@ class PersonaDefinition:
     focus: str
     can_block: bool = False
     enabled: bool = True
+    execution: PersonaExecutionConfig | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "id": self.id,
             "role": self.role,
             "focus": self.focus,
             "can_block": self.can_block,
             "enabled": self.enabled,
         }
+        if self.execution is not None:
+            payload["execution"] = self.execution.to_dict()
+        return payload
 
 
 _DEFAULT_PERSONAS: tuple[PersonaDefinition, ...] = (
@@ -131,6 +153,11 @@ def _parse_persona(raw: Any, index: int, source_label: str) -> PersonaDefinition
     focus = raw["focus"]
     can_block = raw["can_block"]
     enabled = raw["enabled"]
+    execution = _parse_execution(
+        raw.get("execution"),
+        index=index,
+        source_label=source_label,
+    )
 
     if not isinstance(persona_id, str) or not persona_id.strip():
         raise ValueError(f"personas[{index}].id must be a non-empty string ({source_label})")
@@ -156,4 +183,44 @@ def _parse_persona(raw: Any, index: int, source_label: str) -> PersonaDefinition
         focus=focus,
         can_block=can_block,
         enabled=enabled,
+        execution=execution,
+    )
+
+
+def _parse_execution(raw: Any, index: int, source_label: str) -> PersonaExecutionConfig | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"personas[{index}].execution must be an object ({source_label})")
+
+    unknown_keys = sorted(set(raw.keys()) - _ALLOWED_EXECUTION_KEYS)
+    if unknown_keys:
+        formatted = ", ".join(unknown_keys)
+        raise ValueError(f"personas[{index}].execution has unknown keys: {formatted} ({source_label})")
+
+    required = ("enabled", "command_ref", "sandbox", "timeout_sec")
+    missing = [key for key in required if key not in raw]
+    if missing:
+        formatted = ", ".join(missing)
+        raise ValueError(f"personas[{index}].execution missing required keys: {formatted} ({source_label})")
+
+    enabled = raw["enabled"]
+    command_ref = raw["command_ref"]
+    sandbox = raw["sandbox"]
+    timeout_sec = raw["timeout_sec"]
+
+    if not isinstance(enabled, bool):
+        raise ValueError(f"personas[{index}].execution.enabled must be bool ({source_label})")
+    if not isinstance(command_ref, str) or not command_ref.strip():
+        raise ValueError(f"personas[{index}].execution.command_ref must be a non-empty string ({source_label})")
+    if not isinstance(sandbox, str) or not sandbox.strip():
+        raise ValueError(f"personas[{index}].execution.sandbox must be a non-empty string ({source_label})")
+    if not isinstance(timeout_sec, int) or timeout_sec <= 0:
+        raise ValueError(f"personas[{index}].execution.timeout_sec must be a positive integer ({source_label})")
+
+    return PersonaExecutionConfig(
+        enabled=enabled,
+        command_ref=command_ref.strip(),
+        sandbox=sandbox.strip(),
+        timeout_sec=timeout_sec,
     )

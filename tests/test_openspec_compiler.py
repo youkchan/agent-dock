@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -210,6 +211,123 @@ class OpenSpecCompilerTests(unittest.TestCase):
                         "--openspec-change",
                         "add-anything",
                     ]
+                )
+
+    def test_compile_outputs_persona_policy_and_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            persona_defaults = {
+                "phase_order": ["implement", "review"],
+                "phase_policies": {
+                    "implement": {
+                        "active_personas": ["implementer"],
+                        "executor_personas": ["implementer"],
+                        "state_transition_personas": ["implementer"],
+                    },
+                    "review": {
+                        "active_personas": ["code-reviewer"],
+                        "executor_personas": ["code-reviewer"],
+                        "state_transition_personas": ["code-reviewer"],
+                    },
+                },
+            }
+            task_policy = {
+                "phase_overrides": {
+                    "review": {
+                        "active_personas": ["code-reviewer", "spec-checker"],
+                        "executor_personas": ["code-reviewer"],
+                        "state_transition_personas": ["code-reviewer"],
+                    }
+                }
+            }
+            self._write_change(
+                root,
+                "add-persona-directives",
+                "\n".join(
+                    [
+                        "## 0. Persona Defaults",
+                        f"- persona_defaults: {json.dumps(persona_defaults, ensure_ascii=False)}",
+                        "- disable_personas: spec-checker",
+                        "## 1. 実装タスク",
+                        "- [ ] 1.1 実装する",
+                        "  - 依存: なし",
+                        "  - 対象: src/a.ts",
+                        f"  - persona_policy: {json.dumps(task_policy, ensure_ascii=False)}",
+                        "- [ ] 1.2 レビューする",
+                        "  - 依存: 1.1",
+                        "  - 対象: src/b.ts",
+                        "  - フェーズ担当: implement=implementer; review=code-reviewer",
+                        "  - disable_personas: test-owner",
+                    ]
+                ),
+            )
+            compiled = compile_change_to_config(
+                change_id="add-persona-directives",
+                openspec_root=root / "openspec",
+                overrides_root=root / "task_configs" / "overrides",
+            )
+            self.assertIn("persona_defaults", compiled)
+            self.assertEqual(compiled["persona_defaults"]["phase_order"], ["implement", "review"])
+            by_id = {task["id"]: task for task in compiled["tasks"]}
+            self.assertIn("persona_policy", by_id["1.1"])
+            self.assertIn("persona_policy", by_id["1.2"])
+            policy_11 = by_id["1.1"]["persona_policy"]
+            self.assertEqual(policy_11["disable_personas"], ["spec-checker"])
+            self.assertIn("review", policy_11["phase_overrides"])
+            policy_12 = by_id["1.2"]["persona_policy"]
+            self.assertEqual(policy_12["disable_personas"], ["test-owner", "spec-checker"])
+            self.assertIn("implement", policy_12["phase_overrides"])
+            self.assertIn("review", policy_12["phase_overrides"])
+            resolution = compiled["meta"]["persona_resolution"]
+            self.assertEqual(resolution["global_disable_personas"], ["spec-checker"])
+            self.assertEqual(resolution["tasks_with_persona_policy"], ["1.1", "1.2"])
+
+    def test_compile_fails_on_unknown_persona_in_persona_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_change(
+                root,
+                "add-unknown-persona",
+                "\n".join(
+                    [
+                        "## 1. 実装タスク",
+                        "- [ ] 1.1 実装する",
+                        "  - 依存: なし",
+                        "  - 対象: src/a.ts",
+                        '  - persona_policy: {"disable_personas": ["missing-persona"]}',
+                    ]
+                ),
+            )
+            with self.assertRaisesRegex(OpenSpecCompileError, r"missing-persona"):
+                compile_change_to_config(
+                    change_id="add-unknown-persona",
+                    openspec_root=root / "openspec",
+                    overrides_root=root / "task_configs" / "overrides",
+                )
+
+    def test_compile_fails_on_unknown_phase_in_task_persona_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_change(
+                root,
+                "add-unknown-phase",
+                "\n".join(
+                    [
+                        "## 0. Persona Defaults",
+                        '- persona_defaults: {"phase_order": ["implement"]}',
+                        "## 1. 実装タスク",
+                        "- [ ] 1.1 実装する",
+                        "  - 依存: なし",
+                        "  - 対象: src/a.ts",
+                        "  - フェーズ担当: review=code-reviewer",
+                    ]
+                ),
+            )
+            with self.assertRaisesRegex(OpenSpecCompileError, r"unknown persona phase\(s\) in task 1.1: review"):
+                compile_change_to_config(
+                    change_id="add-unknown-phase",
+                    openspec_root=root / "openspec",
+                    overrides_root=root / "task_configs" / "overrides",
                 )
 
 

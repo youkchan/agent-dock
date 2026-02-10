@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+from inspect import signature
 from dataclasses import dataclass
 from time import sleep, time
 from typing import Any, Callable
 
 from .adapter import TeammateAdapter
+from .models import Task
 from .persona_catalog import PersonaDefinition, default_personas
 from .persona_pipeline import PersonaEvaluationPipeline
 from .provider import OrchestratorProvider, build_provider_from_env, validate_decision_json
@@ -25,9 +27,22 @@ class OrchestratorConfig:
     tick_seconds: float = 0.0
     human_approval: bool | None = None
     auto_approve_fallback: bool | None = None
+    persona_defaults: dict[str, Any] | None = None
 
     def resolved_teammates(self) -> list[str]:
         return self.teammate_ids or ["teammate-1", "teammate-2"]
+
+    def resolved_execution_personas(self) -> list[str]:
+        if not self.personas:
+            return []
+        persona_ids: list[str] = []
+        for persona in self.personas:
+            if not persona.enabled:
+                continue
+            if persona.execution is None or not persona.execution.enabled:
+                continue
+            persona_ids.append(persona.id)
+        return persona_ids
 
     def resolved_human_approval(self) -> bool:
         if self.human_approval is not None:
@@ -57,6 +72,7 @@ class AgentTeamsLikeOrchestrator:
         self.personas = list(self.config.personas) if self.config.personas is not None else default_personas()
         self.persona_by_id = {persona.id: persona for persona in self.personas}
         self.persona_pipeline = persona_pipeline or PersonaEvaluationPipeline(personas=self.personas)
+        self._pipeline_supports_active_filter = self._detect_pipeline_active_filter_support()
         self.event_logger = event_logger or (lambda _: None)
         self.provider_calls = 0
         self.decision_history: list[dict[str, Any]] = []
@@ -69,6 +85,11 @@ class AgentTeamsLikeOrchestrator:
         }
         self.persona_blocker_triggered = False
         self.collision_cache: set[tuple[str, str]] = set()
+        (
+            self.execution_subject_mode,
+            self.execution_subject_ids,
+        ) = self._resolve_execution_subjects()
+        self.phase_order, self.phase_policies = self._resolve_phase_controls()
 
     def _log(self, message: str) -> None:
         self.event_logger(f"{time():.3f} {message}")
@@ -76,6 +97,194 @@ class AgentTeamsLikeOrchestrator:
     @staticmethod
     def _short(text: str, max_chars: int = 180) -> str:
         return text if len(text) <= max_chars else text[: max_chars - 3] + "..."
+
+    def _detect_pipeline_active_filter_support(self) -> bool:
+        try:
+            params = signature(self.persona_pipeline.evaluate_events).parameters
+        except (TypeError, ValueError):
+            return False
+        return "active_persona_ids" in params
+
+    def _resolve_execution_subjects(self) -> tuple[str, list[str]]:
+        persona_ids = self.config.resolved_execution_personas()
+        if persona_ids:
+            return "persona", persona_ids
+        teammate_ids = self.config.resolved_teammates()
+        if teammate_ids:
+            return "teammate", teammate_ids
+        raise ValueError("at least one execution subject is required")
+
+    def _resolve_phase_controls(self) -> tuple[list[str], dict[str, dict[str, list[str]]]]:
+        raw = self.config.persona_defaults
+        if not isinstance(raw, dict):
+            return [], {}
+
+        phase_order: list[str] = []
+        seen_phases: set[str] = set()
+        for item in raw.get("phase_order", []):
+            phase = str(item).strip()
+            if not phase or phase in seen_phases:
+                continue
+            seen_phases.add(phase)
+            phase_order.append(phase)
+
+        phase_policies: dict[str, dict[str, list[str]]] = {}
+        raw_map = raw.get("phase_policies")
+        if isinstance(raw_map, dict):
+            for phase_raw, policy_raw in raw_map.items():
+                phase = str(phase_raw).strip()
+                if not phase or not isinstance(policy_raw, dict):
+                    continue
+                normalized_policy: dict[str, list[str]] = {}
+                for key in ("active_personas", "executor_personas", "state_transition_personas"):
+                    raw_personas = policy_raw.get(key)
+                    if not isinstance(raw_personas, list):
+                        continue
+                    normalized_policy[key] = [
+                        str(persona_id).strip() for persona_id in raw_personas if str(persona_id).strip()
+                    ]
+                phase_policies[phase] = normalized_policy
+        return phase_order, phase_policies
+
+    @staticmethod
+    def _task_phase_index(task: Task) -> int:
+        if task.current_phase_index is None:
+            return 0
+        return max(0, int(task.current_phase_index))
+
+    def _task_current_phase(self, task: Task) -> str | None:
+        if self.execution_subject_mode != "persona" or not self.phase_order:
+            return None
+        index = self._task_phase_index(task)
+        if index >= len(self.phase_order):
+            return None
+        return self.phase_order[index]
+
+    def _task_next_phase(self, task: Task) -> tuple[int, str] | None:
+        if self.execution_subject_mode != "persona" or not self.phase_order:
+            return None
+        next_index = self._task_phase_index(task) + 1
+        if next_index >= len(self.phase_order):
+            return None
+        return next_index, self.phase_order[next_index]
+
+    def _phase_policy_for_task(self, task: Task, phase: str) -> dict[str, list[str]]:
+        merged = dict(self.phase_policies.get(phase, {}))
+        policy = task.persona_policy if isinstance(task.persona_policy, dict) else None
+        if not policy:
+            return merged
+        overrides = policy.get("phase_overrides")
+        if not isinstance(overrides, dict):
+            return merged
+        override_raw = overrides.get(phase)
+        if not isinstance(override_raw, dict):
+            return merged
+        for key in ("active_personas", "executor_personas", "state_transition_personas"):
+            raw_personas = override_raw.get(key)
+            if not isinstance(raw_personas, list):
+                continue
+            merged[key] = [str(persona_id).strip() for persona_id in raw_personas if str(persona_id).strip()]
+        return merged
+
+    @staticmethod
+    def _task_disabled_personas(task: Task) -> set[str]:
+        policy = task.persona_policy if isinstance(task.persona_policy, dict) else None
+        if not policy:
+            return set()
+        raw_disabled = policy.get("disable_personas")
+        if not isinstance(raw_disabled, list):
+            return set()
+        return {
+            str(persona_id).strip()
+            for persona_id in raw_disabled
+            if isinstance(persona_id, str) and persona_id.strip()
+        }
+
+    def _policy_personas_for_task(
+        self,
+        *,
+        task: Task,
+        key: str,
+        fallback_key: str | None = None,
+    ) -> list[str] | None:
+        if self.execution_subject_mode != "persona":
+            return None
+        disabled = self._task_disabled_personas(task)
+        if not self.phase_order:
+            personas = [persona.id for persona in self.personas if persona.enabled]
+            return [persona_id for persona_id in personas if persona_id not in disabled]
+
+        phase = self._task_current_phase(task)
+        if phase is None:
+            return []
+        policy = self._phase_policy_for_task(task, phase)
+        raw_personas = policy.get(key)
+        if raw_personas is None and fallback_key is not None:
+            raw_personas = policy.get(fallback_key)
+        if not isinstance(raw_personas, list):
+            return []
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for persona_id_raw in raw_personas:
+            persona_id = str(persona_id_raw).strip()
+            if not persona_id or persona_id in seen:
+                continue
+            seen.add(persona_id)
+            if persona_id in disabled:
+                continue
+            normalized.append(persona_id)
+        return normalized
+
+    def _active_personas_for_event(self, event: dict[str, str]) -> set[str] | None:
+        if self.execution_subject_mode != "persona":
+            return None
+        task_id = event.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            return None
+        task = self.store.get_task(task_id)
+        if task is None:
+            return set()
+        active = self._policy_personas_for_task(
+            task=task,
+            key="active_personas",
+            fallback_key="executor_personas",
+        )
+        if active is None:
+            return None
+        return set(active)
+
+    def _can_persona_transition(self, *, persona_id: str, task_id: str | None) -> bool:
+        if self.execution_subject_mode != "persona":
+            return True
+        if not task_id:
+            return False
+        task = self.store.get_task(task_id)
+        if task is None:
+            return False
+        if persona_id in self._task_disabled_personas(task):
+            return False
+        if not self.phase_order:
+            return True
+        allowed = self._policy_personas_for_task(
+            task=task,
+            key="state_transition_personas",
+            fallback_key="executor_personas",
+        )
+        if allowed is None:
+            return True
+        return persona_id in set(allowed)
+
+    def _allowed_execution_task_ids(self, execution_subject_id: str) -> set[str] | None:
+        if self.execution_subject_mode != "persona":
+            return None
+        allowed_task_ids: set[str] = set()
+        for task in self.store.list_tasks():
+            executors = self._policy_personas_for_task(task=task, key="executor_personas")
+            if not executors:
+                continue
+            if execution_subject_id in set(executors):
+                allowed_task_ids.add(task.id)
+        return allowed_task_ids
 
     def _make_event(
         self,
@@ -110,8 +319,23 @@ class AgentTeamsLikeOrchestrator:
         round_index: int,
         events: list[dict[str, str]],
     ) -> list[dict[str, Any]]:
-        comments = self.persona_pipeline.evaluate_events(events)
-        serialized = [comment.to_dict() for comment in comments]
+        serialized: list[dict[str, Any]] = []
+        for event in events:
+            active_personas = self._active_personas_for_event(event)
+            if self._pipeline_supports_active_filter:
+                comments = self.persona_pipeline.evaluate_events(
+                    [event],
+                    active_persona_ids=active_personas,
+                )
+            else:
+                comments = self.persona_pipeline.evaluate_events([event])
+                if active_personas is not None:
+                    comments = [
+                        comment
+                        for comment in comments
+                        if str(getattr(comment, "persona_id", "")).strip() in active_personas
+                    ]
+            serialized.extend(comment.to_dict() for comment in comments)
         if not serialized:
             return serialized
         for comment in serialized:
@@ -154,6 +378,12 @@ class AgentTeamsLikeOrchestrator:
                 continue
 
             if severity == "critical":
+                if not self._can_persona_transition(persona_id=persona_id, task_id=task_id):
+                    self._log(
+                        f"[persona] skip critical persona={persona_id or 'unknown'} "
+                        f"task={task_id or '-'} reason=no_transition_permission"
+                    )
+                    continue
                 if not task_id:
                     self._log(
                         f"[persona] skip critical persona={persona_id or 'unknown'} reason=missing_task_id"
@@ -179,20 +409,33 @@ class AgentTeamsLikeOrchestrator:
 
             if severity == "blocker":
                 persona = self.persona_by_id.get(persona_id)
-                if not persona or not persona.can_block:
-                    if task_id:
-                        current = self.store.get_task(task_id)
-                        if current is not None and current.status != "needs_approval":
-                            updated = self.store.apply_task_update(task_id=task_id, new_status="needs_approval")
-                            self._log(
-                                f"[persona] downgraded blocker to critical task={updated.id} "
-                                f"by={persona_id or 'unknown'}"
-                            )
+                can_transition = self._can_persona_transition(persona_id=persona_id, task_id=task_id)
+                if persona and persona.can_block and can_transition:
+                    stop_reason = f"persona_blocker:{persona_id}"
+                    self.persona_blocker_triggered = True
+                    self._log(f"[persona] blocker stop triggered by={persona_id}")
+                    return stop_reason, next_round_events
+                if not can_transition:
+                    self._log(
+                        f"[persona] skip blocker persona={persona_id or 'unknown'} "
+                        f"task={task_id or '-'} reason=no_transition_permission"
+                    )
                     continue
-                stop_reason = f"persona_blocker:{persona_id}"
-                self.persona_blocker_triggered = True
-                self._log(f"[persona] blocker stop triggered by={persona_id}")
-                return stop_reason, next_round_events
+                if not task_id:
+                    self._log(
+                        f"[persona] skip blocker persona={persona_id or 'unknown'} reason=missing_task_id"
+                    )
+                    continue
+                if task_id in escalated_tasks:
+                    continue
+                current = self.store.get_task(task_id)
+                if current is not None and current.status != "needs_approval":
+                    updated = self.store.apply_task_update(task_id=task_id, new_status="needs_approval")
+                    self._log(
+                        f"[persona] downgraded blocker to critical task={updated.id} "
+                        f"by={persona_id or 'unknown'}"
+                    )
+                escalated_tasks.add(task_id)
 
         return None, next_round_events
 
@@ -216,6 +459,8 @@ class AgentTeamsLikeOrchestrator:
                     "target_paths": task.target_paths,
                     "requires_plan": task.requires_plan,
                     "plan_status": task.plan_status,
+                    "current_phase_index": task.current_phase_index,
+                    "current_phase": self._task_current_phase(task),
                     "plan_excerpt": self._short(task.plan_text or "", 240),
                     "block_reason": self._short(task.block_reason or "", 180),
                 }
@@ -233,7 +478,7 @@ class AgentTeamsLikeOrchestrator:
             )
         return {
             "lead_id": self.config.lead_id,
-            "teammates": self.config.resolved_teammates(),
+            "teammates": list(self.execution_subject_ids),
             "personas": [persona.to_dict() for persona in self.personas],
             "round_index": round_index,
             "idle_rounds": idle_rounds,
@@ -385,7 +630,10 @@ class AgentTeamsLikeOrchestrator:
         ]
 
     def _teammate_process_execution(self, teammate_id: str) -> tuple[bool, list[dict[str, str]]]:
-        task = self.store.claim_execution_task(teammate_id=teammate_id)
+        allowed_task_ids = self._allowed_execution_task_ids(teammate_id)
+        if allowed_task_ids is not None and not allowed_task_ids:
+            return False, []
+        task = self.store.claim_execution_task(teammate_id=teammate_id, allowed_task_ids=allowed_task_ids)
         if not task:
             return False, []
         if task.progress_log:
@@ -393,10 +641,14 @@ class AgentTeamsLikeOrchestrator:
                 f"[{teammate_id}] resume task={task.id} "
                 f"progress_log_entries={len(task.progress_log)}"
             )
+        phase = self._task_current_phase(task)
+        start_detail = f"execution started {self.execution_subject_mode}={teammate_id}"
+        if phase:
+            start_detail = f"{start_detail} phase={phase}"
         self._append_task_progress_log(
             task_id=task.id,
             source="system",
-            text=f"execution started teammate={teammate_id}",
+            text=start_detail,
         )
         task_for_execution = self.store.get_task(task.id) or task
 
@@ -435,6 +687,35 @@ class AgentTeamsLikeOrchestrator:
                     detail=blocked.block_reason or "blocked",
                 )
             ]
+        next_phase = self._task_next_phase(task_for_execution)
+        if next_phase is not None:
+            next_phase_index, next_phase_name = next_phase
+            handed_off = self.store.handoff_task_phase(
+                task_id=task.id,
+                teammate_id=teammate_id,
+                next_phase_index=next_phase_index,
+            )
+            self._append_task_progress_log(
+                task_id=handed_off.id,
+                source="system",
+                text=f"phase handoff to {next_phase_name}: {self._short(result, 160)}",
+            )
+            self.store.send_message(
+                sender=teammate_id,
+                receiver=self.config.lead_id,
+                content=f"task handed off task={handed_off.id} next_phase={next_phase_name}",
+                task_id=handed_off.id,
+            )
+            self._log(f"[{teammate_id}] handed off task={handed_off.id} next_phase={next_phase_name}")
+            return True, [
+                self._make_event(
+                    event_type="TaskHandoff",
+                    teammate=teammate_id,
+                    task_id=handed_off.id,
+                    detail=f"next_phase={next_phase_name}",
+                )
+            ]
+
         completed = self.store.complete_task(task_id=task.id, teammate_id=teammate_id, result_summary=result)
         self._append_task_progress_log(
             task_id=completed.id,
@@ -480,11 +761,11 @@ class AgentTeamsLikeOrchestrator:
         start_at = time()
         idle_rounds = 0
         stop_reason = "max_rounds"
-        teammates = self.config.resolved_teammates()
+        execution_subjects = list(self.execution_subject_ids)
         human_approval = self.config.resolved_human_approval()
         auto_approve_fallback = self.config.resolved_auto_approve_fallback()
-        if not teammates:
-            raise ValueError("at least one teammate is required")
+        if not execution_subjects:
+            raise ValueError("at least one execution subject is required")
 
         pending_events: list[dict[str, str]] = [self._make_event("Kickoff", detail="start")]
 
@@ -494,7 +775,7 @@ class AgentTeamsLikeOrchestrator:
             pending_events = []
             progress_from_teammates = False
 
-            for teammate_id in teammates:
+            for teammate_id in execution_subjects:
                 changed, events = self._teammate_process_plan(teammate_id=teammate_id)
                 if changed:
                     progress_from_teammates = True

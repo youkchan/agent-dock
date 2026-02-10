@@ -47,9 +47,17 @@ class PersonaEvaluationPipeline:
         self.personas = list(personas)
         self.max_comments_per_event = max(1, int(max_comments_per_event))
 
-    def evaluate_events(self, events: list[dict[str, str]]) -> list[PersonaComment]:
+    def evaluate_events(
+        self,
+        events: list[dict[str, str]],
+        active_persona_ids: set[str] | None = None,
+    ) -> list[PersonaComment]:
         comments: list[PersonaComment] = []
-        enabled_personas = [persona for persona in self.personas if persona.enabled]
+        enabled_personas = [
+            persona
+            for persona in self.personas
+            if persona.enabled and (active_persona_ids is None or persona.id in active_persona_ids)
+        ]
         for event in events:
             event_type = str(event.get("type", "")).strip()
             if not event_type:

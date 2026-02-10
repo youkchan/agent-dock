@@ -7,7 +7,7 @@ from pathlib import Path
 from team_orchestrator.adapter import TemplateTeammateAdapter
 from team_orchestrator.models import Task
 from team_orchestrator.orchestrator import AgentTeamsLikeOrchestrator, OrchestratorConfig
-from team_orchestrator.persona_catalog import PersonaDefinition
+from team_orchestrator.persona_catalog import PersonaDefinition, PersonaExecutionConfig
 from team_orchestrator.persona_pipeline import PersonaComment
 from team_orchestrator.provider import MockOrchestratorProvider, build_provider_from_env
 from team_orchestrator.state_store import StateStore
@@ -197,6 +197,646 @@ class OrchestratorTests(unittest.TestCase):
             self.assertIn("existing-log", adapter.seen_progress_texts)
             self.assertTrue(
                 any(text.startswith("execution started teammate=") for text in adapter.seen_progress_texts)
+            )
+
+    def test_persona_execution_subject_claims_owner_with_persona_id(self) -> None:
+        class RecordingAdapter:
+            def __init__(self) -> None:
+                self.seen_execution_ids: list[str] = []
+
+            def build_plan(self, teammate_id, task):
+                del teammate_id
+                del task
+                return "plan"
+
+            def execute_task(self, teammate_id, task, progress_callback=None):
+                del task
+                del progress_callback
+                self.seen_execution_ids.append(teammate_id)
+                return "done"
+
+        adapter = RecordingAdapter()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks([Task(id="T1", title="task1", target_paths=["src/a.ts"])])
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=adapter,
+                provider=MockOrchestratorProvider(),
+                config=OrchestratorConfig(
+                    teammate_ids=["tm-1"],
+                    max_rounds=5,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                    personas=[
+                        PersonaDefinition(
+                            id="impl-persona",
+                            role="custom",
+                            focus="execute",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                    ],
+                ),
+            )
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "all_tasks_completed")
+            self.assertEqual(adapter.seen_execution_ids, ["impl-persona"])
+            task = store.get_task("T1")
+            self.assertIsNotNone(task)
+            if task is None:
+                self.fail("task should exist")
+            self.assertEqual(task.owner, "impl-persona")
+            self.assertTrue(
+                any(
+                    str(entry.get("text", "")).startswith("execution started persona=impl-persona")
+                    for entry in task.progress_log
+                )
+            )
+
+    def test_teammate_execution_is_used_when_no_persona_executor_enabled(self) -> None:
+        class RecordingAdapter:
+            def __init__(self) -> None:
+                self.seen_execution_ids: list[str] = []
+
+            def build_plan(self, teammate_id, task):
+                del teammate_id
+                del task
+                return "plan"
+
+            def execute_task(self, teammate_id, task, progress_callback=None):
+                del task
+                del progress_callback
+                self.seen_execution_ids.append(teammate_id)
+                return "done"
+
+        adapter = RecordingAdapter()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks([Task(id="T1", title="task1", target_paths=["src/a.ts"])])
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=adapter,
+                provider=MockOrchestratorProvider(),
+                config=OrchestratorConfig(
+                    teammate_ids=["tm-1"],
+                    max_rounds=5,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                    personas=[
+                        PersonaDefinition(
+                            id="impl-persona",
+                            role="custom",
+                            focus="execute",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=False,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                    ],
+                ),
+            )
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "all_tasks_completed")
+            self.assertEqual(adapter.seen_execution_ids, ["tm-1"])
+
+    def test_teammate_execution_is_used_when_personas_not_configured(self) -> None:
+        class RecordingAdapter:
+            def __init__(self) -> None:
+                self.seen_execution_ids: list[str] = []
+
+            def build_plan(self, teammate_id, task):
+                del teammate_id
+                del task
+                return "plan"
+
+            def execute_task(self, teammate_id, task, progress_callback=None):
+                del task
+                del progress_callback
+                self.seen_execution_ids.append(teammate_id)
+                return "done"
+
+        adapter = RecordingAdapter()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks([Task(id="T1", title="task1", target_paths=["src/a.ts"])])
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=adapter,
+                provider=MockOrchestratorProvider(),
+                config=OrchestratorConfig(
+                    teammate_ids=["tm-1"],
+                    max_rounds=5,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                ),
+            )
+            self.assertEqual(orchestrator.execution_subject_mode, "teammate")
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "all_tasks_completed")
+            self.assertEqual(adapter.seen_execution_ids, ["tm-1"])
+
+    def test_orchestrator_rejects_configuration_without_execution_subjects(self) -> None:
+        class NoFallbackTeammateConfig(OrchestratorConfig):
+            def resolved_teammates(self) -> list[str]:
+                return []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks([Task(id="T1", title="task1", target_paths=["src/a.ts"])])
+            with self.assertRaisesRegex(ValueError, r"at least one execution subject is required"):
+                AgentTeamsLikeOrchestrator(
+                    store=store,
+                    adapter=TemplateTeammateAdapter(),
+                    provider=MockOrchestratorProvider(),
+                    config=NoFallbackTeammateConfig(
+                        teammate_ids=[],
+                        personas=[
+                            PersonaDefinition(
+                                id="impl-persona",
+                                role="custom",
+                                focus="execute",
+                                can_block=False,
+                                enabled=True,
+                                execution=PersonaExecutionConfig(
+                                    enabled=False,
+                                    command_ref="default",
+                                    sandbox="workspace-write",
+                                    timeout_sec=900,
+                                ),
+                            ),
+                        ],
+                    ),
+                )
+
+    def test_phase_order_handoff_switches_execution_persona(self) -> None:
+        class RecordingAdapter:
+            def __init__(self) -> None:
+                self.seen_execution_ids: list[str] = []
+
+            def build_plan(self, teammate_id, task):
+                del teammate_id
+                del task
+                return "plan"
+
+            def execute_task(self, teammate_id, task, progress_callback=None):
+                del task
+                del progress_callback
+                self.seen_execution_ids.append(teammate_id)
+                return f"done:{teammate_id}"
+
+        adapter = RecordingAdapter()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks([Task(id="T1", title="task1", target_paths=["src/a.ts"])])
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=adapter,
+                provider=MockOrchestratorProvider(),
+                config=OrchestratorConfig(
+                    teammate_ids=["tm-1"],
+                    max_rounds=5,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                    personas=[
+                        PersonaDefinition(
+                            id="implementer",
+                            role="custom",
+                            focus="implement",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                        PersonaDefinition(
+                            id="reviewer",
+                            role="custom",
+                            focus="review",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                    ],
+                    persona_defaults={
+                        "phase_order": ["implement", "review"],
+                        "phase_policies": {
+                            "implement": {"executor_personas": ["implementer"]},
+                            "review": {"executor_personas": ["reviewer"]},
+                        },
+                    },
+                ),
+            )
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "all_tasks_completed")
+            self.assertEqual(adapter.seen_execution_ids, ["implementer", "reviewer"])
+            task = store.get_task("T1")
+            self.assertIsNotNone(task)
+            if task is None:
+                self.fail("task should exist")
+            self.assertEqual(task.status, "completed")
+            self.assertEqual(task.current_phase_index, 1)
+            self.assertTrue(any("phase handoff to review" in str(entry.get("text", "")) for entry in task.progress_log))
+
+    def test_critical_without_state_transition_permission_does_not_change_status(self) -> None:
+        class KickoffCriticalPipeline:
+            def evaluate_events(self, events):
+                for event in events:
+                    if event.get("type") == "Kickoff":
+                        return [
+                            PersonaComment(
+                                persona_id="spec-checker",
+                                severity="critical",
+                                task_id="T1",
+                                event_type="Kickoff",
+                                detail="critical but no permission",
+                            )
+                        ]
+                return []
+
+        class SilentProvider:
+            provider_name = "silent-provider"
+
+            def run(self, snapshot_json):
+                del snapshot_json
+                return {
+                    "decisions": [],
+                    "task_updates": [],
+                    "messages": [],
+                    "stop": {"should_stop": False, "reason_short": ""},
+                    "meta": {
+                        "provider": "silent-provider",
+                        "model": "mock",
+                        "token_budget": {"input": 4000, "output": 800},
+                        "elapsed_ms": 1,
+                    },
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks(
+                [
+                    Task(id="T1", title="task1", depends_on=["UNKNOWN"], target_paths=["src/a.ts"]),
+                ]
+            )
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=TemplateTeammateAdapter(),
+                provider=SilentProvider(),
+                config=OrchestratorConfig(
+                    max_rounds=1,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                    personas=[
+                        PersonaDefinition(
+                            id="spec-checker",
+                            role="custom",
+                            focus="spec checks",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                    ],
+                    persona_defaults={
+                        "phase_order": ["review"],
+                        "phase_policies": {
+                            "review": {
+                                "active_personas": ["spec-checker"],
+                                "executor_personas": ["spec-checker"],
+                                "state_transition_personas": [],
+                            }
+                        },
+                    },
+                    auto_approve_fallback=False,
+                ),
+                persona_pipeline=KickoffCriticalPipeline(),
+            )
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "max_rounds")
+            task = store.get_task("T1")
+            self.assertIsNotNone(task)
+            if task is None:
+                self.fail("task should exist")
+            self.assertEqual(task.status, "pending")
+
+    def test_blocker_requires_state_transition_permission_even_with_can_block(self) -> None:
+        class KickoffBlockerPipeline:
+            def evaluate_events(self, events):
+                for event in events:
+                    if event.get("type") == "Kickoff":
+                        return [
+                            PersonaComment(
+                                persona_id="custom-blocker",
+                                severity="blocker",
+                                task_id="T1",
+                                event_type="Kickoff",
+                                detail="block requested",
+                            )
+                        ]
+                return []
+
+        class SilentProvider:
+            provider_name = "silent-provider"
+
+            def run(self, snapshot_json):
+                del snapshot_json
+                return {
+                    "decisions": [],
+                    "task_updates": [],
+                    "messages": [],
+                    "stop": {"should_stop": False, "reason_short": ""},
+                    "meta": {
+                        "provider": "silent-provider",
+                        "model": "mock",
+                        "token_budget": {"input": 4000, "output": 800},
+                        "elapsed_ms": 1,
+                    },
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks(
+                [
+                    Task(id="T1", title="task1", depends_on=["UNKNOWN"], target_paths=["src/a.ts"]),
+                ]
+            )
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=TemplateTeammateAdapter(),
+                provider=SilentProvider(),
+                config=OrchestratorConfig(
+                    max_rounds=1,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                    personas=[
+                        PersonaDefinition(
+                            id="custom-blocker",
+                            role="custom",
+                            focus="blocking checks",
+                            can_block=True,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                    ],
+                    persona_defaults={
+                        "phase_order": ["review"],
+                        "phase_policies": {
+                            "review": {
+                                "active_personas": ["custom-blocker"],
+                                "executor_personas": ["custom-blocker"],
+                                "state_transition_personas": [],
+                            }
+                        },
+                    },
+                    auto_approve_fallback=False,
+                ),
+                persona_pipeline=KickoffBlockerPipeline(),
+            )
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "max_rounds")
+            self.assertFalse(result["persona_metrics"]["persona_blocker_triggered"])
+            task = store.get_task("T1")
+            self.assertIsNotNone(task)
+            if task is None:
+                self.fail("task should exist")
+            self.assertEqual(task.status, "pending")
+
+    def test_disable_personas_applies_to_execution_and_comment_evaluation(self) -> None:
+        class RecordingAdapter:
+            def __init__(self) -> None:
+                self.seen_execution_ids: list[str] = []
+
+            def build_plan(self, teammate_id, task):
+                del teammate_id
+                del task
+                return "plan"
+
+            def execute_task(self, teammate_id, task, progress_callback=None):
+                del task
+                del progress_callback
+                self.seen_execution_ids.append(teammate_id)
+                raise RuntimeError("execution failed for test")
+
+        class SnapshotCaptureProvider:
+            provider_name = "snapshot-capture-provider"
+
+            def __init__(self) -> None:
+                self.snapshots: list[dict] = []
+
+            def run(self, snapshot_json):
+                self.snapshots.append(snapshot_json)
+                return {
+                    "decisions": [],
+                    "task_updates": [],
+                    "messages": [],
+                    "stop": {"should_stop": False, "reason_short": ""},
+                    "meta": {
+                        "provider": "snapshot-capture-provider",
+                        "model": "mock",
+                        "token_budget": {"input": 4000, "output": 800},
+                        "elapsed_ms": 1,
+                    },
+                }
+
+        adapter = RecordingAdapter()
+        provider = SnapshotCaptureProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks(
+                [
+                    Task(
+                        id="T1",
+                        title="task1",
+                        target_paths=["src/a.ts"],
+                        persona_policy={"disable_personas": ["implementer"]},
+                    ),
+                ]
+            )
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=adapter,
+                provider=provider,
+                config=OrchestratorConfig(
+                    max_rounds=1,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                    auto_approve_fallback=False,
+                    personas=[
+                        PersonaDefinition(
+                            id="implementer",
+                            role="custom",
+                            focus="implementation",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                        PersonaDefinition(
+                            id="reviewer",
+                            role="custom",
+                            focus="review",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                    ],
+                ),
+            )
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "max_rounds")
+            self.assertEqual(adapter.seen_execution_ids, ["reviewer"])
+            self.assertGreaterEqual(len(provider.snapshots), 1)
+            first_snapshot = provider.snapshots[0]
+            blocked_comments = [
+                comment
+                for comment in first_snapshot.get("persona_comments", [])
+                if comment.get("event_type") == "Blocked" and comment.get("task_id") == "T1"
+            ]
+            self.assertTrue(blocked_comments)
+            persona_ids = {comment.get("persona_id") for comment in blocked_comments}
+            self.assertEqual(persona_ids, {"reviewer"})
+
+    def test_same_phase_allows_multiple_active_persona_comments(self) -> None:
+        class FailingAdapter:
+            def build_plan(self, teammate_id, task):
+                del teammate_id
+                del task
+                return "plan"
+
+            def execute_task(self, teammate_id, task, progress_callback=None):
+                del teammate_id
+                del task
+                del progress_callback
+                raise RuntimeError("execution failed for test")
+
+        class SnapshotCaptureProvider:
+            provider_name = "snapshot-capture-provider"
+
+            def __init__(self) -> None:
+                self.snapshots: list[dict] = []
+
+            def run(self, snapshot_json):
+                self.snapshots.append(snapshot_json)
+                return {
+                    "decisions": [],
+                    "task_updates": [],
+                    "messages": [],
+                    "stop": {"should_stop": False, "reason_short": ""},
+                    "meta": {
+                        "provider": "snapshot-capture-provider",
+                        "model": "mock",
+                        "token_budget": {"input": 4000, "output": 800},
+                        "elapsed_ms": 1,
+                    },
+                }
+
+        provider = SnapshotCaptureProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks(
+                [
+                    Task(id="T1", title="task1", target_paths=["src/a.ts"]),
+                ]
+            )
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=FailingAdapter(),
+                provider=provider,
+                config=OrchestratorConfig(
+                    max_rounds=1,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                    auto_approve_fallback=False,
+                    personas=[
+                        PersonaDefinition(
+                            id="reviewer",
+                            role="custom",
+                            focus="review",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                        PersonaDefinition(
+                            id="spec-checker",
+                            role="custom",
+                            focus="spec checks",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                    ],
+                    persona_defaults={
+                        "phase_order": ["review"],
+                        "phase_policies": {
+                            "review": {
+                                "active_personas": ["reviewer", "spec-checker"],
+                                "executor_personas": ["reviewer"],
+                                "state_transition_personas": ["reviewer"],
+                            }
+                        },
+                    },
+                ),
+            )
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "max_rounds")
+            self.assertEqual(len(provider.snapshots), 1)
+            comments = provider.snapshots[0].get("persona_comments", [])
+            blocked_comments = [
+                comment
+                for comment in comments
+                if comment.get("event_type") == "Blocked" and comment.get("task_id") == "T1"
+            ]
+            self.assertEqual(len(blocked_comments), 2)
+            self.assertEqual(
+                {comment.get("persona_id") for comment in blocked_comments},
+                {"reviewer", "spec-checker"},
             )
 
     def test_persona_blocker_stops_immediately(self) -> None:

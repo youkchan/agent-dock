@@ -19,24 +19,51 @@ from .openspec_compiler import (
 )
 from .orchestrator import AgentTeamsLikeOrchestrator, OrchestratorConfig
 from .persona_catalog import PersonaDefinition, load_personas_from_payload
+from .persona_policy import normalize_persona_defaults, normalize_task_persona_policy
 from .provider import build_provider_from_env
 from .state_store import StateStore
 
 
-def _load_tasks(config_path: Path) -> tuple[list[Task], list[str], list[PersonaDefinition]]:
+def _load_tasks(
+    config_path: Path,
+) -> tuple[list[Task], list[str], list[PersonaDefinition] | None, dict[str, Any] | None]:
     with config_path.open("r", encoding="utf-8") as handle:
         raw = json.load(handle)
     return _load_tasks_payload(raw, source_label=str(config_path))
 
 
-def _load_tasks_payload(raw: dict[str, Any], source_label: str) -> tuple[list[Task], list[str], list[PersonaDefinition]]:
+def _load_tasks_payload(
+    raw: dict[str, Any], source_label: str
+) -> tuple[list[Task], list[str], list[PersonaDefinition] | None, dict[str, Any] | None]:
     personas = load_personas_from_payload(raw=raw, source_label=source_label)
-    tasks = [Task.from_dict(item) for item in raw.get("tasks", [])]
+    known_persona_ids = {persona.id for persona in personas}
+    persona_defaults = normalize_persona_defaults(
+        raw.get("persona_defaults"),
+        source_label=source_label,
+        known_persona_ids=known_persona_ids,
+    )
+
+    raw_tasks = raw.get("tasks", [])
+    if not isinstance(raw_tasks, list):
+        raise ValueError(f"tasks must be a list ({source_label})")
+    tasks: list[Task] = []
+    for index, item in enumerate(raw_tasks):
+        if not isinstance(item, dict):
+            raise ValueError(f"tasks[{index}] must be an object ({source_label})")
+        task = Task.from_dict(item)
+        task.persona_policy = normalize_task_persona_policy(
+            item.get("persona_policy"),
+            source_label=source_label,
+            task_id=task.id,
+            known_persona_ids=known_persona_ids,
+        )
+        tasks.append(task)
     for task in tasks:
         if not task.target_paths:
             raise ValueError(f"task {task.id} must define target_paths ({source_label})")
     teammates = raw.get("teammates", [])
-    return tasks, [str(item) for item in teammates], personas
+    personas_for_runtime = personas if raw.get("personas") is not None else None
+    return tasks, [str(item) for item in teammates], personas_for_runtime, persona_defaults
 
 
 def _safe_int_env(name: str, default: int) -> int:
@@ -242,7 +269,9 @@ def _build_compile_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve_tasks_for_run(args: argparse.Namespace) -> tuple[list[Task], list[str], list[PersonaDefinition]]:
+def _resolve_tasks_for_run(
+    args: argparse.Namespace,
+) -> tuple[list[Task], list[str], list[PersonaDefinition] | None, dict[str, Any] | None]:
     if args.config is not None and args.openspec_change:
         raise ValueError("--config and --openspec-change cannot be used together")
 
@@ -347,7 +376,7 @@ def _run_orchestrator(args: argparse.Namespace) -> int:
         os.environ["ORCHESTRATOR_PROVIDER"] = args.provider
     if args.human_approval:
         os.environ["HUMAN_APPROVAL"] = "1"
-    tasks, teammates, personas = _resolve_tasks_for_run(args)
+    tasks, teammates, personas, persona_defaults = _resolve_tasks_for_run(args)
     if not tasks:
         raise ValueError("No tasks found in config")
     has_existing_state = _state_file_path(args.state_dir).exists()
@@ -382,6 +411,7 @@ def _run_orchestrator(args: argparse.Namespace) -> int:
         tick_seconds=args.tick_seconds,
         human_approval=args.human_approval,
         personas=personas,
+        persona_defaults=persona_defaults,
     )
     teammate_adapter = _build_teammate_adapter(args)
     orchestrator = AgentTeamsLikeOrchestrator(

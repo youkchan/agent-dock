@@ -150,6 +150,34 @@ class StateStoreTests(unittest.TestCase):
             self.assertTrue(task_a.progress_log)
             self.assertIn("resume recovery", task_a.progress_log[-1]["text"])
 
+    def test_claim_execution_task_respects_allowed_task_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp))
+            store.bootstrap_tasks(
+                [
+                    Task(id="A", title="task A", target_paths=["src/a.ts"]),
+                    Task(id="B", title="task B", target_paths=["src/b.ts"]),
+                ]
+            )
+            claimed = store.claim_execution_task("tm-1", allowed_task_ids={"B"})
+            self.assertIsNotNone(claimed)
+            if claimed is None:
+                self.fail("expected claim")
+            self.assertEqual(claimed.id, "B")
+
+    def test_handoff_task_phase_requeues_with_next_phase_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp))
+            store.bootstrap_tasks([Task(id="A", title="task A", target_paths=["src/a.ts"])])
+            claimed = store.claim_execution_task("tm-1")
+            self.assertIsNotNone(claimed)
+            if claimed is None:
+                self.fail("expected claim")
+            handed = store.handoff_task_phase(task_id="A", teammate_id="tm-1", next_phase_index=1)
+            self.assertEqual(handed.status, "pending")
+            self.assertIsNone(handed.owner)
+            self.assertEqual(handed.current_phase_index, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

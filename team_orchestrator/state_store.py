@@ -230,11 +230,13 @@ class StateStore:
             self._touch_progress(state)
             return task
 
-    def claim_execution_task(self, teammate_id: str) -> Task | None:
+    def claim_execution_task(self, teammate_id: str, allowed_task_ids: set[str] | None = None) -> Task | None:
         with self._locked_state() as state:
             tasks: dict[str, dict] = state["tasks"]
             for task_id in sorted(tasks.keys()):
                 candidate = Task.from_dict(tasks[task_id])
+                if allowed_task_ids is not None and candidate.id not in allowed_task_ids:
+                    continue
                 if not self._is_execution_ready(candidate, tasks):
                     continue
                 if self._has_target_collision(candidate, tasks):
@@ -247,6 +249,27 @@ class StateStore:
                 self._touch_progress(state)
                 return candidate
         return None
+
+    def handoff_task_phase(self, task_id: str, teammate_id: str, next_phase_index: int) -> Task:
+        if next_phase_index < 0:
+            raise ValueError("next_phase_index must be non-negative")
+        with self._locked_state() as state:
+            raw = state["tasks"].get(task_id)
+            if not raw:
+                raise KeyError(f"task not found: {task_id}")
+            task = Task.from_dict(raw)
+            if task.owner != teammate_id:
+                raise ValueError("owner mismatch")
+            if task.status != "in_progress":
+                raise ValueError("task not in progress")
+            task.status = "pending"
+            task.owner = None
+            task.block_reason = None
+            task.current_phase_index = next_phase_index
+            task.updated_at = time()
+            state["tasks"][task_id] = task.to_dict()
+            self._touch_progress(state)
+            return task
 
     def detect_collisions(self) -> list[dict[str, str]]:
         state = self._read_state()

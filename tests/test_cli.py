@@ -80,6 +80,12 @@ class CliPersonaCatalogTests(unittest.TestCase):
         )
         self.assertTrue(all(persona.enabled for persona in personas))
 
+    def test_load_tasks_payload_returns_none_personas_when_not_specified(self) -> None:
+        payload = self._base_payload()
+        _, teammates, personas, _ = _load_tasks_payload(payload, source_label="inline")
+        self.assertEqual(teammates, ["teammate-a"])
+        self.assertIsNone(personas)
+
     def test_project_persona_same_id_fully_overrides_default(self) -> None:
         payload = self._base_payload()
         payload["personas"] = [
@@ -179,6 +185,142 @@ class CliPersonaCatalogTests(unittest.TestCase):
             },
         ]
         with self.assertRaisesRegex(ValueError, r"duplicate persona id\(s\): custom-a"):
+            _load_tasks_payload(payload, source_label="inline")
+
+    def test_persona_execution_config_is_loaded(self) -> None:
+        payload = self._base_payload()
+        payload["personas"] = [
+            {
+                "id": "implementer",
+                "role": "implementer",
+                "focus": "implementation",
+                "can_block": False,
+                "enabled": True,
+                "execution": {
+                    "enabled": True,
+                    "command_ref": "default",
+                    "sandbox": "workspace-write",
+                    "timeout_sec": 600,
+                },
+            }
+        ]
+
+        _, _, personas, _ = _load_tasks_payload(payload, source_label="inline")
+        self.assertIsNotNone(personas)
+        if personas is None:
+            self.fail("personas should be set")
+        implementer = next(persona for persona in personas if persona.id == "implementer")
+        self.assertIsNotNone(implementer.execution)
+        if implementer.execution is None:
+            self.fail("execution config should be set")
+        self.assertTrue(implementer.execution.enabled)
+        self.assertEqual(implementer.execution.command_ref, "default")
+        self.assertEqual(implementer.execution.sandbox, "workspace-write")
+        self.assertEqual(implementer.execution.timeout_sec, 600)
+
+    def test_persona_execution_config_unknown_key_fails_on_load(self) -> None:
+        payload = self._base_payload()
+        payload["personas"] = [
+            {
+                "id": "implementer",
+                "role": "implementer",
+                "focus": "implementation",
+                "can_block": False,
+                "enabled": True,
+                "execution": {
+                    "enabled": True,
+                    "command_ref": "default",
+                    "sandbox": "workspace-write",
+                    "timeout_sec": 600,
+                    "unexpected": "value",
+                },
+            }
+        ]
+
+        with self.assertRaisesRegex(ValueError, r"execution has unknown keys: unexpected"):
+            _load_tasks_payload(payload, source_label="inline")
+
+    def test_persona_execution_config_invalid_timeout_fails_on_load(self) -> None:
+        payload = self._base_payload()
+        payload["personas"] = [
+            {
+                "id": "implementer",
+                "role": "implementer",
+                "focus": "implementation",
+                "can_block": False,
+                "enabled": True,
+                "execution": {
+                    "enabled": True,
+                    "command_ref": "default",
+                    "sandbox": "workspace-write",
+                    "timeout_sec": "600",
+                },
+            }
+        ]
+
+        with self.assertRaisesRegex(ValueError, r"execution.timeout_sec must be a positive integer"):
+            _load_tasks_payload(payload, source_label="inline")
+
+    def test_persona_defaults_and_task_persona_policy_are_accepted(self) -> None:
+        payload = self._base_payload()
+        payload["persona_defaults"] = {
+            "phase_order": ["implement", "review"],
+            "phase_policies": {
+                "implement": {
+                    "active_personas": ["implementer"],
+                    "executor_personas": ["implementer"],
+                    "state_transition_personas": ["implementer"],
+                },
+                "review": {
+                    "active_personas": ["code-reviewer", "spec-checker"],
+                    "executor_personas": ["code-reviewer"],
+                    "state_transition_personas": ["code-reviewer"],
+                },
+            },
+        }
+        payload["tasks"][0]["persona_policy"] = {
+            "disable_personas": ["spec-checker"],
+            "phase_overrides": {
+                "review": {
+                    "active_personas": ["code-reviewer"],
+                    "executor_personas": ["code-reviewer"],
+                    "state_transition_personas": ["code-reviewer"],
+                }
+            },
+        }
+
+        tasks, _, _, persona_defaults = _load_tasks_payload(payload, source_label="inline")
+        self.assertIsNotNone(tasks[0].persona_policy)
+        if tasks[0].persona_policy is None:
+            self.fail("persona_policy should be set")
+        self.assertEqual(tasks[0].persona_policy["disable_personas"], ["spec-checker"])
+        self.assertIn("review", tasks[0].persona_policy["phase_overrides"])
+        self.assertIsNotNone(persona_defaults)
+        if persona_defaults is None:
+            self.fail("persona_defaults should be set")
+        self.assertEqual(persona_defaults["phase_order"], ["implement", "review"])
+
+    def test_persona_defaults_unknown_persona_fails_on_load(self) -> None:
+        payload = self._base_payload()
+        payload["persona_defaults"] = {
+            "phase_order": ["implement"],
+            "phase_policies": {
+                "implement": {
+                    "active_personas": ["missing-persona"],
+                }
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, r"references unknown persona: missing-persona"):
+            _load_tasks_payload(payload, source_label="inline")
+
+    def test_task_persona_policy_unknown_persona_fails_on_load(self) -> None:
+        payload = self._base_payload()
+        payload["tasks"][0]["persona_policy"] = {
+            "disable_personas": ["missing-persona"],
+        }
+
+        with self.assertRaisesRegex(ValueError, r"references unknown persona: missing-persona"):
             _load_tasks_payload(payload, source_label="inline")
 
 

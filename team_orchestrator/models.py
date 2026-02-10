@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from time import time
 from typing import Any, Literal
@@ -36,6 +37,8 @@ class Task:
     created_at: float = field(default_factory=time)
     updated_at: float = field(default_factory=time)
     completed_at: float | None = None
+    persona_policy: dict[str, Any] | None = None
+    current_phase_index: int | None = None
 
     def __post_init__(self) -> None:
         if self.plan_status is None:
@@ -61,6 +64,8 @@ class Task:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "completed_at": self.completed_at,
+            "persona_policy": copy.deepcopy(self.persona_policy),
+            "current_phase_index": self.current_phase_index,
         }
 
     @classmethod
@@ -84,4 +89,10 @@ class Task:
             created_at=raw.get("created_at", time()),
             updated_at=raw.get("updated_at", time()),
             completed_at=raw.get("completed_at"),
+            persona_policy=copy.deepcopy(raw.get("persona_policy"))
+            if isinstance(raw.get("persona_policy"), dict)
+            else None,
+            current_phase_index=raw.get("current_phase_index")
+            if isinstance(raw.get("current_phase_index"), int)
+            else None,
         )
