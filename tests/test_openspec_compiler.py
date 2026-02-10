@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 
 from team_orchestrator.cli import main
-from team_orchestrator.openspec_compiler import OpenSpecCompileError, compile_change_to_config
+from team_orchestrator.openspec_compiler import (
+    OpenSpecCompileError,
+    _parse_tasks_markdown,
+    compile_change_to_config,
+)
+from team_orchestrator.openspec_template import get_openspec_tasks_template
 
 
 class OpenSpecCompilerTests(unittest.TestCase):
@@ -14,6 +19,11 @@ class OpenSpecCompilerTests(unittest.TestCase):
         change_dir = root / "openspec" / "changes" / change_id
         change_dir.mkdir(parents=True, exist_ok=True)
         (change_dir / "tasks.md").write_text(tasks_md, encoding="utf-8")
+
+    def _write_tasks_markdown(self, root: Path, tasks_md: str) -> Path:
+        tasks_path = root / "tasks.md"
+        tasks_path.write_text(tasks_md, encoding="utf-8")
+        return tasks_path
 
     def test_compile_tasks_markdown_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -99,6 +109,32 @@ class OpenSpecCompilerTests(unittest.TestCase):
             self.assertEqual(verification_items[0]["text"], "unit tests pass")
             self.assertEqual(verification_items[1]["checked"], False)
             self.assertEqual(verification_items[1]["text"], "smoke run passes")
+
+    def test_parse_tasks_markdown_accepts_ja_template_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_path = self._write_tasks_markdown(root, get_openspec_tasks_template("ja"))
+            parsed_tasks, verification_items, persona_directives = _parse_tasks_markdown(tasks_path)
+            self.assertEqual([task["id"] for task in parsed_tasks], ["1.1", "1.2"])
+            self.assertEqual(len(verification_items), 2)
+            self.assertIn("persona_defaults", persona_directives)
+            self.assertEqual(
+                persona_directives["persona_defaults"]["phase_order"],
+                ["implement", "review", "spec_check", "test"],
+            )
+
+    def test_parse_tasks_markdown_accepts_en_template_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_path = self._write_tasks_markdown(root, get_openspec_tasks_template("en"))
+            parsed_tasks, verification_items, persona_directives = _parse_tasks_markdown(tasks_path)
+            self.assertEqual([task["id"] for task in parsed_tasks], ["1.1", "1.2"])
+            self.assertEqual(len(verification_items), 2)
+            self.assertIn("persona_defaults", persona_directives)
+            self.assertEqual(
+                persona_directives["persona_defaults"]["phase_order"],
+                ["implement", "review", "spec_check", "test"],
+            )
 
     def test_compile_fills_default_target_paths_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

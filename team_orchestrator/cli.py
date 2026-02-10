@@ -17,6 +17,11 @@ from .openspec_compiler import (
     default_compiled_output_path,
     write_compiled_config,
 )
+from .openspec_template import (
+    DEFAULT_TEMPLATE_LANG,
+    SUPPORTED_TEMPLATE_LANGS,
+    get_openspec_tasks_template,
+)
 from .orchestrator import AgentTeamsLikeOrchestrator, OrchestratorConfig
 from .persona_catalog import PersonaDefinition, load_personas_from_payload
 from .persona_policy import normalize_persona_defaults, normalize_task_persona_policy
@@ -287,6 +292,17 @@ def _build_compile_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_print_template_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Print OpenSpec tasks.md template")
+    parser.add_argument(
+        "--lang",
+        choices=SUPPORTED_TEMPLATE_LANGS,
+        default=DEFAULT_TEMPLATE_LANG,
+        help=f"Template language (default: {DEFAULT_TEMPLATE_LANG})",
+    )
+    return parser
+
+
 def _resolve_tasks_for_run(
     args: argparse.Namespace,
 ) -> tuple[list[Task], list[str], list[PersonaDefinition] | None, dict[str, Any] | None]:
@@ -460,8 +476,17 @@ def _compile_openspec(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_openspec_template(args: argparse.Namespace) -> int:
+    print(get_openspec_tasks_template(args.lang), end="")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args_list = list(argv) if argv is not None else sys.argv[1:]
+    if args_list and args_list[0] == "print-openspec-template":
+        parser = _build_print_template_parser()
+        parsed = parser.parse_args(args_list[1:])
+        return _print_openspec_template(parsed)
     if args_list and args_list[0] == "compile-openspec":
         parser = _build_compile_parser()
         parsed = parser.parse_args(args_list[1:])

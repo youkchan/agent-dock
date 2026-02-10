@@ -34,8 +34,14 @@ CLI サブコマンドを追加する。
 - 依存行（`依存` または `depends_on`）
 - 対象行（`対象` または `target_paths`）
 - 成果物/説明行（`成果物` または `description`）
+- フェーズ既定行（`persona_defaults.phase_order`）
+- フェーズ担当行（`フェーズ担当` または `phase assignments`）
 - 検証セクション（`検証項目` / `Verification Checklist`）
 - チェックリスト行
+
+フェーズ固定文言は、次をテンプレート既定値として埋め込む:
+- `persona_defaults`: `{"phase_order":["implement","review","spec_check","test"]}`
+- `フェーズ担当 / phase assignments`: `implement=implementer; review=code-reviewer; spec_check=spec-checker; test=test-owner`
 
 ### 4) 安全性
 テンプレート生成は純粋出力で副作用を持たない。

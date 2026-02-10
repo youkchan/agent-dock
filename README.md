@@ -92,6 +92,27 @@ jq '.tasks["T-001"].progress_log' /tmp/codex_agent_state/state.json
 2. `task_configs/overrides/<change-id>.yaml` を任意で上書き適用
 3. 生成された task_config で run
 
+利用例（テンプレート出力）:
+```bash
+mkdir -p openspec/changes/add-my-change
+python -m team_orchestrator.cli print-openspec-template --lang ja \
+  > openspec/changes/add-my-change/tasks.md
+```
+
+英語テンプレートを使う場合:
+```bash
+python -m team_orchestrator.cli print-openspec-template --lang en \
+  > openspec/changes/add-my-change/tasks.md
+```
+
+未対応言語を指定した場合（例: `fr`）は、`ja`, `en` の許可値付きでエラーになります。
+
+推奨フロー（OpenSpec 運用）:
+1. `print-openspec-template` で `tasks.md` を生成する。
+2. プレースホルダを実タスクに置き換える（`persona_defaults.phase_order` と `フェーズ担当/phase assignments` の固定行は保持）。
+3. `compile-openspec` を実行し、`target_paths` / `depends_on` / `検証項目` の解釈結果を確認する。
+4. 問題なければ `run --openspec-change ... --save-compiled` で実行し、生成 JSON を保存する。
+
 コンパイルのみ:
 ```bash
 python -m team_orchestrator.cli compile-openspec \
