@@ -41,3 +41,15 @@
 - **WHEN** `--skip-codex-consistency` を指定して compile-openspec を実行する
 - **THEN** Codex レビューは実行されない
 - **AND** 既存コンパイル挙動で `task_config` が生成される
+
+### Requirement: 各タスクにフェーズ担当が明示されていなければならないこと
+システムは OpenSpec の `tasks.md` をコンパイルする際、各タスクに `フェーズ担当` / `phase assignments`（または同等の `persona_policy.phase_overrides`）が定義されていない場合、コンパイルを失敗させなければならない（SHALL）。
+
+#### Scenario: フェーズ担当が欠落したタスクでコンパイル失敗する
+- **WHEN** `tasks.md` 内に `フェーズ担当` / `phase assignments` の指定がないタスクが1つでも存在する
+- **THEN** コンパイルは失敗する
+- **AND** エラーに対象タスク id が含まれる
+
+#### Scenario: 全タスクにフェーズ担当がある場合はコンパイル継続する
+- **WHEN** すべてのタスクで `フェーズ担当` / `phase assignments`（または同等指定）が定義されている
+- **THEN** この要件に起因するエラーは発生しない

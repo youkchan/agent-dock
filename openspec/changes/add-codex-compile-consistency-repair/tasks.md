@@ -10,13 +10,15 @@
 - [ ] 1.5 メタ情報出力を追加する
   - 成果物: `meta.codex_consistency.*` の出力
 - [ ] 1.6 テストを追加する
-  - 成果物: 整合/不整合補正/不正 patch/コマンド失敗のテスト
+  - 成果物: 整合/不整合補正/不正 patch/コマンド失敗/フェーズ担当必須化のテスト
 - [ ] 1.7 README を更新する
   - 成果物: 利用手順、無効化方法、失敗時挙動
+- [ ] 1.8 フェーズ担当必須バリデーションを追加する
+  - 成果物: 各タスクに `フェーズ担当` / `phase assignments`（`persona_policy.phase_overrides`）がない場合の compile 失敗
 
 ## 2. 検証項目
 - [ ] `python -m unittest discover -s tests -v` が通る
 - [ ] 不整合を返す Codex 応答で `task_config` が補正される
 - [ ] 不正 patch はコンパイル失敗になる
 - [ ] `--skip-codex-consistency` で既存挙動互換になる
-- [ ] OpenSpec 作成時に、`tasks.md` の各タスクへ `フェーズ担当` / `phase assignments` が記載されていることを確認する
+- [ ] `tasks.md` のいずれかのタスクで `フェーズ担当` / `phase assignments` が欠落すると compile が失敗する

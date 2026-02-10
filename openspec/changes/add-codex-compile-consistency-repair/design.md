@@ -6,6 +6,7 @@
 - OpenSpec change と生成 `task_config` の意味整合性をコンパイル時に確認する。
 - Codex 指摘に基づく追記/修正を決定的な形式で適用する。
 - 補正後も既存安全ルール（スキーマ、依存、循環、必須項目）を満たすことを保証する。
+- 各タスクにフェーズ担当が明示されていることをコンパイル時に保証する。
 
 ## 非目標
 - タスク内容の自由生成（制約なし自動作成）
@@ -40,6 +41,7 @@ Codex 応答は JSON のみを許可し、最低限次を含む:
 
 ### 3) 適用フロー
 1. 既存コンパイル（parse + override + static validate）
+   - static validate で「各タスクに `phase_overrides` が1つ以上あること」を必須化する
 2. Codex 整合性レビュー
 3. `is_consistent=false` かつ有効 `patch` の場合に補正適用
 4. 補正後 payload に static validate を再適用
