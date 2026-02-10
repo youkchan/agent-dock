@@ -50,6 +50,8 @@ class SubprocessCodexAdapter(TeammateAdapter):
         process = subprocess.Popen(
             command,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.PIPE,
