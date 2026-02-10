@@ -375,95 +375,55 @@ import sys
 ansi_re = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")
 include_user = os.getenv("CODEX_STREAM_INCLUDE_USER", "1").strip() == "1"
 mode = "default"
-in_diff = False
 
-for raw in sys.stdin:
-    line = raw.rstrip("\n")
+for raw in sys.stdin.buffer:
+    line = raw.decode("utf-8", errors="replace").rstrip("\n")
     plain = ansi_re.sub("", line).replace("\r", "")
     stripped = plain.strip()
     lowered = stripped.lower()
 
     if lowered == "thinking":
         mode = "thinking"
-        in_diff = False
-        print(line)
+        print(line, flush=True)
         continue
     if lowered == "codex":
         mode = "codex"
-        in_diff = False
-        print(line)
+        print(line, flush=True)
         continue
     if lowered == "user":
         mode = "user"
-        in_diff = False
         if include_user:
-            print(line)
+            print(line, flush=True)
         continue
     if lowered.startswith("exec"):
         mode = "exec"
-        in_diff = False
         continue
 
     if mode == "exec":
         continue
-    if mode not in ("user", "thinking", "codex"):
-        continue
     if mode == "user" and not include_user:
         continue
 
-    if lowered.startswith("pyenv: "):
-        continue
-    if lowered.startswith("mcp startup:"):
-        continue
-    if lowered.startswith("tokens used"):
-        continue
-    if lowered.startswith("file update"):
-        in_diff = True
-        continue
-    if lowered.startswith("apply_patch("):
-        in_diff = True
-        continue
-    if lowered.startswith("success. updated the following files:"):
-        in_diff = True
-        continue
-
-    if in_diff:
-        if stripped == "":
-            in_diff = False
-            continue
-        if (
-            lowered.startswith("diff --git")
-            or lowered.startswith("index ")
-            or lowered.startswith("--- ")
-            or lowered.startswith("+++ ")
-            or lowered.startswith("@@ ")
-        ):
-            continue
-        if stripped.startswith("+") or stripped.startswith("-"):
-            continue
-        if stripped.startswith("M ") or stripped.startswith("A ") or stripped.startswith("D "):
-            continue
-        if stripped.startswith("Chunk ID:") or lowered.startswith("wall time:"):
-            continue
-        if lowered.startswith("process exited with code"):
-            continue
-        if lowered.startswith("output:"):
-            continue
-        if lowered.startswith("diff --"):
-            continue
-        in_diff = False
-
-    if lowered.startswith("/bin/"):
-        continue
-    if "succeeded in " in lowered and "/bin/" in lowered:
-        continue
-
-    print(line)
+    print(line, flush=True)
 PY
 }
 
 run_codex_command() {
   "${CMD[@]}" < "$TMP_PROMPT_FILE"
+}
+
+run_codex_with_filtered_view() {
+  local include_user="${1:-1}"
+  : > "$TMP_STREAM_LOG"
+
+  tail -n +1 -f "$TMP_STREAM_LOG" | stream_assistant_view "$include_user" 1>&2 &
+  local viewer_pid=$!
+
+  run_codex_command 2>&1 | tee -a "$TMP_STREAM_LOG" >/dev/null
+  RUN_CODEX_EXIT_CODE=${PIPESTATUS[0]}
+
+  kill "$viewer_pid" 2>/dev/null || true
+  wait "$viewer_pid" 2>/dev/null || true
 }
 
 extract_result_block() {
@@ -512,14 +472,15 @@ PY
 }
 
 codex_exit_code=0
+RUN_CODEX_EXIT_CODE=0
 set +e
 if [[ "$CODEX_STREAM_LOGS" == "1" ]]; then
   if [[ "$CODEX_STREAM_VIEW" == "assistant" ]]; then
-    run_codex_command 2>&1 | tee "$TMP_STREAM_LOG" | stream_assistant_view 1 1>&2
-    codex_exit_code=${PIPESTATUS[0]}
+    run_codex_with_filtered_view 1
+    codex_exit_code=$RUN_CODEX_EXIT_CODE
   elif [[ "$CODEX_STREAM_VIEW" == "thinking" ]]; then
-    run_codex_command 2>&1 | tee "$TMP_STREAM_LOG" | stream_assistant_view 0 1>&2
-    codex_exit_code=${PIPESTATUS[0]}
+    run_codex_with_filtered_view 0
+    codex_exit_code=$RUN_CODEX_EXIT_CODE
   else
     run_codex_command 2>&1 | tee "$TMP_STREAM_LOG" 1>&2
     codex_exit_code=${PIPESTATUS[0]}
