@@ -152,21 +152,46 @@ class AgentTeamsLikeOrchestrator:
             return 0
         return max(0, int(task.current_phase_index))
 
+    def _task_phase_order(self, task: Task) -> list[str]:
+        if self.execution_subject_mode != "persona":
+            return []
+        policy = task.persona_policy if isinstance(task.persona_policy, dict) else None
+        if isinstance(policy, dict):
+            raw_order = policy.get("phase_order")
+            if isinstance(raw_order, list):
+                normalized: list[str] = []
+                seen: set[str] = set()
+                for item in raw_order:
+                    phase = str(item).strip()
+                    if not phase or phase in seen:
+                        continue
+                    seen.add(phase)
+                    normalized.append(phase)
+                if normalized:
+                    return normalized
+        return self.phase_order
+
     def _task_current_phase(self, task: Task) -> str | None:
-        if self.execution_subject_mode != "persona" or not self.phase_order:
+        if self.execution_subject_mode != "persona":
+            return None
+        phase_order = self._task_phase_order(task)
+        if not phase_order:
             return None
         index = self._task_phase_index(task)
-        if index >= len(self.phase_order):
+        if index >= len(phase_order):
             return None
-        return self.phase_order[index]
+        return phase_order[index]
 
     def _task_next_phase(self, task: Task) -> tuple[int, str] | None:
-        if self.execution_subject_mode != "persona" or not self.phase_order:
+        if self.execution_subject_mode != "persona":
+            return None
+        phase_order = self._task_phase_order(task)
+        if not phase_order:
             return None
         next_index = self._task_phase_index(task) + 1
-        if next_index >= len(self.phase_order):
+        if next_index >= len(phase_order):
             return None
-        return next_index, self.phase_order[next_index]
+        return next_index, phase_order[next_index]
 
     def _phase_policy_for_task(self, task: Task, phase: str) -> dict[str, list[str]]:
         merged = dict(self.phase_policies.get(phase, {}))
@@ -210,7 +235,7 @@ class AgentTeamsLikeOrchestrator:
         if self.execution_subject_mode != "persona":
             return None
         disabled = self._task_disabled_personas(task)
-        if not self.phase_order:
+        if not self._task_phase_order(task):
             personas = [persona.id for persona in self.personas if persona.enabled]
             return [persona_id for persona_id in personas if persona_id not in disabled]
 
@@ -263,7 +288,7 @@ class AgentTeamsLikeOrchestrator:
             return False
         if persona_id in self._task_disabled_personas(task):
             return False
-        if not self.phase_order:
+        if not self._task_phase_order(task):
             return True
         allowed = self._policy_personas_for_task(
             task=task,

@@ -456,6 +456,129 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(task.current_phase_index, 1)
             self.assertTrue(any("phase handoff to review" in str(entry.get("text", "")) for entry in task.progress_log))
 
+    def test_task_phase_order_overrides_global_phase_sequence(self) -> None:
+        class RecordingAdapter:
+            def __init__(self) -> None:
+                self.seen_execution_ids: list[str] = []
+
+            def build_plan(self, teammate_id, task):
+                del teammate_id
+                del task
+                return "plan"
+
+            def execute_task(self, teammate_id, task, progress_callback=None):
+                del task
+                del progress_callback
+                self.seen_execution_ids.append(teammate_id)
+                return f"done:{teammate_id}"
+
+        adapter = RecordingAdapter()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks(
+                [
+                    Task(
+                        id="T1",
+                        title="task1",
+                        target_paths=["src/a.ts"],
+                        persona_policy={
+                            "phase_order": ["implement"],
+                            "phase_overrides": {
+                                "implement": {
+                                    "active_personas": ["implementer"],
+                                    "executor_personas": ["implementer"],
+                                    "state_transition_personas": ["implementer"],
+                                }
+                            },
+                        },
+                    )
+                ]
+            )
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=adapter,
+                provider=MockOrchestratorProvider(),
+                config=OrchestratorConfig(
+                    teammate_ids=["tm-1"],
+                    max_rounds=5,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                    personas=[
+                        PersonaDefinition(
+                            id="implementer",
+                            role="custom",
+                            focus="implement",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                        PersonaDefinition(
+                            id="reviewer",
+                            role="custom",
+                            focus="review",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                        PersonaDefinition(
+                            id="spec-checker",
+                            role="custom",
+                            focus="spec-check",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                        PersonaDefinition(
+                            id="test-owner",
+                            role="custom",
+                            focus="test",
+                            can_block=False,
+                            enabled=True,
+                            execution=PersonaExecutionConfig(
+                                enabled=True,
+                                command_ref="default",
+                                sandbox="workspace-write",
+                                timeout_sec=900,
+                            ),
+                        ),
+                    ],
+                    persona_defaults={
+                        "phase_order": ["implement", "review", "spec_check", "test"],
+                        "phase_policies": {
+                            "implement": {"executor_personas": ["implementer"]},
+                            "review": {"executor_personas": ["reviewer"]},
+                            "spec_check": {"executor_personas": ["spec-checker"]},
+                            "test": {"executor_personas": ["test-owner"]},
+                        },
+                    },
+                ),
+            )
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "all_tasks_completed")
+            self.assertEqual(adapter.seen_execution_ids, ["implementer"])
+            task = store.get_task("T1")
+            self.assertIsNotNone(task)
+            if task is None:
+                self.fail("task should exist")
+            self.assertEqual(task.status, "completed")
+            self.assertIsNone(task.current_phase_index)
+            self.assertFalse(any("phase handoff" in str(entry.get("text", "")) for entry in task.progress_log))
+
     def test_critical_without_state_transition_permission_does_not_change_status(self) -> None:
         class KickoffCriticalPipeline:
             def evaluate_events(self, events):

@@ -310,13 +310,43 @@ class OpenSpecCompilerTests(unittest.TestCase):
             policy_11 = by_id["1.1"]["persona_policy"]
             self.assertEqual(policy_11["disable_personas"], ["spec-checker"])
             self.assertIn("review", policy_11["phase_overrides"])
+            self.assertEqual(policy_11["phase_order"], ["review"])
             policy_12 = by_id["1.2"]["persona_policy"]
             self.assertEqual(policy_12["disable_personas"], ["test-owner", "spec-checker"])
             self.assertIn("implement", policy_12["phase_overrides"])
             self.assertIn("review", policy_12["phase_overrides"])
+            self.assertEqual(policy_12["phase_order"], ["implement", "review"])
             resolution = compiled["meta"]["persona_resolution"]
             self.assertEqual(resolution["global_disable_personas"], ["spec-checker"])
             self.assertEqual(resolution["tasks_with_persona_policy"], ["1.1", "1.2"])
+
+    def test_compile_keeps_task_phase_order_when_explicitly_specified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_change(
+                root,
+                "add-task-phase-order",
+                "\n".join(
+                    [
+                        "## 0. Persona Defaults",
+                        '- persona_defaults: {"phase_order": ["implement", "review", "spec_check", "test"]}',
+                        "## 1. 実装タスク",
+                        "- [ ] 1.1 実装する",
+                        "  - 依存: なし",
+                        "  - 対象: src/a.ts",
+                        "  - persona_policy: {\"phase_order\": [\"implement\"], \"phase_overrides\": {\"implement\": {\"executor_personas\": [\"implementer\"], \"active_personas\": [\"implementer\"], \"state_transition_personas\": [\"implementer\"]}}}",
+                    ]
+                ),
+            )
+            compiled = compile_change_to_config(
+                change_id="add-task-phase-order",
+                openspec_root=root / "openspec",
+                overrides_root=root / "task_configs" / "overrides",
+            )
+            by_id = {task["id"]: task for task in compiled["tasks"]}
+            policy_11 = by_id["1.1"]["persona_policy"]
+            self.assertEqual(policy_11["phase_order"], ["implement"])
+            self.assertIn("implement", policy_11["phase_overrides"])
 
     def test_compile_fails_on_unknown_persona_in_persona_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -359,7 +389,10 @@ class OpenSpecCompilerTests(unittest.TestCase):
                     ]
                 ),
             )
-            with self.assertRaisesRegex(OpenSpecCompileError, r"unknown persona phase\(s\) in task 1.1: review"):
+            with self.assertRaisesRegex(
+                OpenSpecCompileError,
+                r"unknown persona phase\(s\) in task 1\.1 phase_order: review",
+            ):
                 compile_change_to_config(
                     change_id="add-unknown-phase",
                     openspec_root=root / "openspec",

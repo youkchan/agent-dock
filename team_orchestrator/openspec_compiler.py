@@ -760,6 +760,14 @@ def _validate_persona_payload(payload: dict[str, Any], *, change_id: str) -> Non
                 known_persona_ids=known_persona_ids,
             )
             if isinstance(normalized_policy, dict):
+                phase_order = normalized_policy.get("phase_order")
+                if isinstance(phase_order, list):
+                    unknown_phases = sorted(set(phase_order) - known_phases)
+                    if unknown_phases:
+                        formatted = ", ".join(unknown_phases)
+                        raise OpenSpecCompileError(
+                            f"unknown persona phase(s) in task {task_id} phase_order: {formatted}"
+                        )
                 phase_overrides = normalized_policy.get("phase_overrides")
                 if isinstance(phase_overrides, dict):
                     unknown_phases = sorted(set(phase_overrides.keys()) - known_phases)
@@ -779,6 +787,7 @@ def _validate_persona_payload(payload: dict[str, Any], *, change_id: str) -> Non
 
 
 def _canonicalize_phase_fields(payload: dict[str, Any]) -> None:
+    default_phase_order: list[str] = []
     persona_defaults = payload.get("persona_defaults")
     if isinstance(persona_defaults, dict):
         phase_order = persona_defaults.get("phase_order")
@@ -792,6 +801,7 @@ def _canonicalize_phase_fields(payload: dict[str, Any]) -> None:
                 seen.add(phase)
                 normalized_order.append(phase)
             persona_defaults["phase_order"] = normalized_order
+            default_phase_order = list(normalized_order)
         phase_policies = persona_defaults.get("phase_policies")
         if isinstance(phase_policies, dict):
             normalized_policies: dict[str, Any] = {}
@@ -806,14 +816,32 @@ def _canonicalize_phase_fields(payload: dict[str, Any]) -> None:
         policy = task.get("persona_policy")
         if not isinstance(policy, dict):
             continue
+        task_phase_order = policy.get("phase_order")
+        normalized_task_phase_order: list[str] = []
+        if isinstance(task_phase_order, list):
+            seen_task_phases: set[str] = set()
+            for item in task_phase_order:
+                phase = _normalize_phase_id(str(item))
+                if not phase or phase in seen_task_phases:
+                    continue
+                seen_task_phases.add(phase)
+                normalized_task_phase_order.append(phase)
+            policy["phase_order"] = normalized_task_phase_order
         phase_overrides = policy.get("phase_overrides")
-        if not isinstance(phase_overrides, dict):
-            continue
-        normalized_overrides: dict[str, Any] = {}
-        for phase_raw, phase_policy in phase_overrides.items():
-            normalized_phase = _normalize_phase_id(str(phase_raw))
-            normalized_overrides[normalized_phase] = phase_policy
-        policy["phase_overrides"] = normalized_overrides
+        if isinstance(phase_overrides, dict):
+            normalized_overrides: dict[str, Any] = {}
+            for phase_raw, phase_policy in phase_overrides.items():
+                normalized_phase = _normalize_phase_id(str(phase_raw))
+                normalized_overrides[normalized_phase] = phase_policy
+            policy["phase_overrides"] = normalized_overrides
+            if not normalized_task_phase_order:
+                task_override_phases = list(normalized_overrides.keys())
+                if default_phase_order:
+                    ordered = [phase for phase in default_phase_order if phase in normalized_overrides]
+                    ordered.extend([phase for phase in task_override_phases if phase not in ordered])
+                    policy["phase_order"] = ordered
+                else:
+                    policy["phase_order"] = task_override_phases
 
 
 def _validate_no_dependency_cycle(graph: dict[str, list[str]]) -> None:

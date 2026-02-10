@@ -13,6 +13,7 @@ _PERSONA_DEFAULTS_KEYS = {
 }
 _TASK_PERSONA_POLICY_KEYS = {
     "disable_personas",
+    "phase_order",
     "phase_overrides",
 }
 
@@ -74,6 +75,12 @@ def normalize_task_persona_policy(
             field_name=f"task {task_id} persona_policy.disable_personas",
             source_label=source_label,
             known_persona_ids=known_persona_ids,
+        )
+    if "phase_order" in raw:
+        normalized["phase_order"] = _normalize_phase_order(
+            raw["phase_order"],
+            field_name=f"task {task_id} persona_policy.phase_order",
+            source_label=source_label,
         )
     if "phase_overrides" in raw:
         normalized["phase_overrides"] = _normalize_phase_policy_map(

@@ -367,45 +367,57 @@ fi
 
 stream_assistant_view() {
   local include_user="${1:-1}"
-  CODEX_STREAM_INCLUDE_USER="$include_user" python3 - <<'PY'
-import os
-import re
-import sys
+  awk -v include_user="$include_user" '
+function trim(s) {
+  sub(/^[[:space:]]+/, "", s)
+  sub(/[[:space:]]+$/, "", s)
+  return s
+}
+BEGIN {
+  mode = "default"
+}
+{
+  line = $0
+  plain = line
+  gsub(/\033\[[0-9;]*[A-Za-z]/, "", plain)
+  gsub(/\r/, "", plain)
+  lowered = tolower(trim(plain))
 
-ansi_re = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")
-include_user = os.getenv("CODEX_STREAM_INCLUDE_USER", "1").strip() == "1"
-mode = "default"
+  if (lowered == "thinking") {
+    mode = "thinking"
+    print line
+    fflush()
+    next
+  }
+  if (lowered == "codex") {
+    mode = "codex"
+    print line
+    fflush()
+    next
+  }
+  if (lowered == "user") {
+    mode = "user"
+    if (include_user == "1") {
+      print line
+      fflush()
+    }
+    next
+  }
+  if (index(lowered, "exec") == 1) {
+    mode = "exec"
+    next
+  }
 
-for raw in sys.stdin.buffer:
-    line = raw.decode("utf-8", errors="replace").rstrip("\n")
-    plain = ansi_re.sub("", line).replace("\r", "")
-    stripped = plain.strip()
-    lowered = stripped.lower()
+  if (mode == "exec") {
+    next
+  }
+  if (mode == "user" && include_user != "1") {
+    next
+  }
 
-    if lowered == "thinking":
-        mode = "thinking"
-        print(line, flush=True)
-        continue
-    if lowered == "codex":
-        mode = "codex"
-        print(line, flush=True)
-        continue
-    if lowered == "user":
-        mode = "user"
-        if include_user:
-            print(line, flush=True)
-        continue
-    if lowered.startswith("exec"):
-        mode = "exec"
-        continue
-
-    if mode == "exec":
-        continue
-    if mode == "user" and not include_user:
-        continue
-
-    print(line, flush=True)
-PY
+  print line
+  fflush()
+}'
 }
 
 run_codex_command() {
@@ -418,12 +430,42 @@ run_codex_with_filtered_view() {
 
   tail -n +1 -f "$TMP_STREAM_LOG" | stream_assistant_view "$include_user" 1>&2 &
   local viewer_pid=$!
+  local probe_pid=0
+
+  # TEMP_DEBUG:BEGIN assistant_stream_probe
+  (
+    while kill -0 "$viewer_pid" 2>/dev/null; do
+      local_lines="$(wc -l < "$TMP_STREAM_LOG" | tr -d '[:space:]')"
+      local_bytes="$(wc -c < "$TMP_STREAM_LOG" | tr -d '[:space:]')"
+      echo "[codex_wrapper][TEMP_DEBUG] viewer_alive=1 stream_lines=$local_lines stream_bytes=$local_bytes" >&2
+      sleep 2
+    done
+    echo "[codex_wrapper][TEMP_DEBUG] viewer_alive=0" >&2
+  ) &
+  probe_pid=$!
+  sleep 0.2
+  if kill -0 "$viewer_pid" 2>/dev/null; then
+    echo "[codex_wrapper][TEMP_DEBUG] viewer_started=1 pid=$viewer_pid" >&2
+  else
+    echo "[codex_wrapper][TEMP_DEBUG] viewer_started=0 pid=$viewer_pid" >&2
+  fi
+  # TEMP_DEBUG:END assistant_stream_probe
 
   run_codex_command 2>&1 | tee -a "$TMP_STREAM_LOG" >/dev/null
   RUN_CODEX_EXIT_CODE=${PIPESTATUS[0]}
 
+  # TEMP_DEBUG:BEGIN assistant_stream_probe
+  final_lines="$(wc -l < "$TMP_STREAM_LOG" | tr -d '[:space:]')"
+  final_bytes="$(wc -c < "$TMP_STREAM_LOG" | tr -d '[:space:]')"
+  echo "[codex_wrapper][TEMP_DEBUG] run_exit=$RUN_CODEX_EXIT_CODE stream_lines=$final_lines stream_bytes=$final_bytes" >&2
+  # TEMP_DEBUG:END assistant_stream_probe
+
   kill "$viewer_pid" 2>/dev/null || true
   wait "$viewer_pid" 2>/dev/null || true
+  if [[ "$probe_pid" -ne 0 ]]; then
+    kill "$probe_pid" 2>/dev/null || true
+    wait "$probe_pid" 2>/dev/null || true
+  fi
 }
 
 extract_result_block() {
@@ -512,7 +554,13 @@ if [[ $codex_exit_code -ne 0 ]]; then
 fi
 
 if [[ ! -s "$TMP_OUTPUT" ]]; then
+  # TEMP_DEBUG:BEGIN post_codex_stage_probe
+  echo "[codex_wrapper][TEMP_DEBUG] stage=extract_result_block start ts=$(date +%s)" >&2
+  # TEMP_DEBUG:END post_codex_stage_probe
   extract_result_block || true
+  # TEMP_DEBUG:BEGIN post_codex_stage_probe
+  echo "[codex_wrapper][TEMP_DEBUG] stage=extract_result_block end ts=$(date +%s)" >&2
+  # TEMP_DEBUG:END post_codex_stage_probe
 fi
 
 if [[ ! -s "$TMP_OUTPUT" ]]; then
@@ -525,7 +573,19 @@ if [[ ! -s "$TMP_OUTPUT" ]]; then
 fi
 
 if [[ "$CODEX_DENY_DOTENV" != "0" ]]; then
+  # TEMP_DEBUG:BEGIN post_codex_stage_probe
+  echo "[codex_wrapper][TEMP_DEBUG] stage=verify_dotenv start ts=$(date +%s)" >&2
+  # TEMP_DEBUG:END post_codex_stage_probe
   verify_dotenv_files_unchanged
+  # TEMP_DEBUG:BEGIN post_codex_stage_probe
+  echo "[codex_wrapper][TEMP_DEBUG] stage=verify_dotenv end ts=$(date +%s)" >&2
+  # TEMP_DEBUG:END post_codex_stage_probe
 fi
 
+# TEMP_DEBUG:BEGIN post_codex_stage_probe
+echo "[codex_wrapper][TEMP_DEBUG] stage=emit_output start ts=$(date +%s) size=$(wc -c < "$TMP_OUTPUT" | tr -d '[:space:]')" >&2
+# TEMP_DEBUG:END post_codex_stage_probe
 cat "$TMP_OUTPUT"
+# TEMP_DEBUG:BEGIN post_codex_stage_probe
+echo "[codex_wrapper][TEMP_DEBUG] stage=emit_output end ts=$(date +%s)" >&2
+# TEMP_DEBUG:END post_codex_stage_probe
