@@ -1,15 +1,5 @@
 from .adapter import TeammateAdapter, TemplateTeammateAdapter
 from .codex_adapter import SubprocessCodexAdapter
-from .codex_consistency import (
-    CodexConsistencyError,
-    CodexConsistencyReviewClient,
-    CodexConsistencyReviewRequest,
-    OpenSpecChangeSource,
-    apply_consistency_patch,
-    build_consistency_review_request,
-    load_change_source,
-    validate_consistency_review_response,
-)
 from .models import Task, TaskPlanStatus, TaskStatus
 from .openspec_compiler import (
     OpenSpecCompileError,
@@ -46,14 +36,6 @@ __all__ = [
     "TeammateAdapter",
     "TemplateTeammateAdapter",
     "SubprocessCodexAdapter",
-    "CodexConsistencyError",
-    "OpenSpecChangeSource",
-    "CodexConsistencyReviewRequest",
-    "CodexConsistencyReviewClient",
-    "build_consistency_review_request",
-    "load_change_source",
-    "validate_consistency_review_response",
-    "apply_consistency_patch",
     "PersonaDefinition",
     "PersonaExecutionConfig",
     "PersonaRole",

@@ -14,6 +14,11 @@ Instructions for AI coding assistants using OpenSpec for spec-driven development
 
 ## Three-Stage Workflow
 
+## OpenSpec記述ルール（必須）
+- OpenSpec には「どのような処理にするのか」を詳細に記述する。
+- OpenSpec に書かれていないことは実装しない（推測実装を禁止する）。
+- OpenSpec の内容から想定できない事項は、proposal/tasks/spec に記述しない。
+
 ### Stage 1: Creating Changes
 Create proposal when you need to:
 - Add features or functionality

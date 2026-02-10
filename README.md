@@ -122,36 +122,18 @@ python -m team_orchestrator.cli compile-openspec \
   --task-config-root ./task_configs
 ```
 
-### `compile-openspec` の Codex 整合性レビュー
-`compile-openspec` は既定で、通常コンパイル後に Codex 整合性レビューを実行します。
+### `compile-openspec` の内部整合性チェック
+`compile-openspec` は外部コマンドを使わず、コンパイラ内部ロジックのみで整合性を検証します。
 
-実行手順:
-1. `tasks.md` と override から `task_config` を生成
-2. OpenSpec change 一式（`proposal.md` / `tasks.md` / `design.md`(任意) / `specs/*/spec.md`(任意)）と生成済み `task_config` を Codex へ送信
-3. `is_consistent=false` かつ有効な `patch` が返った場合、`tasks_append` / `tasks_update` / `teammates` を適用
-4. 補正後に再バリデーションして問題なければ出力
-
-Codex コマンドの指定優先順:
-1. `--codex-consistency-command`
-2. `CODEX_CONSISTENCY_COMMAND`
-
-未設定時は compile を失敗させます（fail-closed）。
-
-無効化方法:
-- `--skip-codex-consistency` を付けるとレビュー段をスキップし、従来どおりのコンパイル結果を出力します。
-
-出力メタ情報（`meta.codex_consistency`）:
-- `checked`: レビューを実行したか
-- `consistent_before_patch`: 補正前から整合していたか
-- `patched`: patch を適用したか
-- `issues_count`: 指摘件数
+主なチェック:
+1. `tasks.md` からタスクを抽出し、`target_paths` / `depends_on` / `requires_plan` を解釈
+2. `personas` / `persona_defaults` / `persona_policy` を検証
+3. 依存未解決・循環依存・不正型・重複 task id を検出
+4. 各タスクに `phase_overrides`（`フェーズ担当` / `phase assignments`）があることを必須検証
 
 失敗時挙動:
-- Codex コマンド失敗（起動失敗/タイムアウト/非0終了/空出力/JSON不正）は compile エラーで終了します。
-- レビュー応答が契約外（未知キー、型不一致、`is_consistent=false` で `patch` 欠落など）の場合は compile エラーで終了します。
-- patch が不正（許可外キー、未知 task id 更新、重複 task id 追加など）の場合は compile エラーで終了します。
-- patch 適用後の再バリデーションで不整合（未知依存、循環など）が出た場合は compile エラーで終了します。
-- レビュー入力に必要な `proposal.md` / `tasks.md` が不足している場合は compile エラーで終了します。
+- 入力不備や検証エラーがあれば compile は fail-closed で停止します。
+- 外部レビュー段はないため、`compile-openspec` は追加の外部コマンド設定なしで実行できます。
 
 OpenSpec 直接実行:
 ```bash
@@ -248,10 +230,6 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
 - `CODEX_REASONING_EFFORT`:
   - `codex exec` の `model_reasoning_effort` を上書き（例: `minimal`, `low`, `medium`, `high`）
   - 未指定時は `~/.codex/config.toml` 側の設定値を使用
-- `CODEX_CONSISTENCY_COMMAND`:
-  - `compile-openspec` の Codex 整合性レビューで使う外部コマンド
-  - 未指定のまま `compile-openspec` を実行するとエラー（fail-closed）
-  - `--codex-consistency-command` を指定した場合は CLI 引数が優先
 - `CODEX_DENY_DOTENV`:
   - `1`（既定）で `.env` / `.env.*` の参照を含むタスク payload を拒否
   - `1`（既定）で Codex 実行前後に `.env` / `.env.*` の改変を検出した場合は失敗

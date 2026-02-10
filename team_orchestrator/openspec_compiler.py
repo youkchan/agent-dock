@@ -717,10 +717,13 @@ def _validate_compiled_payload(payload: dict[str, Any], *, change_id: str) -> No
             raise OpenSpecCompileError(f"requires_plan must be bool: {task_id}")
         task["requires_plan"] = requires_plan
 
+    missing_dependencies: list[str] = []
     for task_id, dependencies in dependency_graph.items():
         for dep in dependencies:
             if dep not in task_ids:
-                raise OpenSpecCompileError(f"unknown dependency '{dep}' in task {task_id} for change {change_id}")
+                missing_dependencies.append(f"unknown dependency '{dep}' in task {task_id} for change {change_id}")
+    if missing_dependencies:
+        raise OpenSpecCompileError("; ".join(missing_dependencies))
 
     meta = payload.setdefault("meta", {})
     if isinstance(meta, dict):
@@ -735,12 +738,16 @@ def _validate_persona_payload(payload: dict[str, Any], *, change_id: str) -> Non
     try:
         personas = load_personas_from_payload(payload, source_label=source_label)
         known_persona_ids = {persona.id for persona in personas}
+        validation_errors: list[str] = []
         if "persona_defaults" in payload:
-            payload["persona_defaults"] = normalize_persona_defaults(
-                payload.get("persona_defaults"),
-                source_label=source_label,
-                known_persona_ids=known_persona_ids,
-            )
+            try:
+                payload["persona_defaults"] = normalize_persona_defaults(
+                    payload.get("persona_defaults"),
+                    source_label=source_label,
+                    known_persona_ids=known_persona_ids,
+                )
+            except ValueError as error:
+                validation_errors.append(str(error))
 
         known_phases = set(DEFAULT_PERSONA_PHASE_ORDER)
         persona_defaults = payload.get("persona_defaults")
@@ -753,48 +760,63 @@ def _validate_persona_payload(payload: dict[str, Any], *, change_id: str) -> Non
                 unknown_phases = sorted(set(phase_policies.keys()) - known_phases)
                 if unknown_phases:
                     formatted = ", ".join(unknown_phases)
-                    raise OpenSpecCompileError(f"unknown persona phase(s) in persona_defaults: {formatted}")
+                    validation_errors.append(f"unknown persona phase(s) in persona_defaults: {formatted}")
 
         for task in payload.get("tasks", []):
             if not isinstance(task, dict):
                 continue
             task_id = str(task.get("id", "")).strip() or "<unknown>"
             raw_policy = task.get("persona_policy")
-            normalized_policy = normalize_task_persona_policy(
-                raw_policy,
-                source_label=source_label,
-                task_id=task_id,
-                known_persona_ids=known_persona_ids,
-            )
+            try:
+                normalized_policy = normalize_task_persona_policy(
+                    raw_policy,
+                    source_label=source_label,
+                    task_id=task_id,
+                    known_persona_ids=known_persona_ids,
+                )
+            except ValueError as error:
+                validation_errors.append(f"task {task_id}: {error}")
+                continue
+
+            task_has_error = False
             if isinstance(normalized_policy, dict):
                 phase_order = normalized_policy.get("phase_order")
                 if isinstance(phase_order, list):
                     unknown_phases = sorted(set(phase_order) - known_phases)
                     if unknown_phases:
                         formatted = ", ".join(unknown_phases)
-                        raise OpenSpecCompileError(
+                        validation_errors.append(
                             f"unknown persona phase(s) in task {task_id} phase_order: {formatted}"
                         )
+                        task_has_error = True
                 phase_overrides = normalized_policy.get("phase_overrides")
                 if isinstance(phase_overrides, dict):
                     unknown_phases = sorted(set(phase_overrides.keys()) - known_phases)
                     if unknown_phases:
                         formatted = ", ".join(unknown_phases)
-                        raise OpenSpecCompileError(f"unknown persona phase(s) in task {task_id}: {formatted}")
+                        validation_errors.append(f"unknown persona phase(s) in task {task_id}: {formatted}")
+                        task_has_error = True
                 if not isinstance(phase_overrides, dict) or not phase_overrides:
-                    raise OpenSpecCompileError(
+                    validation_errors.append(
                         f"task {task_id} must define phase assignments via persona_policy.phase_overrides"
                     )
+                    task_has_error = True
             else:
-                raise OpenSpecCompileError(
+                validation_errors.append(
                     f"task {task_id} must define phase assignments via persona_policy.phase_overrides"
                 )
+                task_has_error = True
+
+            if task_has_error:
+                continue
             if normalized_policy is None:
                 task.pop("persona_policy", None)
             else:
                 task["persona_policy"] = normalized_policy
         if "personas" in payload:
             payload["personas"] = [persona.to_dict() for persona in personas]
+        if validation_errors:
+            raise OpenSpecCompileError("; ".join(validation_errors))
     except OpenSpecCompileError:
         raise
     except ValueError as error:
