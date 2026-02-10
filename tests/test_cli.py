@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from team_orchestrator import persona_catalog
 from team_orchestrator.adapter import TemplateTeammateAdapter
 from team_orchestrator.cli import (
     _bootstrap_run_state,
@@ -119,6 +120,65 @@ class CliPersonaCatalogTests(unittest.TestCase):
             ],
         }
 
+    def _default_persona_files(self) -> dict[str, str]:
+        return {
+            "implementer.yaml": (
+                "id: implementer\n"
+                "role: implementer\n"
+                "focus: file implementer\n"
+                "can_block: false\n"
+                "enabled: true\n"
+                "execution:\n"
+                "  enabled: true\n"
+                "  command_ref: default\n"
+                "  sandbox: workspace-write\n"
+                "  timeout_sec: 901\n"
+            ),
+            "code-reviewer.yaml": (
+                "id: code-reviewer\n"
+                "role: reviewer\n"
+                "focus: file reviewer\n"
+                "can_block: false\n"
+                "enabled: true\n"
+                "execution:\n"
+                "  enabled: true\n"
+                "  command_ref: default\n"
+                "  sandbox: workspace-write\n"
+                "  timeout_sec: 902\n"
+            ),
+            "spec-checker.yaml": (
+                "id: spec-checker\n"
+                "role: spec_guard\n"
+                "focus: file spec\n"
+                "can_block: false\n"
+                "enabled: true\n"
+                "execution:\n"
+                "  enabled: true\n"
+                "  command_ref: default\n"
+                "  sandbox: workspace-write\n"
+                "  timeout_sec: 903\n"
+            ),
+            "test-owner.yaml": (
+                "id: test-owner\n"
+                "role: test_guard\n"
+                "focus: file test\n"
+                "can_block: false\n"
+                "enabled: true\n"
+                "execution:\n"
+                "  enabled: true\n"
+                "  command_ref: default\n"
+                "  sandbox: workspace-write\n"
+                "  timeout_sec: 904\n"
+            ),
+        }
+
+    def _write_default_persona_files(self, root: Path, *, overrides: dict[str, str] | None = None) -> None:
+        files = self._default_persona_files()
+        if overrides:
+            files.update(overrides)
+        for filename, content in files.items():
+            (root / filename).write_text(content, encoding="utf-8")
+
     def test_default_personas_are_loaded_when_not_specified(self) -> None:
         payload = self._base_payload()
         personas = load_personas_from_payload(payload, source_label="inline")
@@ -127,6 +187,88 @@ class CliPersonaCatalogTests(unittest.TestCase):
             ["implementer", "code-reviewer", "spec-checker", "test-owner"],
         )
         self.assertTrue(all(persona.enabled for persona in personas))
+
+    def test_default_personas_are_loaded_from_default_files(self) -> None:
+        payload = self._base_payload()
+        with tempfile.TemporaryDirectory() as tmp:
+            default_dir = Path(tmp)
+            self._write_default_persona_files(default_dir)
+            persona_catalog._load_default_personas.cache_clear()
+            self.addCleanup(persona_catalog._load_default_personas.cache_clear)
+            with mock.patch.object(persona_catalog, "_DEFAULT_PERSONAS_DIR", default_dir):
+                personas = load_personas_from_payload(payload, source_label="inline")
+
+        self.assertEqual(
+            [persona.id for persona in personas],
+            ["implementer", "code-reviewer", "spec-checker", "test-owner"],
+        )
+        implementer = next(persona for persona in personas if persona.id == "implementer")
+        self.assertEqual(implementer.focus, "file implementer")
+        self.assertIsNotNone(implementer.execution)
+        if implementer.execution is None:
+            self.fail("execution config should be set")
+        self.assertEqual(implementer.execution.timeout_sec, 901)
+
+    def test_default_personas_missing_required_file_fails(self) -> None:
+        payload = self._base_payload()
+        with tempfile.TemporaryDirectory() as tmp:
+            default_dir = Path(tmp)
+            self._write_default_persona_files(default_dir)
+            (default_dir / "test-owner.yaml").unlink()
+            persona_catalog._load_default_personas.cache_clear()
+            self.addCleanup(persona_catalog._load_default_personas.cache_clear)
+            with mock.patch.object(persona_catalog, "_DEFAULT_PERSONAS_DIR", default_dir):
+                with self.assertRaisesRegex(ValueError, r"missing default persona file\(s\): test-owner"):
+                    load_personas_from_payload(payload, source_label="inline")
+
+    def test_default_personas_duplicate_id_in_files_fails(self) -> None:
+        payload = self._base_payload()
+        with tempfile.TemporaryDirectory() as tmp:
+            default_dir = Path(tmp)
+            self._write_default_persona_files(
+                default_dir,
+                overrides={
+                    "code-reviewer.yaml": (
+                        "id: implementer\n"
+                        "role: reviewer\n"
+                        "focus: duplicate id\n"
+                        "can_block: false\n"
+                        "enabled: true\n"
+                    )
+                },
+            )
+            persona_catalog._load_default_personas.cache_clear()
+            self.addCleanup(persona_catalog._load_default_personas.cache_clear)
+            with mock.patch.object(persona_catalog, "_DEFAULT_PERSONAS_DIR", default_dir):
+                with self.assertRaisesRegex(ValueError, r"duplicate persona id\(s\): implementer"):
+                    load_personas_from_payload(payload, source_label="inline")
+
+    def test_default_personas_invalid_execution_type_in_files_fails(self) -> None:
+        payload = self._base_payload()
+        with tempfile.TemporaryDirectory() as tmp:
+            default_dir = Path(tmp)
+            self._write_default_persona_files(
+                default_dir,
+                overrides={
+                    "implementer.yaml": (
+                        "id: implementer\n"
+                        "role: implementer\n"
+                        "focus: broken timeout\n"
+                        "can_block: false\n"
+                        "enabled: true\n"
+                        "execution:\n"
+                        "  enabled: true\n"
+                        "  command_ref: default\n"
+                        "  sandbox: workspace-write\n"
+                        "  timeout_sec: '900'\n"
+                    )
+                },
+            )
+            persona_catalog._load_default_personas.cache_clear()
+            self.addCleanup(persona_catalog._load_default_personas.cache_clear)
+            with mock.patch.object(persona_catalog, "_DEFAULT_PERSONAS_DIR", default_dir):
+                with self.assertRaisesRegex(ValueError, r"execution.timeout_sec must be a positive integer"):
+                    load_personas_from_payload(payload, source_label="inline")
 
     def test_load_tasks_payload_returns_none_personas_when_not_specified(self) -> None:
         payload = self._base_payload()
@@ -153,6 +295,34 @@ class CliPersonaCatalogTests(unittest.TestCase):
         self.assertEqual(by_id["implementer"].focus, "project-specific implementation checks")
         self.assertTrue(by_id["implementer"].can_block)
         self.assertFalse(by_id["implementer"].enabled)
+        self.assertIsNone(by_id["implementer"].execution)
+
+    def test_project_persona_same_id_execution_is_fully_overridden(self) -> None:
+        payload = self._base_payload()
+        payload["personas"] = [
+            {
+                "id": "implementer",
+                "role": "custom",
+                "focus": "custom execution override",
+                "can_block": False,
+                "enabled": True,
+                "execution": {
+                    "enabled": True,
+                    "command_ref": "custom-command",
+                    "sandbox": "danger-full-access",
+                    "timeout_sec": 120,
+                },
+            }
+        ]
+
+        personas = load_personas_from_payload(payload, source_label="inline")
+        implementer = next(persona for persona in personas if persona.id == "implementer")
+        self.assertIsNotNone(implementer.execution)
+        if implementer.execution is None:
+            self.fail("execution config should be set")
+        self.assertEqual(implementer.execution.command_ref, "custom-command")
+        self.assertEqual(implementer.execution.sandbox, "danger-full-access")
+        self.assertEqual(implementer.execution.timeout_sec, 120)
 
     def test_project_persona_new_id_is_added(self) -> None:
         payload = self._base_payload()

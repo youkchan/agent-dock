@@ -1,0 +1,5 @@
+id: test-owner
+role: test_guard
+focus: 必要な検証が揃っているか、再現性があるかを確認する
+can_block: false
+enabled: true

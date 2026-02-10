@@ -1,0 +1,5 @@
+id: implementer
+role: implementer
+focus: 実装の前進と、依存・影響範囲の整合性を確認する
+can_block: false
+enabled: true

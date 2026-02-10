@@ -13,45 +13,45 @@
 - 例: `- フェーズ担当: implement=implementer; review=code-reviewer`（未指定フェーズはグローバル既定を使う）。
 
 ## 1. 実装タスク
-- [ ] 1.1 デフォルトペルソナ YAML を新設する
+- [x] 1.1 デフォルトペルソナ YAML を新設する
   - フェーズ担当: implement=implementer
   - 依存: なし
   - 対象: `team_orchestrator/personas/default/*.yaml`
   - 成果物: デフォルト4ペルソナ（implementer, code-reviewer, spec-checker, test-owner）を独立ファイルとして定義する
-- [ ] 1.2 `persona_catalog.py` のデフォルト読込をファイル化する
+- [x] 1.2 `persona_catalog.py` のデフォルト読込をファイル化する
   - フェーズ担当: implement=implementer
   - 依存: 1.1
   - 対象: `team_orchestrator/persona_catalog.py`
   - 成果物: コード直書き定義を廃止し、`personas/default/*.yaml` から読込む実装へ移行する
-- [ ] 1.3 project payload の上書き/追加互換を維持する
+- [x] 1.3 project payload の上書き/追加互換を維持する
   - フェーズ担当: review=code-reviewer
   - 依存: 1.2
   - 対象: `team_orchestrator/persona_catalog.py`
   - 成果物: 同名 `id` 完全上書き・非同名追加の既存挙動を維持する
-- [ ] 1.4 execution profile 互換を維持する
+- [x] 1.4 execution profile 互換を維持する
   - フェーズ担当: implement=implementer
   - 依存: 1.2
   - 対象: `team_orchestrator/persona_catalog.py`
   - 成果物: `execution` の読込/未指定時挙動を既存どおり維持する
-- [ ] 1.5 バリデーションとエラーを整備する
+- [x] 1.5 バリデーションとエラーを整備する
   - フェーズ担当: spec_check=spec-checker
   - 依存: 1.2
   - 対象: `team_orchestrator/persona_catalog.py`
   - 成果物: 欠落/重複/未知キー/型不一致（execution 含む）を明示エラー化する
-- [ ] 1.6 テストを更新する
+- [x] 1.6 テストを更新する
   - フェーズ担当: test=test-owner
   - 依存: 1.2, 1.3, 1.4, 1.5
   - 対象: `tests/test_cli.py`, `tests/test_orchestrator.py`
   - 成果物: デフォルト読込・上書き互換・異常系・execution互換の回帰テストを追加/更新する
-- [ ] 1.7 README を更新する
+- [x] 1.7 README を更新する
   - フェーズ担当: review=code-reviewer
   - 依存: 1.6
   - 対象: `README.md`
   - 成果物: ペルソナ定義の配置、上書き順序、execution互換の説明を追記する
 
 ## 2. 検証項目
-- [ ] `python -m unittest discover -s tests -v` が通る
-- [ ] デフォルト4ペルソナがファイルから読まれる
-- [ ] project payload で同名 `id` が完全上書きされる
-- [ ] `execution` 指定あり/なしの両ケースで読込互換が維持される
-- [ ] `personas` 未指定時の teammates fallback 挙動が変わらない
+- [x] `python -m unittest discover -s tests -v` が通る
+- [x] デフォルト4ペルソナがファイルから読まれる
+- [x] project payload で同名 `id` が完全上書きされる
+- [x] `execution` 指定あり/なしの両ケースで読込互換が維持される
+- [x] `personas` 未指定時の teammates fallback 挙動が変わらない

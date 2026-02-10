@@ -1,0 +1,5 @@
+id: code-reviewer
+role: reviewer
+focus: 品質、保守性、回帰リスクを重視して差分を確認する
+can_block: false
+enabled: true

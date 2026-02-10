@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal, cast
+
+import yaml
 
 PersonaRole = Literal["implementer", "reviewer", "spec_guard", "test_guard", "custom"]
 
@@ -10,6 +14,15 @@ _OPTIONAL_KEYS = ("execution",)
 _ALLOWED_KEYS = set(_REQUIRED_KEYS + _OPTIONAL_KEYS)
 _ALLOWED_ROLES = {"implementer", "reviewer", "spec_guard", "test_guard", "custom"}
 _ALLOWED_EXECUTION_KEYS = {"enabled", "command_ref", "sandbox", "timeout_sec"}
+_MISSING = object()
+_DEFAULT_PERSONA_IDS: tuple[str, ...] = (
+    "implementer",
+    "code-reviewer",
+    "spec-checker",
+    "test-owner",
+)
+_DEFAULT_PERSONA_ID_SET = set(_DEFAULT_PERSONA_IDS)
+_DEFAULT_PERSONAS_DIR = Path(__file__).resolve().parent / "personas" / "default"
 
 
 @dataclass(frozen=True)
@@ -49,41 +62,52 @@ class PersonaDefinition:
             payload["execution"] = self.execution.to_dict()
         return payload
 
-
-_DEFAULT_PERSONAS: tuple[PersonaDefinition, ...] = (
-    PersonaDefinition(
-        id="implementer",
-        role="implementer",
-        focus="実装の前進と、依存・影響範囲の整合性を確認する",
-        can_block=False,
-        enabled=True,
-    ),
-    PersonaDefinition(
-        id="code-reviewer",
-        role="reviewer",
-        focus="品質、保守性、回帰リスクを重視して差分を確認する",
-        can_block=False,
-        enabled=True,
-    ),
-    PersonaDefinition(
-        id="spec-checker",
-        role="spec_guard",
-        focus="仕様逸脱や要件の取りこぼしがないかを確認する",
-        can_block=False,
-        enabled=True,
-    ),
-    PersonaDefinition(
-        id="test-owner",
-        role="test_guard",
-        focus="必要な検証が揃っているか、再現性があるかを確認する",
-        can_block=False,
-        enabled=True,
-    ),
-)
-
-
 def default_personas() -> list[PersonaDefinition]:
-    return list(_DEFAULT_PERSONAS)
+    return list(_load_default_personas())
+
+
+@lru_cache(maxsize=1)
+def _load_default_personas() -> tuple[PersonaDefinition, ...]:
+    if not _DEFAULT_PERSONAS_DIR.is_dir():
+        raise ValueError(f"default persona directory not found: {_DEFAULT_PERSONAS_DIR}")
+
+    persona_files = {path.stem: path for path in _DEFAULT_PERSONAS_DIR.glob("*.yaml")}
+    missing_files = [persona_id for persona_id in _DEFAULT_PERSONA_IDS if persona_id not in persona_files]
+    if missing_files:
+        formatted = ", ".join(missing_files)
+        raise ValueError(f"missing default persona file(s): {formatted} ({_DEFAULT_PERSONAS_DIR})")
+
+    ordered_paths = [persona_files[persona_id] for persona_id in _DEFAULT_PERSONA_IDS]
+    for extra_id in sorted(set(persona_files) - _DEFAULT_PERSONA_ID_SET):
+        ordered_paths.append(persona_files[extra_id])
+
+    personas: list[PersonaDefinition] = []
+    seen_ids: set[str] = set()
+    duplicate_ids: set[str] = set()
+    for path in ordered_paths:
+        raw = _read_default_persona_yaml(path)
+        persona = _parse_persona(raw, index=0, source_label=f"default persona file: {path.name}")
+        if persona.id in seen_ids:
+            duplicate_ids.add(persona.id)
+        seen_ids.add(persona.id)
+        personas.append(persona)
+
+    if duplicate_ids:
+        ids = ", ".join(sorted(duplicate_ids))
+        raise ValueError(f"duplicate persona id(s): {ids} (default persona files)")
+    return tuple(personas)
+
+
+def _read_default_persona_yaml(path: Path) -> Any:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"failed to read default persona file: {path}") from exc
+
+    try:
+        return yaml.safe_load(content)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid YAML in default persona file: {path}") from exc
 
 
 def load_personas(raw: Any, source_label: str) -> list[PersonaDefinition]:
@@ -118,19 +142,19 @@ def _merge_personas(
     defaults: list[PersonaDefinition],
     project: list[PersonaDefinition],
 ) -> list[PersonaDefinition]:
-    merged = list(defaults)
-    index_by_id = {persona.id: index for index, persona in enumerate(merged)}
-    for persona in project:
-        existing_index = index_by_id.get(persona.id)
-        if existing_index is None:
-            index_by_id[persona.id] = len(merged)
-            merged.append(persona)
-            continue
-        merged[existing_index] = persona
+    # Keep backward-compatible behavior:
+    # - same id: full replacement
+    # - new id: append in project declaration order
+    project_by_id = {persona.id: persona for persona in project}
+    default_ids = {persona.id for persona in defaults}
+    merged = [project_by_id.get(persona.id, persona) for persona in defaults]
+    merged.extend(persona for persona in project if persona.id not in default_ids)
     return merged
 
 
 def load_personas_from_payload(raw: dict[str, Any], source_label: str) -> list[PersonaDefinition]:
+    if not isinstance(raw, dict):
+        raise ValueError(f"payload must be an object ({source_label})")
     return load_personas(raw.get("personas"), source_label=source_label)
 
 
@@ -153,11 +177,7 @@ def _parse_persona(raw: Any, index: int, source_label: str) -> PersonaDefinition
     focus = raw["focus"]
     can_block = raw["can_block"]
     enabled = raw["enabled"]
-    execution = _parse_execution(
-        raw.get("execution"),
-        index=index,
-        source_label=source_label,
-    )
+    execution = _parse_execution(raw.get("execution", _MISSING), index=index, source_label=source_label)
 
     if not isinstance(persona_id, str) or not persona_id.strip():
         raise ValueError(f"personas[{index}].id must be a non-empty string ({source_label})")
@@ -188,7 +208,7 @@ def _parse_persona(raw: Any, index: int, source_label: str) -> PersonaDefinition
 
 
 def _parse_execution(raw: Any, index: int, source_label: str) -> PersonaExecutionConfig | None:
-    if raw is None:
+    if raw is _MISSING or raw is None:
         return None
     if not isinstance(raw, dict):
         raise ValueError(f"personas[{index}].execution must be an object ({source_label})")
@@ -215,7 +235,7 @@ def _parse_execution(raw: Any, index: int, source_label: str) -> PersonaExecutio
         raise ValueError(f"personas[{index}].execution.command_ref must be a non-empty string ({source_label})")
     if not isinstance(sandbox, str) or not sandbox.strip():
         raise ValueError(f"personas[{index}].execution.sandbox must be a non-empty string ({source_label})")
-    if not isinstance(timeout_sec, int) or timeout_sec <= 0:
+    if not isinstance(timeout_sec, int) or isinstance(timeout_sec, bool) or timeout_sec <= 0:
         raise ValueError(f"personas[{index}].execution.timeout_sec must be a positive integer ({source_label})")
 
     return PersonaExecutionConfig(

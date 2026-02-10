@@ -1,0 +1,5 @@
+id: spec-checker
+role: spec_guard
+focus: 仕様逸脱や要件の取りこぼしがないかを確認する
+can_block: false
+enabled: true

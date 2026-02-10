@@ -310,6 +310,52 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(result["stop_reason"], "all_tasks_completed")
             self.assertEqual(adapter.seen_execution_ids, ["tm-1"])
 
+    def test_teammate_execution_is_used_when_persona_execution_is_omitted(self) -> None:
+        class RecordingAdapter:
+            def __init__(self) -> None:
+                self.seen_execution_ids: list[str] = []
+
+            def build_plan(self, teammate_id, task):
+                del teammate_id
+                del task
+                return "plan"
+
+            def execute_task(self, teammate_id, task, progress_callback=None):
+                del task
+                del progress_callback
+                self.seen_execution_ids.append(teammate_id)
+                return "done"
+
+        adapter = RecordingAdapter()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state")
+            store.bootstrap_tasks([Task(id="T1", title="task1", target_paths=["src/a.ts"])])
+            orchestrator = AgentTeamsLikeOrchestrator(
+                store=store,
+                adapter=adapter,
+                provider=MockOrchestratorProvider(),
+                config=OrchestratorConfig(
+                    teammate_ids=["tm-1"],
+                    max_rounds=5,
+                    max_idle_rounds=5,
+                    max_idle_seconds=60,
+                    personas=[
+                        PersonaDefinition(
+                            id="impl-persona",
+                            role="custom",
+                            focus="legacy persona without execution profile",
+                            can_block=False,
+                            enabled=True,
+                            execution=None,
+                        ),
+                    ],
+                ),
+            )
+            self.assertEqual(orchestrator.execution_subject_mode, "teammate")
+            result = orchestrator.run()
+            self.assertEqual(result["stop_reason"], "all_tasks_completed")
+            self.assertEqual(adapter.seen_execution_ids, ["tm-1"])
+
     def test_teammate_execution_is_used_when_personas_not_configured(self) -> None:
         class RecordingAdapter:
             def __init__(self) -> None:

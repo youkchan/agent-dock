@@ -259,6 +259,26 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
   - `disable_personas`: 当該タスクで実行/評価の両方から除外するペルソナ
   - `phase_overrides`: タスク単位のフェーズ別上書き
 
+## ペルソナ定義の配置と上書き順序
+- デフォルト4ペルソナは `team_orchestrator/personas/default/` の YAML から読み込みます:
+  - `implementer.yaml`
+  - `code-reviewer.yaml`
+  - `spec-checker.yaml`
+  - `test-owner.yaml`
+- 読み込み順は固定4件（`implementer -> code-reviewer -> spec-checker -> test-owner`）を優先し、追加 YAML がある場合はファイル名（stem）昇順で後続に連結します。
+- プロジェクト固有の定義は task config JSON の `personas[]` に置きます（OpenSpec では `tasks.md` の `personas:` 1行JSON）。
+- マージ順序は `default files -> project personas` です。
+- 同名 `id` は定義全体を完全置換します（`execution` も部分マージせず置換）。
+- 非同名 `id` は既定4件の後ろへ、`personas[]` の宣言順で追加されます。
+
+## execution 互換（teammate fallback）
+- `execution` は任意です。指定する場合のみ `enabled/command_ref/sandbox/timeout_sec` の4項目すべてが必須です。
+- 実行主体の解決順は次のとおりです:
+  1. `enabled=true` かつ `execution.enabled=true` の persona
+  2. 上記が0件なら `teammates`
+- そのため、`personas` 未指定や `execution` 未指定（または `execution.enabled=false`）の構成では従来どおり teammate 実行にフォールバックします。
+- 逆に有効な persona 実行主体が1件以上ある場合は persona 実行が優先されます。
+
 ## ペルソナ実行モード設定例
 ```json
 {
