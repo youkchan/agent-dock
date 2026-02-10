@@ -36,7 +36,7 @@ class SubprocessCodexAdapter(TeammateAdapter):
             return
         for line in chunk.splitlines():
             text = line.rstrip("\r")
-            if not text:
+            if not text.strip():
                 continue
             progress_callback(source, text)
 
@@ -50,6 +50,8 @@ class SubprocessCodexAdapter(TeammateAdapter):
         process = subprocess.Popen(
             command,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.PIPE,

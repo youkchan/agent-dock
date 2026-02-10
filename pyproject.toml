@@ -25,5 +25,8 @@ include = ["team_orchestrator*"]
 [tool.setuptools]
 script-files = ["codex_wrapper.sh"]
 
+[tool.setuptools.package-data]
+team_orchestrator = ["personas/default/*.yaml"]
+
 [project.scripts]
 agent-dock = "team_orchestrator.cli:main"
