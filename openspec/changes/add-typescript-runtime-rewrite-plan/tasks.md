@@ -104,57 +104,39 @@
 
 ## 3. 検証項目
 
-### ドキュメント検証
-- [ ] `openspec validate add-typescript-runtime-rewrite-plan --strict` が成功する
-- [ ] `design.md` に技術選定（ランタイム、テスト、CLI、YAML、ファイルロック）と選定理由が明記されている
-- [ ] `docs/ts-migration-contract.md` に CLI/state/compile の互換境界が列挙されている
-- [ ] `docs/ts-parity-gate.md` に比較対象フィールドと正規化ルールが明記されている
-- [ ] `docs/ts-cutover-runbook.md` に切替・ロールバック手順と判定基準が明記されている
-- [ ] `docs/ts-wrapper-contract.md` に wrapper 経路・入出力契約・Deno helper 置換境界が明記されている
-- [ ] `docs/ts-env-compat-matrix.md` に ORCHESTRATOR/TEAMMATE/CODEX env の互換表がある
-- [ ] `README.md` に `npm link` を使う開発手順と `./node_modules/.bin/agent-dock` 優先実行ルールが明記されている
-
-### CLI 互換性検証
-- [ ] `compile-openspec --change-id ...` の出力 JSON が Python 実装と一致する（正規化後）
-- [ ] `print-openspec-template --lang ja` の出力が一致する
-- [ ] `print-openspec-template --lang en` の出力が一致する
-- [ ] `--config` と `--openspec-change` 同時指定でエラーになる
-- [ ] 不正なオプション指定時のエラーメッセージが同等
-- [ ] 存在しない `--state-dir` 指定時の挙動が一致する
-- [ ] `--help` 出力の主要項目が一致する
-- [ ] `./node_modules/.bin/agent-dock --help` でローカルリンク実体の実行確認ができる
-
-### wrapper 互換性検証
-- [ ] `codex_wrapper.sh` が `mode=plan|execute` の stdin JSON を受理できる
-- [ ] 最終出力が `RESULT/SUMMARY/CHANGED_FILES/CHECKS` の4行契約を満たす
-- [ ] `CODEX_STREAM_VIEW=all|all_compact|assistant|thinking` の表示契約が維持される
-- [ ] `.env/.env.*` 参照禁止チェックが維持される
-- [ ] `.env/.env.*` 改変検知（前後比較）が維持される
-- [ ] wrapper 実行時に `deno` を必須とし、`python3` 前提を排除できている
-- [ ] `OPENAI_API_KEY` は環境変数注入で利用でき、`.env.*` 参照なしで実行できる
-- [ ] `scripts/build_npm.ts` 再生成後、再 install なしでローカルリンク実行に変更が反映される
-
-### state.json 互換性検証
-- [ ] 新規実行で生成される `state.json` の構造が Python 実装と一致する
-- [ ] `--resume` で Python が生成した state を正しく読み込める
-- [ ] task status 遷移（pending → in_progress → completed/blocked）が同じ
-- [ ] claim の排他制御が正しく動作する（同時実行テスト）
-- [ ] `progress_log` の上限ローテーション（200件）が動作する
-- [ ] 空文字の `progress_log` 追記が拒否される
-
-### compile 互換性検証
-- [ ] 代表的な `tasks.md` 入力で Python/TS の出力 JSON が一致する
-- [ ] `depends_on` 循環検出が同じエラーを返す
-- [ ] `target_paths` 未指定時の `["*"]` 自動補完が動作する
-- [ ] `persona_policy` の検証エラーが同じ
-
-### ファイルロック検証（テストコードで検証）
-- [ ] 複数プロセス同時実行で state 破損が発生しない
-- [ ] プロセスクラッシュ後にロックが解放される（stale 検出）
-- [ ] ロック取得タイムアウトが動作する
+- [ ] 3.1 ドキュメント互換を実行検証する
+  - 依存: 2.7
+  - 対象: openspec/changes/add-typescript-runtime-rewrite-plan/*, docs/*.md, README.md
+  - フェーズ担当: review=code-reviewer; spec_check=spec-checker
+  - 成果物: `openspec validate add-typescript-runtime-rewrite-plan --strict` 成功と、design/contract/runbook/env の必須記述確認結果を残す
+- [ ] 3.2 CLI 互換を実行検証する
+  - 依存: 2.7
+  - 対象: src/cli/**, team_orchestrator/cli.py, tests/parity/**, docs/ts-parity-gate.md
+  - フェーズ担当: review=code-reviewer; spec_check=spec-checker
+  - 成果物: `compile-openspec` / `print-openspec-template` / エラー系 / `--help` の互換検証結果を残す
+- [ ] 3.3 wrapper 互換を実行検証する
+  - 依存: 2.8
+  - 対象: codex_wrapper.sh, src/infrastructure/wrapper/**, docs/ts-wrapper-contract.md
+  - フェーズ担当: review=code-reviewer; spec_check=spec-checker
+  - 成果物: mode受理、4行出力、stream view、`.env` 保護、Deno前提、APIキー注入の互換検証結果を残す
+- [ ] 3.4 state.json 互換を実行検証する
+  - 依存: 2.7
+  - 対象: src/infrastructure/state/**, src/application/orchestrator/**, tests/parity/**
+  - フェーズ担当: review=code-reviewer; spec_check=spec-checker
+  - 成果物: resume/状態遷移/claim排他/progress_log運用の互換検証結果を残す
+- [ ] 3.5 compile 互換を実行検証する
+  - 依存: 2.6
+  - 対象: src/infrastructure/openspec/**, team_orchestrator/openspec_compiler.py, tests/parity/**
+  - フェーズ担当: review=code-reviewer; spec_check=spec-checker
+  - 成果物: 代表入力のJSON等価、循環検出、`target_paths` 補完、`persona_policy` 検証の互換結果を残す
+- [ ] 3.6 ファイルロックを実行検証する（テストコード）
+  - 依存: 2.7
+  - 対象: src/infrastructure/state/**, tests/parity/**, tests/**
+  - フェーズ担当: review=code-reviewer; spec_check=spec-checker
+  - 成果物: 同時実行破損防止、stale解放、ロック取得タイムアウトの検証結果を残す
 
 ### 実行互換性検証（人間による手動実行）
-上記の検証項目がすべて完了した後、人間に以下のコマンドを提示して手動実行を依頼する。
+上記の実行タスクがすべて完了した後、人間に以下のコマンドを提示して手動実行を依頼する。
 
 **Python 実行コマンド:**
 ```bash
@@ -174,13 +156,13 @@ deno run --allow-read --allow-write --allow-run \
 ```
 
 **検証項目:**
-- [ ] Kickoff イベントで Provider に渡す snapshot 構造が一致する
-- [ ] mock provider の Kickoff 応答後の state 更新が一致する
-- [ ] 最初のタスク claim 対象が一致する
-- [ ] claim 後の `state.json`（owner, status）が一致する
-- [ ] plan 呼び出し時の adapter 入力 JSON が一致する
-- [ ] execute 呼び出し時の adapter 入力 JSON が一致する
-- [ ] persona phase handoff が同じ順序で実行される
-- [ ] `requires_plan=true` タスクの承認フローが同じ
-- [ ] Provider イベント（Kickoff, TaskCompleted, Blocked 等）の発火タイミングが同じ
-- [ ] mock provider での実行結果が Python 実装と一致する
+- Kickoff イベントで Provider に渡す snapshot 構造が一致する
+- mock provider の Kickoff 応答後の state 更新が一致する
+- 最初のタスク claim 対象が一致する
+- claim 後の `state.json`（owner, status）が一致する
+- plan 呼び出し時の adapter 入力 JSON が一致する
+- execute 呼び出し時の adapter 入力 JSON が一致する
+- persona phase handoff が同じ順序で実行される
+- `requires_plan=true` タスクの承認フローが同じ
+- Provider イベント（Kickoff, TaskCompleted, Blocked 等）の発火タイミングが同じ
+- mock provider での実行結果が Python 実装と一致する
