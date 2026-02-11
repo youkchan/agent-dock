@@ -506,13 +506,7 @@ BEGIN {
       next
     }
     if (in_codex_diff) {
-      if (
-        lowered == "tokens used" ||
-        index(lowered, "result:") == 1 ||
-        index(lowered, "summary:") == 1 ||
-        index(lowered, "changed_files:") == 1 ||
-        index(lowered, "checks:") == 1
-      ) {
+      if (lowered == "tokens used" || index(lowered, "result:") == 1 || index(lowered, "summary:") == 1 || index(lowered, "changed_files:") == 1 || index(lowered, "checks:") == 1) {
         print "[all_compact] codex diff omitted lines=" codex_diff_lines
         fflush()
         in_codex_diff = 0
