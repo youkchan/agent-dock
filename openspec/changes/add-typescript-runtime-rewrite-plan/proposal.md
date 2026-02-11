@@ -20,12 +20,18 @@
 - `CODEX_STREAM_VIEW=all|all_compact|assistant|thinking` の表示契約を維持する。
 - `.env/.env.*` 参照禁止と改変検知のセキュリティ契約を維持する。
 - wrapper 実行時の前提ランタイムを `python3` から `deno` へ変更する。
+- 開発時の反映フローを固定する:
+  - `scripts/build_npm.ts` で npm 配布物を再生成する。
+  - `npm link` で `codex_agent` 側にリンクし、毎回の再 install を不要にする。
+  - 実行確認は `./node_modules/.bin/agent-dock` を正とし、PATH 解決のぶれを避ける。
+- `scripts/update_runner.sh` は開発反復を壊さないため、再 install ではなく再生成（build）を主責務にする。
 
 ## この change でやらないこと
 - Python 実装の即時削除
 - Node/TypeScript 実装の一括置換リリース（段階切替のみを許可）
 - 実行仕様（task status 遷移、persona 制御ルール、OpenSpec 解釈規則）の意味変更
 - `codex_wrapper.sh` の実行経路や I/O 契約の意味変更
+- 開発時の実行バイナリ解決をグローバル PATH 依存に戻すこと
 
 ## 期待成果
 - TypeScript への移行着手前に、実装順序・互換条件・検証方法が OpenSpec 上で合意される。
@@ -33,6 +39,7 @@
 - 実装者ごとの解釈差で出力がぶれないよう、比較項目と判定方法が明文化される。
 - この change の完了時点で、TypeScript 実装が parity gate を満たし、切替可否を判定できる。
 - `codex_wrapper.sh` 経路で `python3` 非依存（Deno 依存）に移行しつつ、既存運用コマンドを維持できる。
+- 開発時は `build_npm.ts` の再生成だけで反映され、`codex_agent` 側の再 install 作業が不要になる。
 
 ## 影響範囲
 - 影響する仕様:

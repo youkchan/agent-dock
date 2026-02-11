@@ -473,6 +473,39 @@ export CODEX_STREAM_LOGS="1"
 export CODEX_STREAM_VIEW="all_compact"
 ```
 
+## TypeScript 開発ループ（npm link）
+`add-typescript-runtime-rewrite-plan` の運用では、開発反復は `npm link` を前提にします。  
+リンク先ディレクトリを固定したまま、生成物のみを更新して反映します。
+
+初回セットアップ（1回だけ）:
+```bash
+cd ../agent_dock
+deno run -A scripts/build_npm.ts 0.0.0-dev
+cd npm
+npm link
+
+cd ../../codex_agent
+npm link ../agent_dock/npm
+```
+
+日常ループ:
+- ターミナルA（runner 側で再生成）
+```bash
+cd ../agent_dock
+deno run -A --watch=src/,mod.ts,scripts/ scripts/build_npm.ts 0.0.0-dev
+```
+- ターミナルB（実行側）
+```bash
+cd ../codex_agent
+./node_modules/.bin/agent-dock --help
+./node_modules/.bin/agent-dock run ...
+```
+
+運用ルール:
+- 開発時はグローバル `agent-dock` ではなく `./node_modules/.bin/agent-dock` を使います。
+- 反映確認は `./node_modules/.bin/agent-dock --help` を正とします。
+- 再インストール運用ではなく、`build_npm.ts` の再生成で反映します。
+
 ## 実運用時の注意
 - `TemplateTeammateAdapter` は疎通確認用です。
 - 実運用では `SubprocessCodexAdapter` を使い、対象プロジェクト側の Codex 実行コマンドに接続してください。

@@ -14,6 +14,19 @@
 - **AND** `--config` と `--openspec-change` の排他制約が維持される
 - **AND** `design.md` の CLI 互換に列挙された主要オプション群（`--provider`, `--teammate-command`, `--plan-command`, `--execute-command`, `--state-dir` を含む）と矛盾しない
 
+### Requirement: 開発時の runner 反映フローを固定すること
+システムは Deno 実装の開発反復で、リンク運用とローカル実行バイナリ解決を固定しなければならない（SHALL）。
+
+#### Scenario: npm link 運用で再 install なし反映ができる
+- **WHEN** 開発者が `scripts/build_npm.ts` で npm 生成物を再生成し、`npm link` 済みの `codex_agent` 側で実行する
+- **THEN** `codex_agent` 側で毎回の再 install なしに最新変更が反映される
+- **AND** 反映確認は `./node_modules/.bin/agent-dock --help` で行う
+
+#### Scenario: 実行バイナリはローカルリンクを優先する
+- **WHEN** 開発者が `agent-dock` 実行コマンドを使う
+- **THEN** `./node_modules/.bin/agent-dock` を正として利用する
+- **AND** グローバル PATH 解決に依存しない
+
 ### Requirement: TypeScript 移行は state 互換を維持すること
 システムは TypeScript 実装でも `state.json` の主要フィールドと状態遷移意味を維持しなければならない（SHALL）。
 

@@ -68,6 +68,21 @@
   - 対象: codex_wrapper.sh, src/infrastructure/wrapper/**, docs/ts-wrapper-contract.md
   - フェーズ担当: implement=implementer; review=code-reviewer; test=test-owner
   - 成果物: prompt 生成 / `.env` スナップショット検証 / 4行結果抽出を Deno helper で実行し、外部挙動を維持する
+- [ ] 2.9 npm 生成物ビルドスクリプトを実装する
+  - 依存: 2.1
+  - 対象: scripts/build_npm.ts, npm/**
+  - フェーズ担当: implement=implementer; review=code-reviewer; test=test-owner
+  - 成果物: `scripts/build_npm.ts` で npm 配布物が再生成でき、`npm link` 運用に利用できる
+- [ ] 2.10 runner 更新スクリプトを build 主体へ整理する
+  - 依存: 2.9
+  - 対象: scripts/update_runner.sh, docs/ts-cutover-runbook.md
+  - フェーズ担当: implement=implementer; review=code-reviewer
+  - 成果物: `scripts/update_runner.sh` が再 install ではなく再生成（build）主体の更新フローを提供する
+- [ ] 2.11 開発運用手順を README に追記する
+  - 依存: 2.9, 2.10
+  - 対象: README.md
+  - フェーズ担当: spec_check=spec-checker; review=code-reviewer; test=test-owner
+  - 成果物: 初回 `npm link`、日常ループ（`build_npm.ts --watch`）、`./node_modules/.bin/agent-dock` 実行手順を明記する
 - [ ] 2.6 parity テスト基盤を実装する
   - 依存: 2.3, 2.4, 2.5, 2.8
   - 対象: tests/parity/**, docs/ts-parity-gate.md
@@ -89,6 +104,7 @@
 - [ ] `docs/ts-cutover-runbook.md` に切替・ロールバック手順と判定基準が明記されている
 - [ ] `docs/ts-wrapper-contract.md` に wrapper 経路・入出力契約・Deno helper 置換境界が明記されている
 - [ ] `docs/ts-env-compat-matrix.md` に ORCHESTRATOR/TEAMMATE/CODEX env の互換表がある
+- [ ] `README.md` に `npm link` を使う開発手順と `./node_modules/.bin/agent-dock` 優先実行ルールが明記されている
 
 ### CLI 互換性検証
 - [ ] `compile-openspec --change-id ...` の出力 JSON が Python 実装と一致する（正規化後）
@@ -98,6 +114,7 @@
 - [ ] 不正なオプション指定時のエラーメッセージが同等
 - [ ] 存在しない `--state-dir` 指定時の挙動が一致する
 - [ ] `--help` 出力の主要項目が一致する
+- [ ] `./node_modules/.bin/agent-dock --help` でローカルリンク実体の実行確認ができる
 
 ### wrapper 互換性検証
 - [ ] `codex_wrapper.sh` が `mode=plan|execute` の stdin JSON を受理できる
@@ -107,6 +124,7 @@
 - [ ] `.env/.env.*` 改変検知（前後比較）が維持される
 - [ ] wrapper 実行時に `deno` を必須とし、`python3` 前提を排除できている
 - [ ] `OPENAI_API_KEY` は環境変数注入で利用でき、`.env.*` 参照なしで実行できる
+- [ ] `scripts/build_npm.ts` 再生成後、再 install なしでローカルリンク実行に変更が反映される
 
 ### state.json 互換性検証
 - [ ] 新規実行で生成される `state.json` の構造が Python 実装と一致する
