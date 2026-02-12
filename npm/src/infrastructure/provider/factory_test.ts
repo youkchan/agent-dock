@@ -1,5 +1,8 @@
 import { MockOrchestratorProvider } from "../../application/orchestrator/orchestrator.ts";
-import { buildProviderFromEnv } from "./factory.ts";
+import {
+  buildProviderFromEnv,
+  OpenAIOrchestratorProvider,
+} from "./factory.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -71,6 +74,32 @@ Deno.test("buildProviderFromEnv returns mock provider with token budgets", () =>
     const mock = provider as MockOrchestratorProvider;
     assertEqual(mock.inputTokenBudget, 16000, "input token cap");
     assertEqual(mock.outputTokenBudget, 1, "output token floor");
+  });
+});
+
+Deno.test("buildProviderFromEnv builds openai provider", () => {
+  withEnv({
+    ORCHESTRATOR_PROVIDER: "openai",
+    OPENAI_API_KEY: "dummy-key",
+    ORCHESTRATOR_OPENAI_MODEL: "gpt-5-mini",
+  }, () => {
+    const provider = buildProviderFromEnv();
+    assert(
+      provider instanceof OpenAIOrchestratorProvider,
+      "provider should be OpenAIOrchestratorProvider",
+    );
+  });
+});
+
+Deno.test("buildProviderFromEnv rejects openai without api key", () => {
+  withEnv({
+    ORCHESTRATOR_PROVIDER: "openai",
+    OPENAI_API_KEY: "",
+  }, () => {
+    assertThrowsMessage(
+      () => buildProviderFromEnv(),
+      "OPENAI_API_KEY is required for openai provider",
+    );
   });
 });
 

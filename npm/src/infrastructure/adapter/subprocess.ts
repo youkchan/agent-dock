@@ -86,11 +86,15 @@ export class SubprocessCodexAdapter implements TeammateAdapter {
     const displayCommand = command.join(" ");
     const payloadText = JSON.stringify(payload);
     const streamLogs = getEnv("TEAMMATE_STREAM_LOGS", "1") === "1";
+    const stdio: Array<"pipe" | "inherit"> = streamLogs
+      ? ["pipe", "pipe", "inherit"]
+      : ["pipe", "pipe", "pipe"];
 
     const result = spawnSync(command[0], command.slice(1), {
       input: payloadText,
       encoding: "utf8",
       timeout: this.timeoutSeconds * 1000,
+      stdio,
       env: {
         ...process.env,
         ...this.extraEnv,
@@ -102,10 +106,8 @@ export class SubprocessCodexAdapter implements TeammateAdapter {
     const stderrRaw = typeof result.stderr === "string" ? result.stderr : "";
 
     SubprocessCodexAdapter.emitProgress(progressCallback, "stdout", stdoutRaw);
-    SubprocessCodexAdapter.emitProgress(progressCallback, "stderr", stderrRaw);
-
-    if (streamLogs && stderrRaw.length > 0) {
-      Deno.stderr.writeSync(new TextEncoder().encode(stderrRaw));
+    if (!streamLogs) {
+      SubprocessCodexAdapter.emitProgress(progressCallback, "stderr", stderrRaw);
     }
 
     if (isTimeoutError(result.error)) {
@@ -121,7 +123,10 @@ export class SubprocessCodexAdapter implements TeammateAdapter {
     }
 
     if (result.status !== 0) {
-      const stderr = stderrRaw.trim() || "no stderr";
+      const stderr = stderrRaw.trim() ||
+        (streamLogs
+          ? "see stderr logs above (set TEAMMATE_STREAM_LOGS=0 to capture stderr)"
+          : "no stderr");
       throw new Error(`command failed: ${displayCommand} :: ${stderr}`);
     }
 

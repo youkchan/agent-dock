@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec deno run -A "$SCRIPT_DIR/../src/cli/main.ts" "$@"
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  TARGET="$(readlink "$SOURCE")"
+  if [[ "$TARGET" != /* ]]; then
+    SOURCE="$SCRIPT_DIR/$TARGET"
+  else
+    SOURCE="$TARGET"
+  fi
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+PACKAGE_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd)"
+exec deno run -A "$PACKAGE_ROOT/src/cli/main.ts" "$@"

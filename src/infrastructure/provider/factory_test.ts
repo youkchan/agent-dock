@@ -1,4 +1,5 @@
 import { MockOrchestratorProvider } from "../../application/orchestrator/orchestrator.ts";
+import { DecisionValidationError } from "../../domain/decision.ts";
 import {
   buildProviderFromEnv,
   OpenAIOrchestratorProvider,
@@ -119,4 +120,82 @@ Deno.test("buildProviderFromEnv rejects unknown provider", () => {
       "unknown orchestrator provider: unknown-x",
     );
   });
+});
+
+Deno.test("OpenAIOrchestratorProvider retries once with compact snapshot on incomplete response", () => {
+  const provider = new OpenAIOrchestratorProvider({
+    apiKey: "dummy-key",
+    model: "gpt-5-mini",
+    inputTokenBudget: 2000,
+    outputTokenBudget: 800,
+  });
+
+  const validDecision = {
+    decisions: [],
+    task_updates: [],
+    messages: [],
+    stop: { should_stop: false, reason_short: "" },
+    meta: {
+      provider: "openai",
+      model: "gpt-5-mini",
+      token_budget: { input: 2000, output: 800 },
+      elapsed_ms: 1,
+    },
+  };
+
+  const responses: Array<Record<string, unknown>> = [
+    { status: "incomplete", output: [] },
+    { status: "completed", output_text: JSON.stringify(validDecision) },
+  ];
+  const payloads: Array<Record<string, unknown>> = [];
+  const stub = provider as unknown as {
+    invokeResponsesApi: (payload: Record<string, unknown>) => Record<string, unknown>;
+  };
+  stub.invokeResponsesApi = (payload: Record<string, unknown>) => {
+    payloads.push(payload);
+    const next = responses.shift();
+    if (!next) {
+      throw new Error("unexpected extra request");
+    }
+    return next;
+  };
+
+  const result = provider.run({ tasks: [{ id: "T-1", status: "pending" }] });
+  assertEqual(payloads.length, 2, "should retry once");
+  const secondInput = String(payloads[1]?.input ?? "");
+  assert(
+    secondInput.includes('"retry_compaction":true'),
+    "second request should use retry_compaction snapshot",
+  );
+  assertEqual(result.stop.should_stop, false, "result should be validated");
+});
+
+Deno.test("OpenAIOrchestratorProvider does not retry on non-incomplete invalid json", () => {
+  const provider = new OpenAIOrchestratorProvider({
+    apiKey: "dummy-key",
+    model: "gpt-5-mini",
+    inputTokenBudget: 2000,
+    outputTokenBudget: 800,
+  });
+
+  const payloads: Array<Record<string, unknown>> = [];
+  const stub = provider as unknown as {
+    invokeResponsesApi: (payload: Record<string, unknown>) => Record<string, unknown>;
+  };
+  stub.invokeResponsesApi = (payload: Record<string, unknown>) => {
+    payloads.push(payload);
+    return {
+      status: "completed",
+      output_text: "not-json",
+    };
+  };
+
+  let thrown: unknown = null;
+  try {
+    provider.run({ tasks: [{ id: "T-1", status: "pending" }] });
+  } catch (error) {
+    thrown = error;
+  }
+  assert(thrown instanceof DecisionValidationError, "should throw DecisionValidationError");
+  assertEqual(payloads.length, 1, "should not retry when status is not incomplete");
 });
