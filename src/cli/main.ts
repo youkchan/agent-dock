@@ -739,7 +739,6 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
     lang,
     whyMarkdown: asBulletLines([
       context.spec_context.requirements_text,
-      context.spec_context.acceptance_criteria,
     ]),
     whatChangesMarkdown: asBulletLines([
       lang === "ja"
@@ -752,11 +751,6 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
     impactMarkdown: asBulletLines([
       `${lang === "ja" ? "non_goals" : "non_goals"}: ${
         context.spec_context.non_goals
-      }`,
-      `${lang === "ja" ? "scope_paths" : "scope_paths"}: ${
-        context.spec_context.scope_paths.length > 0
-          ? context.spec_context.scope_paths.join(", ")
-          : "(none)"
       }`,
     ]),
   });
@@ -781,7 +775,6 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
   writeDesignMarkdownStub({
     designPath,
     lang,
-    acceptanceCriteria: context.spec_context.acceptance_criteria,
   });
 
   const outputPath = path.resolve(
@@ -937,8 +930,6 @@ function buildHumanNotesMarkdownForSpecCreator(
   specContext: {
     requirements_text: string;
     non_goals: string;
-    acceptance_criteria: string;
-    scope_paths: string[];
   },
   lang: "ja" | "en",
 ): string {
@@ -946,30 +937,17 @@ function buildHumanNotesMarkdownForSpecCreator(
     return [
       `- 要件メモ: ${specContext.requirements_text}`,
       `- 非目標: ${specContext.non_goals}`,
-      `- 受け入れ条件: ${specContext.acceptance_criteria}`,
-      `- 対象パス: ${
-        specContext.scope_paths.length > 0
-          ? specContext.scope_paths.join(", ")
-          : "(none)"
-      }`,
     ].join("\n");
   }
   return [
     `- Requirement memo: ${specContext.requirements_text}`,
     `- Non-goals: ${specContext.non_goals}`,
-    `- Acceptance criteria: ${specContext.acceptance_criteria}`,
-    `- Scope paths: ${
-      specContext.scope_paths.length > 0
-        ? specContext.scope_paths.join(", ")
-        : "(none)"
-    }`,
   ].join("\n");
 }
 
 function writeDesignMarkdownStub(options: {
   designPath: string;
   lang: "ja" | "en";
-  acceptanceCriteria: string;
 }): void {
   const body = options.lang === "ja"
     ? [
@@ -978,18 +956,12 @@ function writeDesignMarkdownStub(options: {
       "## 目的",
       "- 必要時のみ設計判断を追記する。",
       "",
-      "## 受け入れ条件メモ",
-      `- ${options.acceptanceCriteria}`,
-      "",
     ].join("\n")
     : [
       "# Design",
       "",
       "## Purpose",
       "- Add design decisions only when needed.",
-      "",
-      "## Acceptance Criteria Memo",
-      `- ${options.acceptanceCriteria}`,
       "",
     ].join("\n");
   Deno.mkdirSync(path.dirname(options.designPath), { recursive: true });

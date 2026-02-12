@@ -113,7 +113,7 @@ export function createSpecCreatorTaskConfigTemplate(
         id: "1.1",
         title: "要件をOpenSpec要素へ正規化する",
         description:
-          "requirements/non_goals/acceptance_criteria を整理し、change の最小スコープを定義する。",
+          "requirements/non_goals を整理し、change の最小スコープを定義する。",
         target_paths: [...allOutputPaths],
         depends_on: [],
         requires_plan: false,

@@ -59,9 +59,7 @@ Deno.test("collectSpecContextInteractive collects required inputs", () => {
   const driver = createPromptIo([
     "要件本文",
     "非目的",
-    "受け入れ条件",
     "ja",
-    "src/a.ts, src/b.ts, src/a.ts",
     "yes",
   ]);
 
@@ -75,16 +73,6 @@ Deno.test("collectSpecContextInteractive collects required inputs", () => {
   }
   if (result.spec_context.language !== "ja") {
     throw new Error("language mismatch");
-  }
-  if (
-    JSON.stringify(result.spec_context.scope_paths) !==
-      JSON.stringify(["src/a.ts", "src/b.ts"])
-  ) {
-    throw new Error(
-      `scope_paths mismatch: ${
-        JSON.stringify(result.spec_context.scope_paths)
-      }`,
-    );
   }
   if (
     JSON.stringify(result.spec_context.persona_policy.active_personas) !==
@@ -108,6 +96,26 @@ Deno.test("collectSpecContextInteractive collects required inputs", () => {
   }
 });
 
+Deno.test("collectSpecContextInteractive reuses requirements_text when non_goals is empty", () => {
+  const driver = createPromptIo([
+    "要件本文",
+    "",
+    "ja",
+    "yes",
+  ]);
+
+  const result = collectSpecContextInteractive({
+    changeId: "add-spec-creator",
+    io: driver.io,
+  });
+
+  if (result.spec_context.non_goals !== "要件本文") {
+    throw new Error(
+      `non_goals fallback mismatch: ${result.spec_context.non_goals}`,
+    );
+  }
+});
+
 Deno.test("collectSpecContextInteractive fails closed when non-interactive", () => {
   const driver = createPromptIo([], false);
   assertThrowsMessage(
@@ -124,9 +132,7 @@ Deno.test("collectSpecContextInteractive fails closed when required input missin
   const driver = createPromptIo([
     "",
     "非目的",
-    "受け入れ条件",
     "ja",
-    "",
     "yes",
   ]);
 
@@ -144,10 +150,7 @@ Deno.test("collectSpecContextInteractive fails closed for invalid language", () 
   const driver = createPromptIo([
     "要件",
     "非目的",
-    "受け入れ条件",
     "fr",
-    "",
-    "yes",
   ]);
 
   assertThrowsMessage(
@@ -164,9 +167,7 @@ Deno.test("collectSpecContextInteractive fails closed when confirmation is denie
   const driver = createPromptIo([
     "要件",
     "非目的",
-    "受け入れ条件",
     "en",
-    "",
     "no",
   ]);
 
@@ -184,9 +185,7 @@ Deno.test("collectSpecContextInteractive proposes change_id and accepts Enter", 
   const driver = createPromptIo([
     "Add Spec Creator Mode",
     "non-goals",
-    "acceptance criteria",
     "en",
-    "",
     "",
     "yes",
   ]);
@@ -204,9 +203,7 @@ Deno.test("collectSpecContextInteractive allows overriding proposed change_id", 
   const driver = createPromptIo([
     "Add Spec Creator Mode",
     "non-goals",
-    "acceptance criteria",
     "en",
-    "",
     "add-custom-change-id",
     "yes",
   ]);

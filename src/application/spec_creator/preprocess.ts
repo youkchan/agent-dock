@@ -9,9 +9,7 @@ export type SpecCreatorLanguage = (typeof SPEC_CREATOR_LANGS)[number];
 
 export interface SpecContext {
   requirements_text: string;
-  scope_paths: string[];
   non_goals: string;
-  acceptance_criteria: string;
   language: SpecCreatorLanguage;
   persona_policy: {
     active_personas: string[];
@@ -79,17 +77,12 @@ export function collectSpecContextInteractive(
   }
 
   const requirementsText = promptRequired(io, "requirements_text (required)");
-  const nonGoals = promptRequired(io, "non_goals (required)");
-  const acceptanceCriteria = promptRequired(
+  const nonGoalsInput = promptOptional(
     io,
-    "acceptance_criteria (required)",
+    "non_goals (optional; Enter to reuse requirements_text)",
   );
+  const nonGoals = nonGoalsInput || requirementsText;
   const language = promptLanguage(io);
-  const scopePathsRaw = promptOptional(
-    io,
-    "scope_paths (optional, comma-separated)",
-  );
-  const scopePaths = parseScopePaths(scopePathsRaw);
   const changeId = resolveChangeIdInteractive(
     io,
     options.changeId,
@@ -104,9 +97,7 @@ export function collectSpecContextInteractive(
 
   const specContext: SpecContext = {
     requirements_text: requirementsText,
-    scope_paths: scopePaths,
     non_goals: nonGoals,
-    acceptance_criteria: acceptanceCriteria,
     language,
     persona_policy: {
       active_personas: [...DEFAULT_SPEC_CREATOR_PERSONAS],
@@ -150,9 +141,6 @@ export function buildSpecCreatorTaskConfig(
 }
 
 function buildSpecContextPromptSection(specContext: SpecContext): string {
-  const scopePaths = specContext.scope_paths.length > 0
-    ? specContext.scope_paths.join(", ")
-    : "(none)";
   const activePersonas = specContext.persona_policy.active_personas.length > 0
     ? specContext.persona_policy.active_personas.join(", ")
     : "(none)";
@@ -161,9 +149,7 @@ function buildSpecContextPromptSection(specContext: SpecContext): string {
     "spec_context:",
     `- requirements_text: ${normalizeLine(specContext.requirements_text)}`,
     `- non_goals: ${normalizeLine(specContext.non_goals)}`,
-    `- acceptance_criteria: ${normalizeLine(specContext.acceptance_criteria)}`,
     `- language: ${specContext.language}`,
-    `- scope_paths: ${scopePaths}`,
     `- active_personas: ${activePersonas}`,
   ].join("\n");
 }
@@ -207,20 +193,6 @@ function promptLanguage(io: SpecCreatorPromptIO): SpecCreatorLanguage {
     );
   }
   return normalized as SpecCreatorLanguage;
-}
-
-function parseScopePaths(raw: string): string[] {
-  if (!raw) {
-    return [];
-  }
-  const unique = new Set<string>();
-  for (const token of raw.split(",")) {
-    const normalized = token.trim();
-    if (normalized) {
-      unique.add(normalized);
-    }
-  }
-  return [...unique];
 }
 
 function resolveChangeIdInteractive(
