@@ -1,0 +1,428 @@
+{
+  "teammates": [
+    "spec-planner",
+    "spec-reviewer",
+    "spec-code-creator"
+  ],
+  "personas": [
+    {
+      "id": "implementer",
+      "role": "implementer",
+      "focus": "実装を前進させる",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "code-reviewer",
+      "role": "reviewer",
+      "focus": "品質と回帰リスクを確認する",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-checker",
+      "role": "spec_guard",
+      "focus": "仕様逸脱を防ぐ",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "test-owner",
+      "role": "test_guard",
+      "focus": "検証の十分性を担保する",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-planner",
+      "role": "spec_guard",
+      "focus": "要件をOpenSpec構成へ正規化し、要件外追加を禁止する",
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-reviewer",
+      "role": "reviewer",
+      "focus": "proposal/tasks/design/code_summaryの整合と過不足を検証し、要件外追加・過剰修正・冗長化を禁止する",
+      "can_block": true,
+      "enabled": true,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-code-creator",
+      "role": "spec_guard",
+      "focus": "実装認知負荷低減のためcode_summary.mdにコード粒度と対応関係を明記する",
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    }
+  ],
+  "persona_defaults": {
+    "phase_order": [
+      "implement",
+      "review"
+    ],
+    "phase_policies": {
+      "implement": {
+        "active_personas": [
+          "spec-planner"
+        ],
+        "executor_personas": [
+          "spec-planner"
+        ],
+        "state_transition_personas": [
+          "spec-planner"
+        ]
+      },
+      "review": {
+        "active_personas": [
+          "spec-reviewer"
+        ],
+        "executor_personas": [
+          "spec-reviewer"
+        ],
+        "state_transition_personas": [
+          "spec-reviewer"
+        ]
+      }
+    }
+  },
+  "tasks": [
+    {
+      "id": "1.1",
+      "title": "要件をOpenSpec要素へ正規化する",
+      "description": "requirements/non_goals を整理し、change の最小スコープを定義する。\n\nspec_context:\n- requirements_text: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- non_goals: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- language: ja\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish/proposal.md",
+        "openspec/changes/add-spec-creator-polish/tasks.md",
+        "openspec/changes/add-spec-creator-polish/design.md",
+        "openspec/changes/add-spec-creator-polish/code_summary.md"
+      ],
+      "depends_on": [],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.2",
+      "title": "proposal.md を生成する",
+      "description": "変更理由、変更内容、影響範囲を proposal.md に記述する。\n\nspec_context:\n- requirements_text: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- non_goals: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- language: ja\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish/proposal.md"
+      ],
+      "depends_on": [
+        "1.1"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.3",
+      "title": "tasks.md を固定テンプレート準拠で生成する",
+      "description": "print-openspec-template の固定行を維持し、実装タスクを checklist 形式で定義する。\n\nspec_context:\n- requirements_text: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- non_goals: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- language: ja\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish/tasks.md"
+      ],
+      "depends_on": [
+        "1.2"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.4",
+      "title": "必要時に design.md を生成する",
+      "description": "設計上の判断が必要な場合のみ design.md を作成し、意思決定とトレードオフを記述する。\n\nspec_context:\n- requirements_text: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- non_goals: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- language: ja\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish/design.md"
+      ],
+      "depends_on": [
+        "1.2"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.5",
+      "title": "code_summary.md を生成する",
+      "description": "tasks.md の task_id と code unit の対応を code_summary.md に記述する。\n\nspec_context:\n- requirements_text: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- non_goals: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- language: ja\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish/code_summary.md"
+      ],
+      "depends_on": [
+        "1.3"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-code-creator"
+            ],
+            "executor_personas": [
+              "spec-code-creator"
+            ],
+            "state_transition_personas": [
+              "spec-code-creator"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.6",
+      "title": "生成成果物の整合性をレビューする",
+      "description": "proposal/tasks/design/code_summary の整合、要件逸脱、過剰修正、冗長化を検証する。\n\nspec_context:\n- requirements_text: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- non_goals: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- language: ja\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish/proposal.md",
+        "openspec/changes/add-spec-creator-polish/tasks.md",
+        "openspec/changes/add-spec-creator-polish/design.md",
+        "openspec/changes/add-spec-creator-polish/code_summary.md"
+      ],
+      "depends_on": [
+        "1.2",
+        "1.3",
+        "1.4",
+        "1.5"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.7",
+      "title": "OpenSpec strict validate を実行する",
+      "description": "openspec validate <change_id> --strict を実行し、失敗時は修正後に再実行する。\n\nspec_context:\n- requirements_text: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- non_goals: 目的 - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。 - ただし変更方式は以下に固定します。 - Markdown系（*.md）: フォーマット整備対象 - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告） 仕様（修正版） - コマンド: agent-dock spec-creator polish --change-id <id> - --change-id 必須 - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed） - 処理範囲: - 再帰的に全ファイルを走査 - *.md は整形・不足固定行補完・見出し正規化 - 非Markdownは原則無変更（将来拡張余地） - 出力: - 対象総ファイル数 - 変更ファイル一覧 - 整備ルール別の適用件数 - 受け入れ条件: - 非存在 change-id で失敗 - 既存 change に対し実行後 compile-openspec が通る - 再実行で差分ゼロ（idempotent） - 非Markdownファイルは無変更\n- language: ja\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish/proposal.md",
+        "openspec/changes/add-spec-creator-polish/tasks.md",
+        "openspec/changes/add-spec-creator-polish/design.md",
+        "openspec/changes/add-spec-creator-polish/code_summary.md"
+      ],
+      "depends_on": [
+        "1.6"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "meta": {
+    "source_change_id": "add-spec-creator-polish",
+    "generated_by": "spec-creator-preprocess",
+    "spec_context": {
+      "requirements_text": "目的  - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。\n  - ただし変更方式は以下に固定します。\n      - Markdown系（*.md）: フォーマット整備対象\n      - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告）\n\n  仕様（修正版）\n\n  - コマンド: agent-dock spec-creator polish --change-id <id>\n  - --change-id 必須\n  - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed）\n  - 処理範囲:\n      - 再帰的に全ファイルを走査\n      - *.md は整形・不足固定行補完・見出し正規化\n      - 非Markdownは原則無変更（将来拡張余地）\n  - 出力:\n      - 対象総ファイル数\n      - 変更ファイル一覧\n      - 整備ルール別の適用件数\n  - 受け入れ条件:\n      - 非存在 change-id で失敗\n      - 既存 change に対し実行後 compile-openspec が通る\n      - 再実行で差分ゼロ（idempotent）\n      - 非Markdownファイルは無変更",
+      "non_goals": "目的  - 対象ファイルを限定せず、openspec/changes/<change-id>/ 配下のすべてのファイルを対象にします。\n  - ただし変更方式は以下に固定します。\n      - Markdown系（*.md）: フォーマット整備対象\n      - その他（yaml/json等）: 破壊的変更はせず、整合チェックのみ（必要なら警告）\n\n  仕様（修正版）\n\n  - コマンド: agent-dock spec-creator polish --change-id <id>\n  - --change-id 必須\n  - openspec/changes/<change-id>/ 不存在なら即エラー（fail-closed）\n  - 処理範囲:\n      - 再帰的に全ファイルを走査\n      - *.md は整形・不足固定行補完・見出し正規化\n      - 非Markdownは原則無変更（将来拡張余地）\n  - 出力:\n      - 対象総ファイル数\n      - 変更ファイル一覧\n      - 整備ルール別の適用件数\n  - 受け入れ条件:\n      - 非存在 change-id で失敗\n      - 既存 change に対し実行後 compile-openspec が通る\n      - 再実行で差分ゼロ（idempotent）\n      - 非Markdownファイルは無変更",
+      "language": "ja",
+      "persona_policy": {
+        "active_personas": [
+          "spec-planner",
+          "spec-reviewer",
+          "spec-code-creator"
+        ]
+      }
+    }
+  }
+}

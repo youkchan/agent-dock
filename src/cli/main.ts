@@ -37,6 +37,7 @@ import {
 } from "../infrastructure/openspec/compiler.ts";
 import {
   writeCodeSummaryMarkdown,
+  writeDeltaSpecMarkdown,
   writeProposalMarkdown,
   writeTasksMarkdown,
 } from "../infrastructure/openspec/spec_creator.ts";
@@ -732,6 +733,12 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
   const tasksPath = path.join(changeDir, "tasks.md");
   const designPath = path.join(changeDir, "design.md");
   const codeSummaryPath = path.join(changeDir, "code_summary.md");
+  const deltaSpecPath = path.join(
+    changeDir,
+    "specs",
+    context.change_id,
+    "spec.md",
+  );
   const lang = context.spec_context.language;
 
   writeProposalMarkdown({
@@ -749,9 +756,7 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
         : "Generate aligned tasks.md and code_summary.md",
     ]),
     impactMarkdown: asBulletLines([
-      `${lang === "ja" ? "non_goals" : "non_goals"}: ${
-        context.spec_context.non_goals
-      }`,
+      context.spec_context.requirements_text,
     ]),
   });
 
@@ -776,6 +781,12 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
     designPath,
     lang,
   });
+  writeDeltaSpecMarkdown({
+    specPath: deltaSpecPath,
+    lang,
+    requirementName: `${context.change_id} generated baseline`,
+    requirementsText: context.spec_context.requirements_text,
+  });
 
   const outputPath = path.resolve(
     args.output ?? defaultSpecCreatorOutputPath(context.change_id),
@@ -789,6 +800,7 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
   io.stdout(`[spec-creator] wrote ${tasksPath}\n`);
   io.stdout(`[spec-creator] wrote ${designPath}\n`);
   io.stdout(`[spec-creator] wrote ${codeSummaryPath}\n`);
+  io.stdout(`[spec-creator] wrote ${deltaSpecPath}\n`);
   io.stdout(`[spec-creator] wrote ${outputPath}\n`);
 
   if (args.noRun) {
@@ -929,19 +941,16 @@ function firstPersonaIdFromPhasePolicy(
 function buildHumanNotesMarkdownForSpecCreator(
   specContext: {
     requirements_text: string;
-    non_goals: string;
   },
   lang: "ja" | "en",
 ): string {
   if (lang === "ja") {
     return [
       `- 要件メモ: ${specContext.requirements_text}`,
-      `- 非目標: ${specContext.non_goals}`,
     ].join("\n");
   }
   return [
     `- Requirement memo: ${specContext.requirements_text}`,
-    `- Non-goals: ${specContext.non_goals}`,
   ].join("\n");
 }
 

@@ -46,7 +46,14 @@ export function createSpecCreatorTaskConfigTemplate(
   const tasksPath = `${changeDir}/tasks.md`;
   const designPath = `${changeDir}/design.md`;
   const codeSummaryPath = `${changeDir}/code_summary.md`;
-  const allOutputPaths = [proposalPath, tasksPath, designPath, codeSummaryPath];
+  const deltaSpecPath = `${changeDir}/specs/${changeId}/spec.md`;
+  const allOutputPaths = [
+    proposalPath,
+    tasksPath,
+    designPath,
+    codeSummaryPath,
+    deltaSpecPath,
+  ];
 
   return {
     teammates: ["spec-planner", "spec-reviewer", "spec-code-creator"],
@@ -113,7 +120,7 @@ export function createSpecCreatorTaskConfigTemplate(
         id: "1.1",
         title: "要件をOpenSpec要素へ正規化する",
         description:
-          "requirements/non_goals を整理し、change の最小スコープを定義する。",
+          "requirements_text を整理し、change の最小スコープを定義する。",
         target_paths: [...allOutputPaths],
         depends_on: [],
         requires_plan: false,

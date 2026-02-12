@@ -9,7 +9,6 @@ export type SpecCreatorLanguage = (typeof SPEC_CREATOR_LANGS)[number];
 
 export interface SpecContext {
   requirements_text: string;
-  non_goals: string;
   language: SpecCreatorLanguage;
   persona_policy: {
     active_personas: string[];
@@ -30,6 +29,7 @@ export interface SpecCreatorPromptIO {
 interface CollectSpecContextOptions {
   changeId?: string | null;
   io?: SpecCreatorPromptIO;
+  proposeChangeId?: (requirementsText: string) => string;
 }
 
 export interface SpecCreatorTaskConfig extends SpecCreatorTaskConfigTemplate {
@@ -62,6 +62,16 @@ export function normalizeChangeId(raw: string): string {
       "spec creator requires --change-id in kebab-case (e.g. add-sample-change)",
     );
   }
+  if (!normalized.startsWith("add-")) {
+    throw new Error(
+      "spec creator requires --change-id to start with add- (e.g. add-sample-change)",
+    );
+  }
+  if (normalized.length > 64) {
+    throw new Error(
+      "spec creator requires --change-id length <= 64 characters",
+    );
+  }
   return normalized;
 }
 
@@ -77,16 +87,12 @@ export function collectSpecContextInteractive(
   }
 
   const requirementsText = promptRequired(io, "requirements_text (required)");
-  const nonGoalsInput = promptOptional(
-    io,
-    "non_goals (optional; Enter to reuse requirements_text)",
-  );
-  const nonGoals = nonGoalsInput || requirementsText;
   const language = promptLanguage(io);
   const changeId = resolveChangeIdInteractive(
     io,
     options.changeId,
     requirementsText,
+    options.proposeChangeId ?? proposeChangeIdFromCodex,
   );
 
   if (!confirmSpecContext(io, changeId)) {
@@ -97,7 +103,6 @@ export function collectSpecContextInteractive(
 
   const specContext: SpecContext = {
     requirements_text: requirementsText,
-    non_goals: nonGoals,
     language,
     persona_policy: {
       active_personas: [...DEFAULT_SPEC_CREATOR_PERSONAS],
@@ -148,7 +153,6 @@ function buildSpecContextPromptSection(specContext: SpecContext): string {
   return [
     "spec_context:",
     `- requirements_text: ${normalizeLine(specContext.requirements_text)}`,
-    `- non_goals: ${normalizeLine(specContext.non_goals)}`,
     `- language: ${specContext.language}`,
     `- active_personas: ${activePersonas}`,
   ].join("\n");
@@ -199,13 +203,17 @@ function resolveChangeIdInteractive(
   io: SpecCreatorPromptIO,
   rawChangeId: string | null | undefined,
   requirementsText: string,
+  proposeChangeIdFn: (requirementsText: string) => string,
 ): string {
   const seeded = typeof rawChangeId === "string" ? rawChangeId.trim() : "";
   if (seeded.length > 0) {
     return normalizeChangeId(seeded);
   }
 
-  const proposal = proposeChangeId(requirementsText);
+  const proposal = proposeChangeIdWithFallback(
+    requirementsText,
+    proposeChangeIdFn,
+  );
   const entered = promptOptional(
     io,
     `change_id 第1案: ${proposal}\nchange_id (Enterで採用)`,
@@ -214,20 +222,115 @@ function resolveChangeIdInteractive(
   return normalizeChangeId(selected);
 }
 
-function proposeChangeId(requirementsText: string): string {
-  const normalized = requirementsText
+function proposeChangeIdWithFallback(
+  requirementsText: string,
+  proposeChangeIdFn: (requirementsText: string) => string,
+): string {
+  try {
+    return normalizeChangeId(proposeChangeIdFn(requirementsText));
+  } catch {
+    return normalizeChangeId(proposeChangeIdLocal(requirementsText));
+  }
+}
+
+function proposeChangeIdFromCodex(requirementsText: string): string {
+  const prompt = [
+    "Return only one change_id.",
+    "Constraints:",
+    "- one line only",
+    "- kebab-case only",
+    "- must start with add-",
+    "- max 64 chars",
+    "",
+    `requirements_text: ${requirementsText}`,
+  ].join("\n");
+
+  const outputPath = Deno.makeTempFileSync({
+    prefix: "spec_creator_change_id_",
+    suffix: ".txt",
+  });
+  try {
+    const { code, stderr } = new Deno.Command("codex", {
+      args: [
+        "exec",
+        "--skip-git-repo-check",
+        "--output-last-message",
+        outputPath,
+        prompt,
+      ],
+      stdout: "null",
+      stderr: "piped",
+    }).outputSync();
+    if (code !== 0) {
+      const message = new TextDecoder().decode(stderr).trim();
+      throw new Error(message || "codex exec failed");
+    }
+    const raw = Deno.readTextFileSync(outputPath).trim();
+    if (!raw) {
+      throw new Error("codex returned empty change_id");
+    }
+    const line = raw.split(/\r?\n/u).map((item) => item.trim()).find((item) =>
+      item.length > 0
+    );
+    if (!line) {
+      throw new Error("codex returned no usable change_id line");
+    }
+    return line.replace(/^['"`]+|['"`]+$/gu, "");
+  } finally {
+    try {
+      Deno.removeSync(outputPath);
+    } catch {
+      // noop
+    }
+  }
+}
+
+function proposeChangeIdLocal(requirementsText: string): string {
+  const stopWords = new Set([
+    "a",
+    "an",
+    "and",
+    "the",
+    "to",
+    "for",
+    "with",
+    "of",
+    "on",
+    "in",
+    "add",
+    "change",
+    "changes",
+    "change_id",
+    "id",
+    "openspec",
+    "markdown",
+    "md",
+    "yaml",
+    "json",
+    "agent",
+    "dock",
+  ]);
+  const uniqueTokens: string[] = [];
+  const tokens = requirementsText
     .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/gu, "-")
-    .replaceAll(/-+/gu, "-")
-    .replace(/^-+/u, "")
-    .replace(/-+$/u, "");
-  if (!normalized) {
+    .replaceAll(/[^a-z0-9]+/gu, " ")
+    .trim()
+    .split(/\s+/u)
+    .filter((token) =>
+      token.length > 1 &&
+      !stopWords.has(token)
+    );
+  for (const token of tokens) {
+    if (!uniqueTokens.includes(token)) {
+      uniqueTokens.push(token);
+    }
+  }
+  const body = uniqueTokens.slice(0, 4).join("-");
+  if (!body) {
     return "add-change";
   }
-  if (/^[a-z]/u.test(normalized)) {
-    return normalized.startsWith("add-") ? normalized : `add-${normalized}`;
-  }
-  return `add-${normalized}`;
+  const candidate = `add-${body}`.slice(0, 64).replace(/-+$/u, "");
+  return candidate || "add-change";
 }
 
 function confirmSpecContext(
