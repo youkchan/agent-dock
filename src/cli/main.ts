@@ -7,7 +7,12 @@ import {
   OrchestratorConfig,
   type TeammateAdapter,
 } from "../application/orchestrator/orchestrator.ts";
-import { collectSpecContextInteractive } from "../application/spec_creator/preprocess.ts";
+import {
+  buildSpecCreatorTaskConfig,
+  collectSpecContextInteractive,
+  type SpecContext,
+  type SpecCreatorTaskConfig,
+} from "../application/spec_creator/preprocess.ts";
 import { createApplicationModule } from "../application/mod.ts";
 import type { PersonaDefinition } from "../domain/persona.ts";
 import {
@@ -69,6 +74,12 @@ const DEFAULT_IO: CliIO = {
     Deno.stderr.writeSync(new TextEncoder().encode(text));
   },
 };
+
+const SPEC_CREATOR_ACTIVE_PERSONAS = [
+  "spec-planner",
+  "spec-reviewer",
+  "spec-code-creator",
+];
 
 interface CompileOpenSpecArgs {
   changeId: string;
@@ -765,21 +776,46 @@ function defaultSpecCreatorStateDir(changeId: string): string {
 
 function specCreatorPolishCommand(argv: string[], io: CliIO): number {
   const args = parseSpecCreatorPolishArgs(argv);
-  const changeDir = path.resolve("openspec", "changes", args.changeId);
-  if (!isDirectory(changeDir)) {
-    throw new Error(`change not found: ${changeDir}`);
+  const paths = resolveSpecCreatorArtifactPaths(args.changeId);
+  if (!isDirectory(paths.changeDir)) {
+    throw new Error(`change not found: ${paths.changeDir}`);
   }
 
-  const queue = collectChangeFilesRecursively(changeDir);
-  const markdownResult = polishMarkdownFiles(queue.markdownFiles);
-  const nonMarkdownResult = checkNonMarkdownConsistency(queue.nonMarkdownFiles);
+  const queueBefore = collectChangeFilesRecursively(paths.changeDir);
+  const beforeSnapshot = collectMarkdownSnapshot([
+    ...queueBefore.markdownFiles,
+    paths.proposalPath,
+    paths.tasksPath,
+    paths.designPath,
+    paths.codeSummaryPath,
+    paths.deltaSpecPath,
+  ]);
+
+  const context = buildSpecCreatorContextFromExistingChange(args.changeId, paths);
+  writeSpecCreatorArtifacts({
+    context,
+    paths,
+    outputPath: path.resolve(defaultSpecCreatorOutputPath(args.changeId)),
+  });
+
+  const queueAfter = collectChangeFilesRecursively(paths.changeDir);
+  const markdownResult = polishMarkdownFiles(queueAfter.markdownFiles);
+  const changedFiles = detectChangedMarkdownFiles(beforeSnapshot, [
+    ...queueAfter.markdownFiles,
+    paths.proposalPath,
+    paths.tasksPath,
+    paths.designPath,
+    paths.codeSummaryPath,
+    paths.deltaSpecPath,
+  ]);
+  const nonMarkdownResult = checkNonMarkdownConsistency(queueAfter.nonMarkdownFiles);
   for (const warning of nonMarkdownResult.warnings) {
     io.stderr(`[spec-creator polish] warning: ${warning}\n`);
   }
 
   const summary = buildPolishSummary({
-    totalFileCount: queue.totalFileCount,
-    changedFiles: markdownResult.changedFiles,
+    totalFileCount: queueAfter.totalFileCount,
+    changedFiles,
     ruleCounts: markdownResult.ruleCounts,
   });
   io.stdout(renderSpecCreatorPolishSummary(summary));
@@ -832,21 +868,73 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
   const context = collectSpecContextInteractive({
     changeId: args.changeId,
   });
-  const changeDir = path.resolve("openspec", "changes", context.change_id);
-  const proposalPath = path.join(changeDir, "proposal.md");
-  const tasksPath = path.join(changeDir, "tasks.md");
-  const designPath = path.join(changeDir, "design.md");
-  const codeSummaryPath = path.join(changeDir, "code_summary.md");
-  const deltaSpecPath = path.join(
-    changeDir,
-    "specs",
-    context.change_id,
-    "spec.md",
+  const paths = resolveSpecCreatorArtifactPaths(context.change_id);
+  const outputPath = path.resolve(
+    args.output ?? defaultSpecCreatorOutputPath(context.change_id),
   );
+  writeSpecCreatorArtifacts({ context, paths, outputPath });
+  io.stdout(`[spec-creator] wrote ${paths.proposalPath}\n`);
+  io.stdout(`[spec-creator] wrote ${paths.tasksPath}\n`);
+  io.stdout(`[spec-creator] wrote ${paths.designPath}\n`);
+  io.stdout(`[spec-creator] wrote ${paths.codeSummaryPath}\n`);
+  io.stdout(`[spec-creator] wrote ${paths.deltaSpecPath}\n`);
+  io.stdout(`[spec-creator] wrote ${outputPath}\n`);
+
+  if (args.noRun) {
+    return 0;
+  }
+
+  const stateDir = args.stateDir
+    ? path.resolve(args.stateDir)
+    : path.resolve(defaultSpecCreatorStateDir(context.change_id));
+  io.stdout(`[spec-creator] run --config ${outputPath}\n`);
+  return runCommand([
+    "--config",
+    outputPath,
+    "--state-dir",
+    stateDir,
+  ], io);
+}
+
+interface SpecCreatorArtifactPaths {
+  changeDir: string;
+  proposalPath: string;
+  tasksPath: string;
+  designPath: string;
+  codeSummaryPath: string;
+  deltaSpecPath: string;
+}
+
+interface SpecCreatorContextPayload {
+  change_id: string;
+  spec_context: SpecContext;
+  task_config: SpecCreatorTaskConfig;
+}
+
+function resolveSpecCreatorArtifactPaths(changeId: string): SpecCreatorArtifactPaths {
+  const changeDir = path.resolve("openspec", "changes", changeId);
+  return {
+    changeDir,
+    proposalPath: path.join(changeDir, "proposal.md"),
+    tasksPath: path.join(changeDir, "tasks.md"),
+    designPath: path.join(changeDir, "design.md"),
+    codeSummaryPath: path.join(changeDir, "code_summary.md"),
+    deltaSpecPath: path.join(changeDir, "specs", changeId, "spec.md"),
+  };
+}
+
+function writeSpecCreatorArtifacts(
+  options: {
+    context: SpecCreatorContextPayload;
+    paths: SpecCreatorArtifactPaths;
+    outputPath: string;
+  },
+): void {
+  const { context, paths, outputPath } = options;
   const lang = context.spec_context.language;
 
   writeProposalMarkdown({
-    proposalPath,
+    proposalPath: paths.proposalPath,
     lang,
     whyMarkdown: asBulletLines([
       context.spec_context.requirements_text,
@@ -865,7 +953,7 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
   });
 
   writeTasksMarkdown({
-    tasksPath,
+    tasksPath: paths.tasksPath,
     lang,
     implementationMarkdown: buildImplementationMarkdownForSpecCreator(
       context.task_config.tasks,
@@ -878,49 +966,165 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
   });
 
   writeCodeSummaryMarkdown({
-    tasksPath,
-    outputPath: codeSummaryPath,
+    tasksPath: paths.tasksPath,
+    outputPath: paths.codeSummaryPath,
   });
   writeDesignMarkdownStub({
-    designPath,
+    designPath: paths.designPath,
     lang,
   });
   writeDeltaSpecMarkdown({
-    specPath: deltaSpecPath,
+    specPath: paths.deltaSpecPath,
     lang,
     requirementName: `${context.change_id} generated baseline`,
     requirementsText: context.spec_context.requirements_text,
   });
 
-  const outputPath = path.resolve(
-    args.output ?? defaultSpecCreatorOutputPath(context.change_id),
-  );
   Deno.mkdirSync(path.dirname(outputPath), { recursive: true });
   Deno.writeTextFileSync(
     outputPath,
     `${JSON.stringify(context.task_config, null, 2)}\n`,
   );
-  io.stdout(`[spec-creator] wrote ${proposalPath}\n`);
-  io.stdout(`[spec-creator] wrote ${tasksPath}\n`);
-  io.stdout(`[spec-creator] wrote ${designPath}\n`);
-  io.stdout(`[spec-creator] wrote ${codeSummaryPath}\n`);
-  io.stdout(`[spec-creator] wrote ${deltaSpecPath}\n`);
-  io.stdout(`[spec-creator] wrote ${outputPath}\n`);
+}
 
-  if (args.noRun) {
-    return 0;
+function buildSpecCreatorContextFromExistingChange(
+  changeId: string,
+  paths: SpecCreatorArtifactPaths,
+): SpecCreatorContextPayload {
+  const sourceTextsForRequirements = [
+    readOptionalText(paths.proposalPath),
+    readOptionalText(paths.tasksPath),
+    readOptionalText(paths.designPath),
+    readOptionalText(paths.deltaSpecPath),
+    readOptionalText(paths.codeSummaryPath),
+  ].filter((text): text is string => text !== null);
+  const sourceTextsForLanguage = [
+    readOptionalText(paths.proposalPath),
+    readOptionalText(paths.tasksPath),
+    readOptionalText(paths.designPath),
+    readOptionalText(paths.deltaSpecPath),
+  ].filter((text): text is string => text !== null);
+
+  const language = detectSpecCreatorLanguage(sourceTextsForLanguage);
+  const requirementsText = deriveSpecCreatorRequirementsText(
+    sourceTextsForRequirements,
+    changeId,
+  );
+  const specContext: SpecContext = {
+    requirements_text: requirementsText,
+    language,
+    persona_policy: {
+      active_personas: [...SPEC_CREATOR_ACTIVE_PERSONAS],
+    },
+  };
+
+  return {
+    change_id: changeId,
+    spec_context: specContext,
+    task_config: buildSpecCreatorTaskConfig(changeId, specContext),
+  };
+}
+
+function detectSpecCreatorLanguage(
+  sourceTexts: string[],
+): "ja" | "en" {
+  const joined = sourceTexts.join("\n");
+  if (
+    /##\s*1\.\s*Implementation\b/u.test(joined) ||
+    /\bphase assignments\s*:/iu.test(joined) ||
+    /Provider Completion Gates \(fixed\)/u.test(joined) ||
+    /Template Usage Rules/u.test(joined)
+  ) {
+    return "en";
   }
+  if (
+    /##\s*1\.\s*実装タスク/u.test(joined) ||
+    /フェーズ担当\s*:/u.test(joined) ||
+    /Provider 完了判定ゲート（固定）/u.test(joined) ||
+    /テンプレート利用ルール/u.test(joined)
+  ) {
+    return "ja";
+  }
+  for (const source of sourceTexts) {
+    if (/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/u.test(source)) {
+      return "ja";
+    }
+  }
+  return "en";
+}
 
-  const stateDir = args.stateDir
-    ? path.resolve(args.stateDir)
-    : path.resolve(defaultSpecCreatorStateDir(context.change_id));
-  io.stdout(`[spec-creator] run --config ${outputPath}\n`);
-  return runCommand([
-    "--config",
-    outputPath,
-    "--state-dir",
-    stateDir,
-  ], io);
+function deriveSpecCreatorRequirementsText(
+  sourceTexts: string[],
+  changeId: string,
+): string {
+  for (const source of sourceTexts) {
+    const line = firstMeaningfulLine(source);
+    if (line.length > 0) {
+      return line;
+    }
+  }
+  return `Refine OpenSpec artifacts for ${changeId}`;
+}
+
+function firstMeaningfulLine(text: string): string {
+  const lines = text.split(/\r?\n/u);
+  for (const lineRaw of lines) {
+    const line = lineRaw.trim();
+    if (line.length === 0) {
+      continue;
+    }
+    if (/^#{1,6}\s+/u.test(line)) {
+      continue;
+    }
+    const stripped = line
+      .replace(/^[-*]\s+/u, "")
+      .replace(/`/gu, "")
+      .trim();
+    if (stripped.length === 0) {
+      continue;
+    }
+    return stripped.replaceAll(/\s+/gu, " ").slice(0, 240);
+  }
+  return "";
+}
+
+function readOptionalText(filePath: string): string | null {
+  return isFile(filePath) ? Deno.readTextFileSync(filePath) : null;
+}
+
+function collectMarkdownSnapshot(
+  filePaths: string[],
+): Map<string, string | null> {
+  const snapshot = new Map<string, string | null>();
+  for (const filePathRaw of filePaths) {
+    const filePath = path.resolve(filePathRaw);
+    if (snapshot.has(filePath)) {
+      continue;
+    }
+    snapshot.set(filePath, readOptionalText(filePath));
+  }
+  return snapshot;
+}
+
+function detectChangedMarkdownFiles(
+  before: Map<string, string | null>,
+  filePaths: string[],
+): string[] {
+  const targets = new Set<string>([
+    ...before.keys(),
+    ...filePaths.map((filePath) => path.resolve(filePath)),
+  ]);
+  const changed: string[] = [];
+  for (const filePath of [...targets].sort((left, right) =>
+    left.localeCompare(right)
+  )) {
+    const beforeText = before.get(filePath) ?? null;
+    const afterText = readOptionalText(filePath);
+    if (beforeText !== afterText) {
+      changed.push(filePath);
+    }
+  }
+  return changed;
 }
 
 function asBulletLines(items: string[]): string {
@@ -1009,7 +1213,7 @@ function formatPhaseAssignments(
     if (!executor) {
       continue;
     }
-    assignments.push(`${phase}=${executor}`);
+    assignments.push(`${phase}=${normalizePhaseExecutorForTemplate(phase, executor)}`);
   }
 
   if (assignments.length === 0) {
@@ -1044,6 +1248,37 @@ function firstPersonaIdFromPhasePolicy(
     }
   }
   return null;
+}
+
+function normalizePhaseExecutorForTemplate(
+  phase: string,
+  executor: string,
+): string {
+  const normalizedExecutor = executor.trim();
+  if (
+    normalizedExecutor === "implementer" ||
+    normalizedExecutor === "code-reviewer" ||
+    normalizedExecutor === "spec-checker" ||
+    normalizedExecutor === "test-owner"
+  ) {
+    return normalizedExecutor;
+  }
+  if (normalizedExecutor === "spec-planner" || normalizedExecutor === "spec-code-creator") {
+    return "implementer";
+  }
+  if (normalizedExecutor === "spec-reviewer") {
+    return "code-reviewer";
+  }
+  if (phase === "review") {
+    return "code-reviewer";
+  }
+  if (phase === "spec_check") {
+    return "spec-checker";
+  }
+  if (phase === "test") {
+    return "test-owner";
+  }
+  return "implementer";
 }
 
 function buildHumanNotesMarkdownForSpecCreator(

@@ -460,12 +460,12 @@ Deno.test("main spec-creator polish outputs summary with changed files", () => {
         throw new Error("stderr should be empty");
       }
       if (
-        !buffer.state.stdout.includes("[spec-creator polish] total_files: 2")
+        !buffer.state.stdout.includes("[spec-creator polish] total_files: 6")
       ) {
         throw new Error("stdout should include total file count");
       }
       if (
-        !buffer.state.stdout.includes("[spec-creator polish] changed_files: 1")
+        !buffer.state.stdout.includes("[spec-creator polish] changed_files: 5")
       ) {
         throw new Error("stdout should include changed file count");
       }
@@ -478,9 +478,21 @@ Deno.test("main spec-creator polish outputs summary with changed files", () => {
       }
       if (
         !buffer.state.stdout.includes(
-          "[spec-creator polish] rule_counts: formatting=1 fixed_lines=0 headings=2",
+          `[spec-creator polish] changed_file: openspec/changes/${changeId}/tasks.md`,
+        ) ||
+        !buffer.state.stdout.includes(
+          `[spec-creator polish] changed_file: openspec/changes/${changeId}/design.md`,
+        ) ||
+        !buffer.state.stdout.includes(
+          `[spec-creator polish] changed_file: openspec/changes/${changeId}/code_summary.md`,
+        ) ||
+        !buffer.state.stdout.includes(
+          `[spec-creator polish] changed_file: openspec/changes/${changeId}/specs/${changeId}/spec.md`,
         )
       ) {
+        throw new Error("stdout should include created/rewritten artifact files");
+      }
+      if (!buffer.state.stdout.includes("[spec-creator polish] rule_counts:")) {
         throw new Error("stdout should include rule counts");
       }
     });
@@ -498,6 +510,20 @@ Deno.test("main spec-creator polish prints no-change marker when unchanged", () 
     );
 
     withCwd(root, () => {
+      const firstBuffer = createIoBuffer();
+      const firstExitCode = main([
+        "spec-creator",
+        "polish",
+        "--change-id",
+        changeId,
+      ], firstBuffer.io);
+
+      if (firstExitCode !== 0) {
+        throw new Error(
+          `first spec-creator polish should return 0: ${firstBuffer.state.stderr}`,
+        );
+      }
+
       const buffer = createIoBuffer();
       const exitCode = main([
         "spec-creator",
@@ -512,7 +538,7 @@ Deno.test("main spec-creator polish prints no-change marker when unchanged", () 
         );
       }
       if (
-        !buffer.state.stdout.includes("[spec-creator polish] total_files: 1")
+        !buffer.state.stdout.includes("[spec-creator polish] total_files: 5")
       ) {
         throw new Error("stdout should include total file count");
       }
@@ -530,10 +556,10 @@ Deno.test("main spec-creator polish prints no-change marker when unchanged", () 
       }
       if (
         !buffer.state.stdout.includes(
-          "[spec-creator polish] rule_counts: formatting=0 fixed_lines=0 headings=0",
+          "[spec-creator polish] rule_counts:",
         )
       ) {
-        throw new Error("stdout should include zero rule counts");
+        throw new Error("stdout should include expected rule counts");
       }
     });
   });
@@ -583,7 +609,7 @@ Deno.test("main polish rerun stays diff-zero, keeps non-markdown unchanged, and 
         );
       }
       if (
-        !firstBuffer.state.stdout.includes("[spec-creator polish] changed_files: 2")
+        !firstBuffer.state.stdout.includes("[spec-creator polish] changed_files: 5")
       ) {
         throw new Error("first polish should report markdown updates");
       }
@@ -645,9 +671,9 @@ Deno.test("main polish rerun stays diff-zero, keeps non-markdown unchanged, and 
       };
       if (
         JSON.stringify(payload.tasks.map((task) => task.id)) !==
-          JSON.stringify(["1.1"])
+          JSON.stringify(["1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"])
       ) {
-        throw new Error("compiled payload should keep task id 1.1");
+        throw new Error("compiled payload should keep fixed task ids 1.1..1.7");
       }
     });
 

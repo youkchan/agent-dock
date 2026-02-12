@@ -3,6 +3,7 @@ import {
   DEFAULT_TEMPLATE_LANG,
   getOpenSpecTasksTemplateSections,
   getProviderCompletionGateSection,
+  normalizeFixedLinesAndHeadings,
   type SupportedTemplateLang,
 } from "./template.ts";
 
@@ -87,6 +88,50 @@ export interface WriteDeltaSpecMarkdownOptions
   specPath: string;
 }
 
+export type ChangeFileKind = "markdown" | "non-markdown";
+
+export interface ChangeFileQueueItem {
+  path: string;
+  kind: ChangeFileKind;
+}
+
+export interface ChangeFileQueue {
+  changeRoot: string;
+  totalFileCount: number;
+  markdownFiles: string[];
+  nonMarkdownFiles: string[];
+  processingQueue: ChangeFileQueueItem[];
+}
+
+export interface MarkdownPolishRuleCounts {
+  formatting: number;
+  fixedLines: number;
+  headings: number;
+}
+
+export interface MarkdownPolishResult {
+  changedFiles: string[];
+  ruleCounts: MarkdownPolishRuleCounts;
+}
+
+export interface NonMarkdownConsistencyResult {
+  checkedFiles: string[];
+  warnings: string[];
+}
+
+export interface BuildPolishSummaryOptions {
+  totalFileCount: number;
+  changedFiles: string[];
+  ruleCounts: MarkdownPolishRuleCounts;
+}
+
+export interface SpecCreatorPolishSummary {
+  totalFileCount: number;
+  changedFileCount: number;
+  changedFiles: string[];
+  ruleCounts: MarkdownPolishRuleCounts;
+}
+
 const PROPOSAL_TEMPLATE_BY_LANG: Record<
   SupportedTemplateLang,
   {
@@ -126,6 +171,134 @@ const PROPOSAL_TEMPLATE_BY_LANG: Record<
     reviewerStopHeading: "## Reviewer Stop Gates (fixed)",
   },
 };
+
+export function collectChangeFilesRecursively(
+  changeRootPath: string,
+): ChangeFileQueue {
+  const changeRoot = path.resolve(changeRootPath);
+  const changeRootStat = safeStat(changeRoot);
+  if (!changeRootStat?.isDirectory) {
+    throw new Error(`change root is not a directory: ${changeRoot}`);
+  }
+
+  const filePaths: string[] = [];
+  walkDirectoryRecursively(changeRoot, filePaths);
+  filePaths.sort((left, right) => left.localeCompare(right));
+
+  const processingQueue = filePaths.map(
+    (filePath): ChangeFileQueueItem => ({
+      path: filePath,
+      kind: isMarkdownPath(filePath) ? "markdown" : "non-markdown",
+    }),
+  );
+  const markdownFiles = processingQueue
+    .filter((item) => item.kind === "markdown")
+    .map((item) => item.path);
+  const nonMarkdownFiles = processingQueue
+    .filter((item) => item.kind === "non-markdown")
+    .map((item) => item.path);
+
+  return {
+    changeRoot,
+    totalFileCount: processingQueue.length,
+    markdownFiles,
+    nonMarkdownFiles,
+    processingQueue,
+  };
+}
+
+export function polishMarkdownFiles(
+  markdownPaths: string[],
+): MarkdownPolishResult {
+  const changedFiles: string[] = [];
+  const ruleCounts: MarkdownPolishRuleCounts = {
+    formatting: 0,
+    fixedLines: 0,
+    headings: 0,
+  };
+
+  for (const markdownPathRaw of markdownPaths) {
+    const markdownPath = path.resolve(markdownPathRaw);
+    const original = safeReadTextFile(markdownPath);
+    const polished = polishMarkdownContent(original, markdownPath);
+
+    ruleCounts.formatting += polished.formatting;
+    ruleCounts.fixedLines += polished.fixedLines;
+    ruleCounts.headings += polished.headings;
+
+    if (polished.markdown === original) {
+      continue;
+    }
+
+    safeWriteTextFile(markdownPath, polished.markdown);
+    changedFiles.push(markdownPath);
+  }
+
+  changedFiles.sort((left, right) => left.localeCompare(right));
+  return {
+    changedFiles,
+    ruleCounts,
+  };
+}
+
+export function checkNonMarkdownConsistency(
+  nonMarkdownPaths: string[],
+): NonMarkdownConsistencyResult {
+  const checkedFiles: string[] = [];
+  const warnings: string[] = [];
+
+  for (const nonMarkdownPathRaw of nonMarkdownPaths) {
+    const nonMarkdownPath = path.resolve(nonMarkdownPathRaw);
+    const before = safeReadBinaryFile(nonMarkdownPath);
+    checkedFiles.push(nonMarkdownPath);
+
+    warnings.push(...collectNonMarkdownWarnings(nonMarkdownPath, before));
+
+    const after = safeReadBinaryFile(nonMarkdownPath);
+    if (!isSameBytes(before, after)) {
+      warnings.push(
+        `non-markdown consistency warning: ${nonMarkdownPath}: content changed during read-only check`,
+      );
+    }
+  }
+
+  checkedFiles.sort((left, right) => left.localeCompare(right));
+  warnings.sort((left, right) => left.localeCompare(right));
+  return { checkedFiles, warnings };
+}
+
+export function buildPolishSummary(
+  options: BuildPolishSummaryOptions,
+): SpecCreatorPolishSummary {
+  const totalFileCount = normalizeNonNegativeInteger(
+    options.totalFileCount,
+    "total file count",
+  );
+  const changedFiles = [...options.changedFiles]
+    .map((item) => path.resolve(item))
+    .sort((left, right) => left.localeCompare(right));
+  const ruleCounts = {
+    formatting: normalizeNonNegativeInteger(
+      options.ruleCounts.formatting,
+      "formatting rule count",
+    ),
+    fixedLines: normalizeNonNegativeInteger(
+      options.ruleCounts.fixedLines,
+      "fixed lines rule count",
+    ),
+    headings: normalizeNonNegativeInteger(
+      options.ruleCounts.headings,
+      "headings rule count",
+    ),
+  };
+
+  return {
+    totalFileCount,
+    changedFileCount: changedFiles.length,
+    changedFiles,
+    ruleCounts,
+  };
+}
 
 export function buildProposalMarkdown(
   options: BuildProposalMarkdownOptions = {},
@@ -235,7 +408,9 @@ export function buildDeltaSpecMarkdown(
   const lang = normalizeTemplateLang(options.lang ?? DEFAULT_TEMPLATE_LANG);
   const requirementName = normalizeText(
     options.requirementName,
-    lang === "ja" ? "Spec Creator Draft Baseline" : "Spec Creator Draft Baseline",
+    lang === "ja"
+      ? "Spec Creator Draft Baseline"
+      : "Spec Creator Draft Baseline",
   );
   const requirementsText = normalizeText(
     options.requirementsText,
@@ -531,4 +706,248 @@ function extractProviderCompletionGateBullets(lang: string): string[] {
     );
   }
   return bullets;
+}
+
+function polishMarkdownContent(
+  markdown: string,
+  filePath: string,
+): {
+  markdown: string;
+  formatting: number;
+  fixedLines: number;
+  headings: number;
+} {
+  const normalizedLf = normalizeLineEnding(markdown);
+  let lines = normalizedLf.split("\n");
+
+  const trimmedResult = trimTrailingWhitespace(lines);
+  lines = trimmedResult.lines;
+
+  const blankLineResult = collapseBlankLines(lines);
+  lines = blankLineResult.lines;
+
+  let normalizedMarkdown = finalizeMarkdownLines(lines);
+  const fixedAndHeadingResult = normalizeFixedLinesAndHeadings(
+    normalizedMarkdown,
+    { filePath },
+  );
+  normalizedMarkdown = fixedAndHeadingResult.markdown;
+
+  const formattingChanged = normalizedMarkdown !== markdown &&
+    (normalizedLf !== markdown ||
+      trimmedResult.changes > 0 ||
+      blankLineResult.changes > 0);
+
+  return {
+    markdown: normalizedMarkdown,
+    formatting: formattingChanged ? 1 : 0,
+    fixedLines: fixedAndHeadingResult.fixedLineInsertions,
+    headings: fixedAndHeadingResult.headingNormalizations,
+  };
+}
+
+function trimTrailingWhitespace(
+  lines: string[],
+): { lines: string[]; changes: number } {
+  const normalized: string[] = [];
+  let changes = 0;
+
+  for (const line of lines) {
+    const next = line.replace(/[ \t]+$/u, "");
+    if (next !== line) {
+      changes += 1;
+    }
+    normalized.push(next);
+  }
+
+  return { lines: normalized, changes };
+}
+
+function collapseBlankLines(
+  lines: string[],
+): { lines: string[]; changes: number } {
+  const normalized: string[] = [];
+  let changes = 0;
+  let inFence = false;
+  let blankRun = 0;
+
+  for (const line of lines) {
+    if (isFenceLine(line)) {
+      inFence = !inFence;
+      blankRun = 0;
+      normalized.push(line);
+      continue;
+    }
+
+    if (inFence) {
+      normalized.push(line);
+      continue;
+    }
+
+    if (line.trim().length === 0) {
+      blankRun += 1;
+      if (blankRun > 1) {
+        changes += 1;
+        continue;
+      }
+      normalized.push("");
+      continue;
+    }
+
+    blankRun = 0;
+    normalized.push(line);
+  }
+
+  return { lines: normalized, changes };
+}
+
+function finalizeMarkdownLines(lines: string[]): string {
+  let end = lines.length;
+  while (end > 0 && lines[end - 1].trim().length === 0) {
+    end -= 1;
+  }
+  if (end === 0) {
+    return "";
+  }
+  return `${lines.slice(0, end).join("\n")}\n`;
+}
+
+function normalizeLineEnding(markdown: string): string {
+  return markdown.replaceAll(/\r\n?/gu, "\n");
+}
+
+function safeReadTextFile(filePath: string): string {
+  try {
+    return Deno.readTextFileSync(filePath);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to read markdown file: ${filePath}: ${reason}`);
+  }
+}
+
+function safeWriteTextFile(filePath: string, content: string): void {
+  try {
+    Deno.writeTextFileSync(filePath, content);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to write markdown file: ${filePath}: ${reason}`);
+  }
+}
+
+function safeReadBinaryFile(filePath: string): Uint8Array {
+  try {
+    return Deno.readFileSync(filePath);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to read non-markdown file: ${filePath}: ${reason}`);
+  }
+}
+
+function isFenceLine(line: string): boolean {
+  return /^\s*(?:```|~~~)/u.test(line);
+}
+
+function walkDirectoryRecursively(rootPath: string, output: string[]): void {
+  const entries = safeReadDir(rootPath);
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+
+  for (const entry of entries) {
+    const entryPath = path.join(rootPath, entry.name);
+    if (entry.isDirectory) {
+      walkDirectoryRecursively(entryPath, output);
+      continue;
+    }
+    if (entry.isFile) {
+      output.push(entryPath);
+      continue;
+    }
+    throw new Error(`unsupported entry type under change root: ${entryPath}`);
+  }
+}
+
+function safeReadDir(dirPath: string): Deno.DirEntry[] {
+  try {
+    return Array.from(Deno.readDirSync(dirPath));
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to scan directory: ${dirPath}: ${reason}`);
+  }
+}
+
+function safeStat(filePath: string): Deno.FileInfo | null {
+  try {
+    return Deno.statSync(filePath);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return null;
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to inspect path: ${filePath}: ${reason}`);
+  }
+}
+
+function isMarkdownPath(filePath: string): boolean {
+  return path.extname(filePath).toLowerCase() === ".md";
+}
+
+function collectNonMarkdownWarnings(
+  filePath: string,
+  bytes: Uint8Array,
+): string[] {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext !== ".json") {
+    return [];
+  }
+
+  const text = decodeUtf8(bytes);
+  if (text === null) {
+    return [
+      `non-markdown consistency warning: ${filePath}: invalid UTF-8 JSON text`,
+    ];
+  }
+
+  try {
+    JSON.parse(text);
+  } catch (error) {
+    const reason = compactReason(error);
+    return [
+      `non-markdown consistency warning: ${filePath}: invalid JSON: ${reason}`,
+    ];
+  }
+
+  return [];
+}
+
+function decodeUtf8(bytes: Uint8Array): string | null {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function isSameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function compactReason(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message.replaceAll(/\s+/gu, " ").trim();
+  }
+  return String(error).replaceAll(/\s+/gu, " ").trim();
+}
+
+function normalizeNonNegativeInteger(value: number, label: string): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+  return value;
 }

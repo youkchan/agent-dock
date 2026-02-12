@@ -54,6 +54,16 @@ function withEnv(name: string, value: string, run: () => void): void {
   }
 }
 
+function withCwd(nextCwd: string, run: () => void): void {
+  const original = Deno.cwd();
+  Deno.chdir(nextCwd);
+  try {
+    run();
+  } finally {
+    Deno.chdir(original);
+  }
+}
+
 function assertThrowsMessage(fn: () => void, messagePart: string): void {
   let thrown: unknown = null;
   try {
@@ -381,6 +391,296 @@ Deno.test("main compile-openspec reports compile errors", () => {
       "compile errors should include openspec compile error prefix",
     );
   }
+  if (!buffer.state.stderr.includes("change not found:")) {
+    throw new Error(
+      "compile errors should include missing change-id failure reason",
+    );
+  }
+});
+
+Deno.test("main spec-creator polish requires --change-id", () => {
+  const buffer = createIoBuffer();
+  const exitCode = main(["spec-creator", "polish"], buffer.io);
+
+  if (exitCode === 0) {
+    throw new Error("spec-creator polish without --change-id should fail");
+  }
+  if (!buffer.state.stderr.includes("argument --change-id is required")) {
+    throw new Error("stderr should include required --change-id message");
+  }
+});
+
+Deno.test("main spec-creator polish fails when change does not exist", () => {
+  withTempDir((root) => {
+    withCwd(root, () => {
+      const buffer = createIoBuffer();
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        "--change-id",
+        "missing-change",
+      ], buffer.io);
+
+      if (exitCode === 0) {
+        throw new Error("missing change should fail");
+      }
+      if (!buffer.state.stderr.includes("change not found:")) {
+        throw new Error("stderr should include change not found");
+      }
+    });
+  });
+});
+
+Deno.test("main spec-creator polish outputs summary with changed files", () => {
+  withTempDir((root) => {
+    const changeId = "existing-change";
+    const changeRoot = `${root}/openspec/changes/${changeId}`;
+    Deno.mkdirSync(changeRoot, { recursive: true });
+    Deno.writeTextFileSync(
+      `${changeRoot}/proposal.md`,
+      "#Title  \r\n\r\n\r\n##Why  \nBody",
+    );
+    Deno.writeTextFileSync(`${changeRoot}/meta.json`, '{"ok":true}\n');
+
+    withCwd(root, () => {
+      const buffer = createIoBuffer();
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        "--change-id",
+        changeId,
+      ], buffer.io);
+
+      if (exitCode !== 0) {
+        throw new Error(
+          `spec-creator polish should return 0: ${buffer.state.stderr}`,
+        );
+      }
+      if (buffer.state.stderr.length > 0) {
+        throw new Error("stderr should be empty");
+      }
+      if (
+        !buffer.state.stdout.includes("[spec-creator polish] total_files: 6")
+      ) {
+        throw new Error("stdout should include total file count");
+      }
+      if (
+        !buffer.state.stdout.includes("[spec-creator polish] changed_files: 5")
+      ) {
+        throw new Error("stdout should include changed file count");
+      }
+      if (
+        !buffer.state.stdout.includes(
+          `[spec-creator polish] changed_file: openspec/changes/${changeId}/proposal.md`,
+        )
+      ) {
+        throw new Error("stdout should include changed file list");
+      }
+      if (
+        !buffer.state.stdout.includes(
+          `[spec-creator polish] changed_file: openspec/changes/${changeId}/tasks.md`,
+        ) ||
+        !buffer.state.stdout.includes(
+          `[spec-creator polish] changed_file: openspec/changes/${changeId}/design.md`,
+        ) ||
+        !buffer.state.stdout.includes(
+          `[spec-creator polish] changed_file: openspec/changes/${changeId}/code_summary.md`,
+        ) ||
+        !buffer.state.stdout.includes(
+          `[spec-creator polish] changed_file: openspec/changes/${changeId}/specs/${changeId}/spec.md`,
+        )
+      ) {
+        throw new Error("stdout should include created/rewritten artifact files");
+      }
+      if (!buffer.state.stdout.includes("[spec-creator polish] rule_counts:")) {
+        throw new Error("stdout should include rule counts");
+      }
+    });
+  });
+});
+
+Deno.test("main spec-creator polish prints no-change marker when unchanged", () => {
+  withTempDir((root) => {
+    const changeId = "no-change";
+    const changeRoot = `${root}/openspec/changes/${changeId}`;
+    Deno.mkdirSync(changeRoot, { recursive: true });
+    Deno.writeTextFileSync(
+      `${changeRoot}/proposal.md`,
+      "# Title\n\n## Why\nBody\n",
+    );
+
+    withCwd(root, () => {
+      const firstBuffer = createIoBuffer();
+      const firstExitCode = main([
+        "spec-creator",
+        "polish",
+        "--change-id",
+        changeId,
+      ], firstBuffer.io);
+
+      if (firstExitCode !== 0) {
+        throw new Error(
+          `first spec-creator polish should return 0: ${firstBuffer.state.stderr}`,
+        );
+      }
+
+      const buffer = createIoBuffer();
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        "--change-id",
+        changeId,
+      ], buffer.io);
+
+      if (exitCode !== 0) {
+        throw new Error(
+          `spec-creator polish should return 0: ${buffer.state.stderr}`,
+        );
+      }
+      if (
+        !buffer.state.stdout.includes("[spec-creator polish] total_files: 5")
+      ) {
+        throw new Error("stdout should include total file count");
+      }
+      if (
+        !buffer.state.stdout.includes("[spec-creator polish] changed_files: 0")
+      ) {
+        throw new Error("stdout should include zero changed files");
+      }
+      if (
+        !buffer.state.stdout.includes(
+          "[spec-creator polish] changed_file: (none)",
+        )
+      ) {
+        throw new Error("stdout should include no-change marker");
+      }
+      if (
+        !buffer.state.stdout.includes(
+          "[spec-creator polish] rule_counts:",
+        )
+      ) {
+        throw new Error("stdout should include expected rule counts");
+      }
+    });
+  });
+});
+
+Deno.test("main polish rerun stays diff-zero, keeps non-markdown unchanged, and compile-openspec succeeds", () => {
+  withTempDir((root) => {
+    const changeId = "acceptance-change";
+    const changeRoot = `${root}/openspec/changes/${changeId}`;
+    const metaPath = `${changeRoot}/meta.json`;
+    Deno.mkdirSync(`${changeRoot}/configs`, { recursive: true });
+    Deno.writeTextFileSync(
+      `${changeRoot}/tasks.md`,
+      [
+        "## 0. Persona Defaults",
+        "##1. implementation",
+        "- [ ] 1.1 verify acceptance",
+        "  - Depends on: none",
+        "  - Target paths: src/a.ts",
+        "  - phase assignments: implement=implementer; review=code-reviewer",
+        "  - Description: keep compile-openspec working",
+        "##2.human notes",
+        "- Note: custom memo",
+        "",
+      ].join("\r\n"),
+    );
+    Deno.writeTextFileSync(
+      `${changeRoot}/proposal.md`,
+      "#Title  \r\n\r\n\r\n##Why  \nBody",
+    );
+    Deno.writeTextFileSync(metaPath, '{"version":1}\n');
+    Deno.writeTextFileSync(`${changeRoot}/configs/rules.yaml`, "mode: strict\n");
+    const metaBefore = Deno.readTextFileSync(metaPath);
+
+    withCwd(root, () => {
+      const firstBuffer = createIoBuffer();
+      const firstExitCode = main([
+        "spec-creator",
+        "polish",
+        "--change-id",
+        changeId,
+      ], firstBuffer.io);
+
+      if (firstExitCode !== 0) {
+        throw new Error(
+          `first spec-creator polish should return 0: ${firstBuffer.state.stderr}`,
+        );
+      }
+      if (
+        !firstBuffer.state.stdout.includes("[spec-creator polish] changed_files: 5")
+      ) {
+        throw new Error("first polish should report markdown updates");
+      }
+
+      const secondBuffer = createIoBuffer();
+      const secondExitCode = main([
+        "spec-creator",
+        "polish",
+        "--change-id",
+        changeId,
+      ], secondBuffer.io);
+      if (secondExitCode !== 0) {
+        throw new Error(
+          `second spec-creator polish should return 0: ${secondBuffer.state.stderr}`,
+        );
+      }
+      if (
+        !secondBuffer.state.stdout.includes("[spec-creator polish] changed_files: 0")
+      ) {
+        throw new Error("second polish should report zero changed files");
+      }
+      if (
+        !secondBuffer.state.stdout.includes(
+          "[spec-creator polish] changed_file: (none)",
+        )
+      ) {
+        throw new Error("second polish should print no-change marker");
+      }
+      if (
+        !secondBuffer.state.stdout.includes(
+          "[spec-creator polish] rule_counts: formatting=0 fixed_lines=0 headings=0",
+        )
+      ) {
+        throw new Error("second polish should report zero rule counts");
+      }
+
+      const outputPath = `${root}/task_configs/${changeId}.json`;
+      const compileBuffer = createIoBuffer();
+      const compileExitCode = main([
+        "compile-openspec",
+        "--change-id",
+        changeId,
+        "--output",
+        outputPath,
+      ], compileBuffer.io);
+
+      if (compileExitCode !== 0) {
+        throw new Error(
+          `compile-openspec should return 0: ${compileBuffer.state.stderr}`,
+        );
+      }
+      if (compileBuffer.state.stdout.trim() !== outputPath) {
+        throw new Error(
+          "compile-openspec should print the written output path",
+        );
+      }
+      const payload = JSON.parse(Deno.readTextFileSync(outputPath)) as {
+        tasks: Array<{ id: string }>;
+      };
+      if (
+        JSON.stringify(payload.tasks.map((task) => task.id)) !==
+          JSON.stringify(["1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7"])
+      ) {
+        throw new Error("compiled payload should keep fixed task ids 1.1..1.7");
+      }
+    });
+
+    if (Deno.readTextFileSync(metaPath) !== metaBefore) {
+      throw new Error("non-markdown file must stay unchanged after polish runs");
+    }
+  });
 });
 
 Deno.test("main run executes orchestrator with template adapter", () => {
@@ -503,6 +803,57 @@ Deno.test("main run executes orchestrator with subprocess adapter", () => {
 
     if (!buffer.state.stdout.includes('"stop_reason": "all_tasks_completed"')) {
       throw new Error("stdout should include successful stop reason");
+    }
+  });
+});
+
+Deno.test("main run includes openspec_change_id when config meta has source_change_id", () => {
+  withTempDir((root) => {
+    const configPath = `${root}/tasks.json`;
+    const stateDir = `${root}/state`;
+
+    Deno.writeTextFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          meta: {
+            source_change_id: "add-sample-change",
+          },
+          teammates: ["tm-1"],
+          tasks: [
+            {
+              id: "T1",
+              title: "sample",
+              target_paths: ["src/a.ts"],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const buffer = createIoBuffer();
+    withEnv("ORCHESTRATOR_PROVIDER", "mock", () => {
+      const exitCode = main([
+        "run",
+        "--config",
+        configPath,
+        "--state-dir",
+        stateDir,
+        "--teammate-adapter",
+        "template",
+        "--max-rounds",
+        "20",
+      ], buffer.io);
+
+      if (exitCode !== 0) {
+        throw new Error(`run should return 0: ${buffer.state.stderr}`);
+      }
+    });
+
+    if (!buffer.state.stdout.includes('"openspec_change_id": "add-sample-change"')) {
+      throw new Error("stdout should include openspec_change_id");
     }
   });
 });
