@@ -5,9 +5,9 @@
 この停止はタスク実装の成否と無関係に発生し、長時間実行の完走率を下げる。
 
 ## What Changes
-- Lead decision JSON の出力上限を固定する（件数上限・文字列長上限）。
+- 既存の Lead decision JSON バリデーションを強化し、配列件数上限を追加する（文字列長上限は維持）。
 - Lead へ渡す snapshot を軽量化する（`completed` タスク除外、`recent_messages` 件数削減）。
-- OpenAI 応答が `incomplete` かつ `reason=max_output_tokens` の場合、1回だけ最小再問い合わせを行う。
+- 既存の incomplete 時リトライ挙動を調整し、`status=incomplete` かつ `reason=max_output_tokens` の場合にのみ1回だけ最小再問い合わせを行う。
 - 再問い合わせでも JSON 契約を満たせない場合は fail-closed で停止し、診断情報を明示する。
 - 上記挙動に対する単体テストと回帰テストを追加する。
 

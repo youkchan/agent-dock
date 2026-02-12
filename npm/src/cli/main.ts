@@ -37,6 +37,7 @@ import {
 } from "../infrastructure/openspec/compiler.ts";
 import {
   writeCodeSummaryMarkdown,
+  writeDeltaSpecMarkdown,
   writeProposalMarkdown,
   writeTasksMarkdown,
 } from "../infrastructure/openspec/spec_creator.ts";
@@ -78,11 +79,11 @@ interface PrintTemplateArgs {
 }
 
 interface SpecCreatorPreprocessArgs {
-  changeId: string;
+  changeId: string | null;
 }
 
 interface SpecCreatorArgs {
-  changeId: string;
+  changeId: string | null;
   output: string | null;
   noRun: boolean;
   stateDir: string | null;
@@ -153,11 +154,11 @@ const PRINT_TEMPLATE_USAGE = [
 ].join("\n");
 
 const SPEC_CREATOR_PREPROCESS_USAGE = [
-  "usage: spec-creator-preprocess --change-id CHANGE_ID",
+  "usage: spec-creator-preprocess [--change-id CHANGE_ID]",
 ].join("\n");
 
 const SPEC_CREATOR_USAGE = [
-  "usage: spec-creator --change-id CHANGE_ID [--output PATH] [--state-dir DIR] [--no-run]",
+  "usage: spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--no-run]",
 ].join("\n");
 
 const GLOBAL_USAGE = [
@@ -412,7 +413,7 @@ function parseSpecCreatorPreprocessArgs(
   }
 
   const parsed: SpecCreatorPreprocessArgs = {
-    changeId: "",
+    changeId: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -428,10 +429,6 @@ function parseSpecCreatorPreprocessArgs(
     throw new Error(`unrecognized argument: ${arg}`);
   }
 
-  if (!parsed.changeId) {
-    throw new Error("argument --change-id is required");
-  }
-
   return parsed;
 }
 
@@ -441,7 +438,7 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
   }
 
   const parsed: SpecCreatorArgs = {
-    changeId: "",
+    changeId: null,
     output: null,
     noRun: false,
     stateDir: null,
@@ -472,10 +469,6 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
     }
 
     throw new Error(`unrecognized argument: ${arg}`);
-  }
-
-  if (!parsed.changeId) {
-    throw new Error("argument --change-id is required");
   }
 
   return parsed;
@@ -740,6 +733,12 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
   const tasksPath = path.join(changeDir, "tasks.md");
   const designPath = path.join(changeDir, "design.md");
   const codeSummaryPath = path.join(changeDir, "code_summary.md");
+  const deltaSpecPath = path.join(
+    changeDir,
+    "specs",
+    context.change_id,
+    "spec.md",
+  );
   const lang = context.spec_context.language;
 
   writeProposalMarkdown({
@@ -747,7 +746,6 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
     lang,
     whyMarkdown: asBulletLines([
       context.spec_context.requirements_text,
-      context.spec_context.acceptance_criteria,
     ]),
     whatChangesMarkdown: asBulletLines([
       lang === "ja"
@@ -758,14 +756,7 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
         : "Generate aligned tasks.md and code_summary.md",
     ]),
     impactMarkdown: asBulletLines([
-      `${lang === "ja" ? "non_goals" : "non_goals"}: ${
-        context.spec_context.non_goals
-      }`,
-      `${lang === "ja" ? "scope_paths" : "scope_paths"}: ${
-        context.spec_context.scope_paths.length > 0
-          ? context.spec_context.scope_paths.join(", ")
-          : "(none)"
-      }`,
+      context.spec_context.requirements_text,
     ]),
   });
 
@@ -789,7 +780,12 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
   writeDesignMarkdownStub({
     designPath,
     lang,
-    acceptanceCriteria: context.spec_context.acceptance_criteria,
+  });
+  writeDeltaSpecMarkdown({
+    specPath: deltaSpecPath,
+    lang,
+    requirementName: `${context.change_id} generated baseline`,
+    requirementsText: context.spec_context.requirements_text,
   });
 
   const outputPath = path.resolve(
@@ -804,6 +800,7 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
   io.stdout(`[spec-creator] wrote ${tasksPath}\n`);
   io.stdout(`[spec-creator] wrote ${designPath}\n`);
   io.stdout(`[spec-creator] wrote ${codeSummaryPath}\n`);
+  io.stdout(`[spec-creator] wrote ${deltaSpecPath}\n`);
   io.stdout(`[spec-creator] wrote ${outputPath}\n`);
 
   if (args.noRun) {
@@ -944,40 +941,22 @@ function firstPersonaIdFromPhasePolicy(
 function buildHumanNotesMarkdownForSpecCreator(
   specContext: {
     requirements_text: string;
-    non_goals: string;
-    acceptance_criteria: string;
-    scope_paths: string[];
   },
   lang: "ja" | "en",
 ): string {
   if (lang === "ja") {
     return [
       `- 要件メモ: ${specContext.requirements_text}`,
-      `- 非目標: ${specContext.non_goals}`,
-      `- 受け入れ条件: ${specContext.acceptance_criteria}`,
-      `- 対象パス: ${
-        specContext.scope_paths.length > 0
-          ? specContext.scope_paths.join(", ")
-          : "(none)"
-      }`,
     ].join("\n");
   }
   return [
     `- Requirement memo: ${specContext.requirements_text}`,
-    `- Non-goals: ${specContext.non_goals}`,
-    `- Acceptance criteria: ${specContext.acceptance_criteria}`,
-    `- Scope paths: ${
-      specContext.scope_paths.length > 0
-        ? specContext.scope_paths.join(", ")
-        : "(none)"
-    }`,
   ].join("\n");
 }
 
 function writeDesignMarkdownStub(options: {
   designPath: string;
   lang: "ja" | "en";
-  acceptanceCriteria: string;
 }): void {
   const body = options.lang === "ja"
     ? [
@@ -986,18 +965,12 @@ function writeDesignMarkdownStub(options: {
       "## 目的",
       "- 必要時のみ設計判断を追記する。",
       "",
-      "## 受け入れ条件メモ",
-      `- ${options.acceptanceCriteria}`,
-      "",
     ].join("\n")
     : [
       "# Design",
       "",
       "## Purpose",
       "- Add design decisions only when needed.",
-      "",
-      "## Acceptance Criteria Memo",
-      `- ${options.acceptanceCriteria}`,
       "",
     ].join("\n");
   Deno.mkdirSync(path.dirname(options.designPath), { recursive: true });

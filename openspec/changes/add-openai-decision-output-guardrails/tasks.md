@@ -13,21 +13,21 @@
 - 例: `- フェーズ担当: implement=implementer; review=code-reviewer`（未指定フェーズはグローバル既定を使う）。
 
 ## 1. 実装タスク
-- [ ] 1.1 Lead decision JSON 出力上限を実装する
+- [ ] 1.1 Lead decision JSON 出力上限を強化する
   - 依存: なし
   - 対象: src/infrastructure/provider/factory.ts, src/domain/decision.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
-  - 成果物: `decisions/task_updates/messages` の件数上限と `reason_short/text_short/feedback` の文字数上限をスキーマとバリデーションに反映
+  - 成果物: 既存の `reason_short/text_short/feedback` 文字数上限を維持しつつ、`decisions/task_updates/messages` の件数上限をスキーマとバリデーションに反映
 - [ ] 1.2 Lead snapshot を軽量化する
   - 依存: 1.1
   - 対象: src/application/orchestrator/orchestrator.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: provider 入力から `completed` タスクを除外し、`recent_messages` 件数を削減
-- [ ] 1.3 max_output_tokens incomplete 時の1回再問い合わせを追加する
+- [ ] 1.3 incomplete 時リトライ条件を調整する
   - 依存: 1.1, 1.2
   - 対象: src/infrastructure/provider/factory.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
-  - 成果物: `status=incomplete` かつ `reason=max_output_tokens` を検知した場合のみ1回再問い合わせし、再失敗時は fail-closed で停止
+  - 成果物: 既存の1回リトライ実装を `status=incomplete` かつ `reason=max_output_tokens` 条件に限定し、再失敗時は fail-closed で停止
 - [ ] 1.4 回帰テストを追加する
   - 依存: 1.1, 1.2, 1.3
   - 対象: src/application/orchestrator/orchestrator_test.ts, src/cli/main_test.ts, src/infrastructure/provider/factory_test.ts

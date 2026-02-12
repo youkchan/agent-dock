@@ -76,6 +76,17 @@ export interface WriteTasksMarkdownOptions extends BuildTasksMarkdownOptions {
   tasksPath: string;
 }
 
+export interface BuildDeltaSpecMarkdownOptions {
+  lang?: string;
+  requirementName?: string;
+  requirementsText?: string;
+}
+
+export interface WriteDeltaSpecMarkdownOptions
+  extends BuildDeltaSpecMarkdownOptions {
+  specPath: string;
+}
+
 const PROPOSAL_TEMPLATE_BY_LANG: Record<
   SupportedTemplateLang,
   {
@@ -216,6 +227,56 @@ export function writeTasksMarkdown(options: WriteTasksMarkdownOptions): string {
   Deno.mkdirSync(path.dirname(tasksPath), { recursive: true });
   Deno.writeTextFileSync(tasksPath, tasksMarkdown);
   return tasksPath;
+}
+
+export function buildDeltaSpecMarkdown(
+  options: BuildDeltaSpecMarkdownOptions = {},
+): string {
+  const lang = normalizeTemplateLang(options.lang ?? DEFAULT_TEMPLATE_LANG);
+  const requirementName = normalizeText(
+    options.requirementName,
+    lang === "ja" ? "Spec Creator Draft Baseline" : "Spec Creator Draft Baseline",
+  );
+  const requirementsText = normalizeText(
+    options.requirementsText,
+    lang === "ja" ? "(none)" : "(none)",
+  );
+
+  if (lang === "ja") {
+    return [
+      "## ADDED Requirements",
+      `### Requirement: ${requirementName}`,
+      "The system SHALL keep OpenSpec artifacts aligned for this change.",
+      "",
+      "#### Scenario: Spec creator baseline is generated",
+      "- **WHEN** spec creator runs for this change",
+      "- **THEN** proposal/tasks/design/code_summary and this delta SHALL be generated",
+      `- **AND** requirements memo SHALL be captured: ${requirementsText}`,
+      "",
+    ].join("\n");
+  }
+
+  return [
+    "## ADDED Requirements",
+    `### Requirement: ${requirementName}`,
+    "The system SHALL keep OpenSpec artifacts aligned for this change.",
+    "",
+    "#### Scenario: Spec creator baseline is generated",
+    "- **WHEN** spec creator runs for this change",
+    "- **THEN** proposal/tasks/design/code_summary and this delta SHALL be generated",
+    `- **AND** requirements memo SHALL be captured: ${requirementsText}`,
+    "",
+  ].join("\n");
+}
+
+export function writeDeltaSpecMarkdown(
+  options: WriteDeltaSpecMarkdownOptions,
+): string {
+  const specPath = path.resolve(options.specPath);
+  const content = buildDeltaSpecMarkdown(options);
+  Deno.mkdirSync(path.dirname(specPath), { recursive: true });
+  Deno.writeTextFileSync(specPath, content);
+  return specPath;
 }
 
 export function extractTaskIdsFromTasksMarkdown(
