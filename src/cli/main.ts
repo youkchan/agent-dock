@@ -160,6 +160,19 @@ const SPEC_CREATOR_USAGE = [
   "usage: spec-creator --change-id CHANGE_ID [--output PATH] [--state-dir DIR] [--no-run]",
 ].join("\n");
 
+const GLOBAL_USAGE = [
+  "usage: agent-dock <command> [options]",
+  "",
+  "commands:",
+  "  run                      execute orchestrator runtime",
+  "  compile-openspec         compile openspec/tasks.md to task_config",
+  "  print-openspec-template  print tasks.md template (ja|en)",
+  "  spec-creator-preprocess  collect spec context interactively and output JSON",
+  "  spec-creator             generate OpenSpec artifacts and run with generated task_config",
+  "",
+  "use '<command> --help' for command details",
+].join("\n");
+
 export function buildSkeletonSummary(): string {
   const domain = createDomainModule();
   const application = createApplicationModule(domain);
@@ -1426,6 +1439,10 @@ export function main(
     const args = [...argv];
     if (args.length === 0) {
       io.stdout(`${buildSkeletonSummary()}\n`);
+      return 0;
+    }
+    if (args[0] === "-h" || args[0] === "--help") {
+      io.stdout(`${GLOBAL_USAGE}\n`);
       return 0;
     }
 
