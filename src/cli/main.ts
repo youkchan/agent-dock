@@ -874,34 +874,6 @@ function writeTaskConfigFile(
   );
 }
 
-function detectSpecCreatorLanguage(
-  sourceTexts: string[],
-): "ja" | "en" {
-  const joined = sourceTexts.join("\n");
-  if (
-    /##\s*1\.\s*Implementation\b/u.test(joined) ||
-    /\bphase assignments\s*:/iu.test(joined) ||
-    /Provider Completion Gates \(fixed\)/u.test(joined) ||
-    /Template Usage Rules/u.test(joined)
-  ) {
-    return "en";
-  }
-  if (
-    /##\s*1\.\s*実装タスク/u.test(joined) ||
-    /フェーズ担当\s*:/u.test(joined) ||
-    /Provider 完了判定ゲート（固定）/u.test(joined) ||
-    /テンプレート利用ルール/u.test(joined)
-  ) {
-    return "ja";
-  }
-  for (const source of sourceTexts) {
-    if (/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/u.test(source)) {
-      return "ja";
-    }
-  }
-  return "en";
-}
-
 function asBulletLines(items: string[]): string {
   const normalized = items
     .map((item) => item.trim())
