@@ -10,6 +10,17 @@ export interface OpenSpecTasksTemplateSections {
   defaultHumanNotesBody: string;
 }
 
+export interface NormalizeFixedLinesAndHeadingsOptions {
+  filePath?: string;
+  lang?: string;
+}
+
+export interface NormalizeFixedLinesAndHeadingsResult {
+  markdown: string;
+  fixedLineInsertions: number;
+  headingNormalizations: number;
+}
+
 const PROVIDER_COMPLETION_GATE_SECTION_BY_LANG: Record<
   SupportedTemplateLang,
   string
@@ -156,4 +167,280 @@ export function getOpenSpecTasksTemplateSections(
     humanNotesHeading,
     defaultHumanNotesBody,
   };
+}
+
+export function normalizeFixedLinesAndHeadings(
+  markdown: string,
+  options: NormalizeFixedLinesAndHeadingsOptions = {},
+): NormalizeFixedLinesAndHeadingsResult {
+  const source = normalizeToLf(markdown);
+  let lines = source.split("\n");
+  let headingNormalizations = 0;
+  let fixedLineInsertions = 0;
+
+  const normalizedHeadingLines = normalizeAtxHeadings(lines);
+  lines = normalizedHeadingLines.lines;
+  headingNormalizations += normalizedHeadingLines.changes;
+
+  if (isTasksMarkdown(options.filePath, lines)) {
+    const lang = normalizeTemplateLang(
+      options.lang ?? detectTasksTemplateLang(lines),
+    );
+
+    const normalizedTasksHeadings = normalizeTasksHeadings(lines, lang);
+    lines = normalizedTasksHeadings.lines;
+    headingNormalizations += normalizedTasksHeadings.changes;
+
+    const fixedLines = collectRequiredTasksFixedLines(lang);
+    const completed = completeMissingFixedLines(lines, fixedLines);
+    lines = completed.lines;
+    fixedLineInsertions += completed.insertions;
+  }
+
+  return {
+    markdown: finalizeMarkdown(lines),
+    fixedLineInsertions,
+    headingNormalizations,
+  };
+}
+
+function normalizeTasksHeadings(
+  lines: string[],
+  lang: SupportedTemplateLang,
+): { lines: string[]; changes: number } {
+  const sections = getOpenSpecTasksTemplateSections(lang);
+  const normalized = [...lines];
+  let changes = 0;
+
+  const implementationIndex = normalized.findIndex((line) =>
+    /^\s*##\s*1\./u.test(line)
+  );
+  const humanNotesIndex = normalized.findIndex((line) =>
+    /^\s*##\s*2\./u.test(line)
+  );
+
+  if (implementationIndex >= 0) {
+    const current = normalized[implementationIndex].trim();
+    if (current !== sections.implementationHeading) {
+      normalized[implementationIndex] = sections.implementationHeading;
+      changes += 1;
+    }
+  } else {
+    appendLineWithSpacing(normalized, sections.implementationHeading);
+    appendBodyLines(normalized, sections.defaultImplementationBody);
+    changes += 1;
+  }
+
+  const updatedHumanNotesIndex = normalized.findIndex((line) =>
+    /^\s*##\s*2\./u.test(line)
+  );
+  if (updatedHumanNotesIndex >= 0) {
+    const current = normalized[updatedHumanNotesIndex].trim();
+    if (current !== sections.humanNotesHeading) {
+      normalized[updatedHumanNotesIndex] = sections.humanNotesHeading;
+      changes += 1;
+    }
+  } else {
+    appendLineWithSpacing(normalized, sections.humanNotesHeading);
+    appendBodyLines(normalized, sections.defaultHumanNotesBody);
+    changes += 1;
+  }
+
+  return { lines: normalized, changes };
+}
+
+function normalizeAtxHeadings(
+  lines: string[],
+): { lines: string[]; changes: number } {
+  const normalized: string[] = [];
+  let inFence = false;
+  let changes = 0;
+
+  for (const line of lines) {
+    if (isFenceLine(line)) {
+      inFence = !inFence;
+      normalized.push(line);
+      continue;
+    }
+
+    if (inFence) {
+      normalized.push(line);
+      continue;
+    }
+
+    const next = normalizeHeadingLine(line);
+    if (next !== line) {
+      changes += 1;
+    }
+    normalized.push(next);
+  }
+
+  return { lines: normalized, changes };
+}
+
+function normalizeHeadingLine(line: string): string {
+  const match = /^(\s{0,3})(#{1,6})(?:[ \t]*)(.*?)\s*$/.exec(line);
+  if (!match) {
+    return line;
+  }
+  const [, indent, marker, titleRaw] = match;
+  const title = titleRaw.trim();
+  if (!title) {
+    return `${indent}${marker}`;
+  }
+  return `${indent}${marker} ${title}`;
+}
+
+function completeMissingFixedLines(
+  lines: string[],
+  fixedLines: string[],
+): { lines: string[]; insertions: number } {
+  if (fixedLines.length === 0) {
+    return { lines, insertions: 0 };
+  }
+
+  const normalized = [...lines];
+  const existing = new Set(normalized.map((line) => line.trim()));
+  const missing = fixedLines.filter((line) => !existing.has(line.trim()));
+  if (missing.length === 0) {
+    return { lines: normalized, insertions: 0 };
+  }
+
+  const implementationIndex = normalized.findIndex((line) =>
+    /^\s*##\s*1\./u.test(line)
+  );
+  const insertAt = implementationIndex >= 0 ? implementationIndex : normalized.length;
+  const block = [...missing];
+  if (
+    insertAt > 0 &&
+    normalized[insertAt - 1].trim().length > 0 &&
+    block[0].trim().length > 0
+  ) {
+    block.unshift("");
+  }
+  if (
+    insertAt < normalized.length &&
+    normalized[insertAt].trim().length > 0 &&
+    block[block.length - 1].trim().length > 0
+  ) {
+    block.push("");
+  }
+
+  normalized.splice(insertAt, 0, ...block);
+  return {
+    lines: normalized,
+    insertions: missing.length,
+  };
+}
+
+function collectRequiredTasksFixedLines(lang: SupportedTemplateLang): string[] {
+  const templateLines = getOpenSpecTasksTemplate(lang).split(/\r?\n/);
+  const required: string[] = [];
+
+  const phaseOrder = findTemplateLine(
+    templateLines,
+    /^\s*-\s*persona_defaults\.phase_order\s*:/i,
+    "persona_defaults.phase_order",
+    lang,
+  );
+  const personaDefaults = findTemplateLine(
+    templateLines,
+    /^\s*-\s*persona_defaults\s*:/i,
+    "persona_defaults",
+    lang,
+  );
+  const phaseAssignments = findTemplateLine(
+    templateLines,
+    /^\s*-\s*(?:フェーズ担当|phase assignments)\s*:/iu,
+    "phase assignments",
+    lang,
+  );
+  const personas = findTemplateLine(
+    templateLines,
+    /^\s*-\s*personas\s*:/i,
+    "personas",
+    lang,
+  );
+
+  required.push(phaseOrder, personaDefaults, phaseAssignments, personas);
+
+  const providerLines = getProviderCompletionGateSection(lang)
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+  required.push(...providerLines);
+
+  return required;
+}
+
+function findTemplateLine(
+  lines: string[],
+  pattern: RegExp,
+  label: string,
+  lang: SupportedTemplateLang,
+): string {
+  const line = lines.find((entry) => pattern.test(entry));
+  if (!line) {
+    throw new Error(`template fixed line is missing: ${label}: ${lang}`);
+  }
+  return line.trimEnd();
+}
+
+function appendBodyLines(lines: string[], body: string): void {
+  const entries = body.split(/\r?\n/).map((line) => line.trimEnd()).filter((line) =>
+    line.length > 0
+  );
+  lines.push(...entries);
+}
+
+function appendLineWithSpacing(lines: string[], line: string): void {
+  if (lines.length > 0 && lines[lines.length - 1].trim().length > 0) {
+    lines.push("");
+  }
+  lines.push(line);
+}
+
+function detectTasksTemplateLang(lines: string[]): SupportedTemplateLang {
+  const markdown = lines.join("\n");
+  if (
+    /##\s*1\.\s*Implementation\b/u.test(markdown) ||
+    /\bphase assignments\s*:/iu.test(markdown) ||
+    /Template Usage Rules/u.test(markdown)
+  ) {
+    return "en";
+  }
+  return "ja";
+}
+
+function isTasksMarkdown(filePath: string | undefined, lines: string[]): boolean {
+  const normalizedPath = String(filePath ?? "").trim().toLowerCase();
+  if (
+    normalizedPath.endsWith("/tasks.md") ||
+    normalizedPath.endsWith("\\tasks.md") ||
+    normalizedPath === "tasks.md"
+  ) {
+    return true;
+  }
+  const markdown = lines.join("\n");
+  return /persona_defaults\.phase_order/u.test(markdown) &&
+    /^\s*##\s*1\./mu.test(markdown);
+}
+
+function isFenceLine(line: string): boolean {
+  return /^\s*(?:```|~~~)/u.test(line);
+}
+
+function normalizeToLf(markdown: string): string {
+  return markdown.replaceAll(/\r\n?/gu, "\n");
+}
+
+function finalizeMarkdown(lines: string[]): string {
+  let end = lines.length;
+  while (end > 0 && lines[end - 1].trim().length === 0) {
+    end -= 1;
+  }
+  if (end === 0) {
+    return "";
+  }
+  return `${lines.slice(0, end).join("\n")}\n`;
 }
