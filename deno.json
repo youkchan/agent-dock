@@ -1,9 +1,11 @@
 {
+  "nodeModulesDir": "auto",
   "compilerOptions": {
     "strict": true
   },
   "tasks": {
     "check": "deno check src/cli/main.ts",
+    "test": "deno test src --allow-read --allow-write --allow-run --allow-env",
     "fmt": "deno fmt --check src deno.json",
     "lint": "deno lint src"
   }

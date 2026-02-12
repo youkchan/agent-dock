@@ -1,0 +1,48 @@
+# openspec-template-command Specification
+
+## Purpose
+TBD - created by archiving change add-openspec-compiler-template-command. Update Purpose after archive.
+## Requirements
+### Requirement: compile-openspec 互換テンプレートを出力できること
+システムは OpenSpec 記述用に、`compile-openspec` で解釈可能な固定テンプレートを出力しなければならない（SHALL）。
+
+#### Scenario: テンプレートを標準出力へ表示する
+- **WHEN** ユーザーがテンプレート出力コマンドを実行する
+- **THEN** 実装タスクと検証項目を含む雛形テキストが出力される
+- **AND** 雛形は `compile-openspec` の期待する行形式に一致する
+
+### Requirement: テンプレートはフェーズ明示の固定文言を含むこと
+システムはテンプレートに、フェーズ既定とフェーズ担当を明示する固定行を含めなければならない（SHALL）。
+
+#### Scenario: フェーズ既定と担当行が常に出力される
+- **WHEN** ユーザーがテンプレート出力コマンドを実行する
+- **THEN** `persona_defaults.phase_order` を示す行が含まれる
+- **AND** `フェーズ担当` または `phase assignments` 行が含まれる
+
+### Requirement: テンプレート言語を指定できること
+システムはテンプレート出力言語として日本語と英語を選択できなければならない（SHALL）。
+
+#### Scenario: 日本語テンプレートを出力する
+- **WHEN** ユーザーが `--lang ja` を指定する
+- **THEN** 見出しと補助文が日本語で出力される
+
+#### Scenario: 英語テンプレートを出力する
+- **WHEN** ユーザーが `--lang en` を指定する
+- **THEN** 見出しと補助文が英語で出力される
+
+### Requirement: テンプレートは形式のみを提供すること
+システムは内容生成や自動補完を行わず、固定フォーマットのみを返さなければならない（SHALL）。
+
+#### Scenario: プレースホルダのみが出力される
+- **WHEN** テンプレート出力コマンドを実行する
+- **THEN** タスクタイトル・対象パス・成果物はプレースホルダとして示される
+- **AND** 具体的内容は利用者が追記する前提となる
+
+### Requirement: 不正言語指定を拒否すること
+システムは未対応の言語指定を受理してはならない（MUST NOT）。
+
+#### Scenario: 未対応 lang でエラーになる
+- **WHEN** ユーザーが `--lang fr` のような未対応値を指定する
+- **THEN** コマンドは失敗する
+- **AND** エラーメッセージに許可値が示される
+
