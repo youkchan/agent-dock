@@ -18,6 +18,7 @@ Instructions for AI coding assistants using OpenSpec for spec-driven development
 - OpenSpec には「どのような処理にするのか」を詳細に記述する。
 - OpenSpec に書かれていないことは実装しない（推測実装を禁止する）。
 - OpenSpec の内容から想定できない事項は、proposal/tasks/spec に記述しない。
+- インタラクティブに `change_id` を提案する場合は、`change_id 第1案: <id>` の1案のみを提示する（代替案や複数候補は出さない）。
 
 ### Stage 1: Creating Changes
 Create proposal when you need to:

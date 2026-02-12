@@ -1,0 +1,66 @@
+## 0. Persona Defaults
+- persona_defaults.phase_order: implement, review, spec_check, test
+- persona_defaults: {"phase_order":["implement","review","spec_check","test"]}
+- フェーズ担当: implement=implementer; review=code-reviewer; spec_check=spec-checker; test=test-owner
+- personas: [{"id":"implementer","role":"implementer","focus":"実装を前進させる","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"code-reviewer","role":"reviewer","focus":"品質と回帰リスクを確認する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"spec-checker","role":"spec_guard","focus":"仕様逸脱を防ぐ","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"test-owner","role":"test_guard","focus":"検証の十分性を担保する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"spec-planner","role":"spec_guard","focus":"要件をOpenSpec構成へ正規化し、要件外追加を禁止する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"spec-reviewer","role":"reviewer","focus":"proposal/tasks/design/code_summaryの整合と過不足を検証し、要件外追加・過剰修正・冗長化を禁止する","can_block":true,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"spec-code-creator","role":"spec_guard","focus":"実装認知負荷低減のためcode_summary.mdにコード粒度と対応関係を明記する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}}]
+
+### 0.1 テンプレート利用ルール
+- この雛形を `openspec/changes/<change-id>/tasks.md` にコピーし、`<...>` を実タスクで置換する。
+- `persona_defaults.phase_order` と `フェーズ担当` の固定行は削除しない。
+- `personas:` は **1行JSON** で記述する（YAMLの複数行形式は compiler が受理しない）。
+- ペルソナを実行主体にする場合は `personas` 行を残す。消すと実行主体は `teammate-*` になる。
+- 各タスクに `- フェーズ担当:` を記述し、`implement=implementer; review=code-reviewer; spec_check=spec-checker; test=test-owner` から必要なフェーズだけ選ぶ。
+- 例: `- フェーズ担当: implement=implementer; review=code-reviewer`（未指定フェーズはグローバル既定を使う）。
+- すべての実施項目（検証を含む）は **`## 1. 実装タスク` のチェックボックス付きタスク** として記述する（`## 2. 検証項目` は使わない）。
+- 人間向けメモは `## 2. 人間向けメモ（コンパイラ非対象）` に **チェックボックスなし** で記述する。
+
+## 1. 実装タスク
+- [ ] 1.1 spec creator 前処理（spec_context 収集）を実装する
+  - 依存: なし
+  - 対象: `src/cli/main.ts`, `src/application/spec_creator/*`
+  - フェーズ担当: implement=spec-planner; review=spec-reviewer
+  - 成果物: インタラクティブに必須入力を収集し、`spec_context` を確定できない場合は fail-closed で停止する
+- [ ] 1.2 固定 task_config テンプレートを定義して run 前に生成する
+  - 依存: 1.1
+  - 対象: `src/application/spec_creator/*`, `src/domain/*`
+  - フェーズ担当: implement=spec-planner; review=spec-reviewer
+  - 成果物: `1.1..1.7` 固定タスクを持つ `task_config` テンプレートを作成し、`spec_context` 注入後に `run --config` へ渡す
+- [ ] 1.3 tasks 生成をテンプレート強制にする
+  - 依存: 1.2
+  - 対象: `src/infrastructure/openspec/template.ts`, `src/infrastructure/openspec/spec_creator.ts`
+  - フェーズ担当: implement=spec-planner; review=spec-reviewer
+  - 成果物: `print-openspec-template` 相当の固定文言を使って `tasks.md` を生成する処理
+- [ ] 1.4 code_summary.md 生成を追加する
+  - 依存: 1.1
+  - 対象: `src/infrastructure/openspec/spec_creator.ts`
+  - フェーズ担当: implement=spec-code-creator; review=spec-reviewer
+  - 成果物: file/service/function/purpose/input/output/error/test と task_id 対応を持つ `code_summary.md`
+- [ ] 1.5 新規ペルソナ定義を追加する
+  - 依存: 1.1
+  - 対象: `team_orchestrator/personas/default/*.yaml`
+  - フェーズ担当: implement=spec-planner; review=spec-reviewer
+  - 成果物: `spec-planner` / `spec-reviewer` / `spec-code-creator` の定義追加
+- [ ] 1.6 reviewer 停止ルールを実装する
+  - 依存: 1.3, 1.4, 1.5
+  - 対象: `src/application/orchestrator/*`, `src/infrastructure/openspec/spec_creator.ts`
+  - フェーズ担当: spec_check=spec-reviewer; review=code-reviewer
+  - 成果物: 要件外追加・過剰修正・冗長化を検出時に stop 可能な判定
+- [ ] 1.7 run 本体と同一経路で動くことを固定する
+  - 依存: 1.2
+  - 対象: `src/cli/main.ts`, `src/application/orchestrator/*`
+  - フェーズ担当: implement=implementer; review=code-reviewer
+  - 成果物: spec creator は前処理のみ追加し、生成した `task_config` を `run --config` で実行する。runループ本体（claim/状態遷移/停止条件）は変更しない
+- [ ] 1.8 CLI 導線とドキュメントを更新する
+  - 依存: 1.3, 1.4
+  - 対象: `src/cli/main.ts`, `README.md`
+  - フェーズ担当: implement=implementer; review=code-reviewer
+  - 成果物: spec creator 実行コマンドと運用手順
+- [ ] 1.9 テストを追加する
+  - 依存: 1.2, 1.3, 1.4, 1.6, 1.7, 1.8
+  - 対象: `src/infrastructure/openspec/*_test.ts`, `src/application/orchestrator/*_test.ts`
+  - フェーズ担当: test=test-owner; review=spec-reviewer
+  - 成果物: テンプレ準拠、整合検証、停止条件、固定task_profile注入、run本体共通経路の回帰テスト
+
+## 2. 人間向けメモ（コンパイラ非対象）
+- メモ: `spec-reviewer` は proposal.md の過剰修正/要件外提案を停止対象にする。
+- 注意: 本 change では provider 実装追加は対象外。
