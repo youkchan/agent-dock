@@ -1,0 +1,15 @@
+{
+  "teammates": [
+    "tm-1"
+  ],
+  "tasks": [
+    {
+      "id": "C-001",
+      "title": "CLI parity run",
+      "target_paths": [
+        "src/c.ts"
+      ]
+    }
+  ]
+}
+

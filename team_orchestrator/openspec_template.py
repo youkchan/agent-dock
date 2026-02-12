@@ -21,6 +21,8 @@ OPENSPEC_TASKS_TEMPLATE_BY_LANG: dict[str, str] = {
         - ペルソナを実行主体にする場合は `personas` 行を残す。消すと実行主体は `teammate-*` になる。
         - 各タスクに `- フェーズ担当:` を記述し、`implement=implementer; review=code-reviewer; spec_check=spec-checker; test=test-owner` から必要なフェーズだけ選ぶ。
         - 例: `- フェーズ担当: implement=implementer; review=code-reviewer`（未指定フェーズはグローバル既定を使う）。
+        - すべての実施項目（検証を含む）は **`## 1. 実装タスク` のチェックボックス付きタスク** として記述する（`## 2. 検証項目` は使わない）。
+        - 人間向けメモは `## 2. 人間向けメモ（コンパイラ非対象）` に **チェックボックスなし** で記述する。
 
         ## 1. 実装タスク
         - [ ] 1.1 <タスクタイトル>
@@ -34,9 +36,9 @@ OPENSPEC_TASKS_TEMPLATE_BY_LANG: dict[str, str] = {
           - フェーズ担当: spec_check=spec-checker; test=test-owner
           - 成果物: <成果物または説明>
 
-        ## 2. 検証項目
-        - [ ] <検証コマンドまたは確認内容>
-        - [ ] <検証コマンドまたは確認内容>
+        ## 2. 人間向けメモ（コンパイラ非対象）
+        - メモ: <自由記述>
+        - 注意: <自由記述>
         """
     ),
     "en": textwrap.dedent(
@@ -54,6 +56,8 @@ OPENSPEC_TASKS_TEMPLATE_BY_LANG: dict[str, str] = {
         - Keep the `personas` line when personas should execute tasks; if removed, execution falls back to `teammate-*`.
         - Add `- phase assignments:` to each task and choose only needed pairs from `implement=implementer; review=code-reviewer; spec_check=spec-checker; test=test-owner`.
         - Example: `- phase assignments: implement=implementer; review=code-reviewer` (unspecified phases keep global defaults).
+        - Put every executable item (including verification) in **`## 1. Implementation` as checkbox tasks** (`## 2. Verification Checklist` should not be used).
+        - Keep human notes under `## 2. Human Notes (non-compiled)` with **no checkboxes**.
 
         ## 1. Implementation
         - [ ] 1.1 <task title>
@@ -67,9 +71,9 @@ OPENSPEC_TASKS_TEMPLATE_BY_LANG: dict[str, str] = {
           - phase assignments: spec_check=spec-checker; test=test-owner
           - Description: <deliverable or description>
 
-        ## 2. Verification Checklist
-        - [ ] <check command or assertion>
-        - [ ] <check command or assertion>
+        ## 2. Human Notes (non-compiled)
+        - Note: <free text>
+        - Caution: <free text>
         """
     ),
 }

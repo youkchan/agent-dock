@@ -122,7 +122,7 @@ class OpenSpecCompilerTests(unittest.TestCase):
             tasks_path = self._write_tasks_markdown(root, get_openspec_tasks_template("ja"))
             parsed_tasks, verification_items, persona_directives = _parse_tasks_markdown(tasks_path)
             self.assertEqual([task["id"] for task in parsed_tasks], ["1.1", "1.2"])
-            self.assertEqual(len(verification_items), 2)
+            self.assertEqual(len(verification_items), 0)
             self.assertIn("persona_defaults", persona_directives)
             self.assertEqual(
                 persona_directives["persona_defaults"]["phase_order"],
@@ -135,7 +135,7 @@ class OpenSpecCompilerTests(unittest.TestCase):
             tasks_path = self._write_tasks_markdown(root, get_openspec_tasks_template("en"))
             parsed_tasks, verification_items, persona_directives = _parse_tasks_markdown(tasks_path)
             self.assertEqual([task["id"] for task in parsed_tasks], ["1.1", "1.2"])
-            self.assertEqual(len(verification_items), 2)
+            self.assertEqual(len(verification_items), 0)
             self.assertIn("persona_defaults", persona_directives)
             self.assertEqual(
                 persona_directives["persona_defaults"]["phase_order"],

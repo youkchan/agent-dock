@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "strict": true
+  },
+  "tasks": {
+    "check": "deno check src/cli/main.ts",
+    "fmt": "deno fmt --check src deno.json",
+    "lint": "deno lint src"
+  }
+}

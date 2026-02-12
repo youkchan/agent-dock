@@ -246,6 +246,8 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
 - `team_orchestrator/cli.py`: CLI エントリポイント。
 - `docs/agent_teams_like_spec.md`: 汎用仕様。
 - `docs/thin_orchestrator_spec.md`: Thin Orchestrator 移行仕様。
+- `docs/ts-migration-contract.md`: TS移行時に守る Python 互換契約。
+- `docs/ts-cutover-runbook.md`: TS runner への段階切替・fallback・完了判定手順。
 - `bug_fixes/`: 不具合修正ログ。
 - `examples/sample_tasks.json`: デモ用タスクグラフ。
 - `task_configs/overrides/`: OpenSpec コンパイル結果の上書き定義。
@@ -488,7 +490,7 @@ cd ../../codex_agent
 npm link ../agent_dock/npm
 ```
 
-日常ループ:
+日常ループ（`build_npm.ts --watch`）:
 - ターミナルA（runner 側で再生成）
 ```bash
 cd ../agent_dock
@@ -505,6 +507,27 @@ cd ../codex_agent
 - 開発時はグローバル `agent-dock` ではなく `./node_modules/.bin/agent-dock` を使います。
 - 反映確認は `./node_modules/.bin/agent-dock --help` を正とします。
 - 再インストール運用ではなく、`build_npm.ts` の再生成で反映します。
+- 本番切替の順序とロールバック条件は `docs/ts-cutover-runbook.md` を正とします。
+
+### TS 切替判定（fail-closed）
+TS runner への切替は、次のゲートがすべて成功した場合のみ実施します。
+
+```bash
+python -m unittest tests.parity.test_parity -v
+python -m unittest tests.test_cli tests.test_state_store tests.test_openspec_compiler -v
+python -m unittest discover -s tests -v
+```
+
+1 つでも失敗した場合は Python runner を維持します。
+
+### ロールバック（TS -> Python）
+TS 側で回帰を検出した場合は、実行コマンドを即時で Python runner に戻し、同一入力で smoke run を 1 回実施します。
+
+```bash
+python -m team_orchestrator.cli run --config <task_config> --state-dir <state_dir>
+```
+
+詳細な比較手順（canary 3 連続一致、fallback 条件、完了判定）は `docs/ts-cutover-runbook.md` を参照してください。
 
 ## 実運用時の注意
 - `TemplateTeammateAdapter` は疎通確認用です。

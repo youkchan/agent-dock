@@ -130,7 +130,7 @@ import lockfile from "npm:proper-lockfile";
 - `docs/ts-cutover-runbook.md`:
   - 切替、監視、ロールバック条件。
 - `docs/ts-wrapper-contract.md`:
-  - wrapper 実行経路、I/O 契約、既定解決順。
+  - wrapper 実行経路、I/O 契約、既定解決順、埋め込み `python3` から Deno helper への置換方針。
 - `docs/ts-env-compat-matrix.md`:
   - env 一覧、デフォルト値、型、優先順位、互換可否。
 
@@ -138,8 +138,10 @@ import lockfile from "npm:proper-lockfile";
 - 移行期間中（TS parity gate 合格まで）は `codex_wrapper.sh` を維持する。
 - Teammate 実行経路は `subprocess adapter -> codex_wrapper.sh -> codex exec` を維持する。
 - TypeScript 実装でも wrapper 呼び出しは互換挙動とする（stdin payload, stdout result, stderr progress）。
-- wrapper の置換（TS 実装化）は別 change とし、本 change のスコープ外とする。
+- wrapper の shell エントリポイントは維持し、置換対象は内部の埋め込み `python3` ヘルパー処理に限定する。
+- 埋め込み `python3` ヘルパー処理は本 change 内で Deno helper へ置換する。
 - 既定 wrapper 解決は「実行ファイル隣の `codex_wrapper.sh`」を維持する。
+- plan/execute の解決順は `docs/ts-wrapper-contract.md` の既定コマンド解決順を正とする。
 
 ### 8) wrapper I/O 契約（固定）
 - 入力: stdin JSON（`mode`, `teammate_id`, `task`）
@@ -153,6 +155,8 @@ import lockfile from "npm:proper-lockfile";
 ### 9) 環境変数互換（固定）
 - 優先順位は `CLI引数 > 環境変数 > デフォルト`。
 - TypeScript 移行後も下記 env は同名・同義で受理する。
+- 変数ごとの既定値・型・クランプ・優先順位・互換可否は `docs/ts-env-compat-matrix.md` を正とする。
+- `HUMAN_APPROVAL` は現行 `run` CLI 経路では `--human-approval` 指定時のみ有効化される実装制約があるため、この挙動を互換対象として固定する（是正は別 change）。
 
 - Orchestrator:
   - `ORCHESTRATOR_PROVIDER`

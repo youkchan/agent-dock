@@ -1,0 +1,507 @@
+{
+  "after_approval": {
+    "messages": [],
+    "meta": {
+      "progress_counter": 4,
+      "sequence": 0
+    },
+    "tasks": {
+      "T-001": {
+        "current_phase_index": null,
+        "depends_on": [],
+        "description": "",
+        "owner": null,
+        "persona_policy": {
+          "phase_order": [
+            "implement"
+          ],
+          "phase_overrides": {
+            "implement": {
+              "active_personas": [
+                "implementer"
+              ],
+              "executor_personas": [
+                "implementer"
+              ],
+              "state_transition_personas": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        "plan_status": "approved",
+        "planner": "tm-1",
+        "progress_log": [],
+        "requires_plan": true,
+        "status": "pending",
+        "target_paths": [
+          "src/a.ts"
+        ],
+        "title": "Plan first"
+      },
+      "T-002": {
+        "current_phase_index": null,
+        "depends_on": [
+          "T-001"
+        ],
+        "description": "",
+        "owner": null,
+        "persona_policy": null,
+        "plan_status": "not_required",
+        "planner": null,
+        "progress_log": [],
+        "requires_plan": false,
+        "status": "pending",
+        "target_paths": [
+          "src/b.ts"
+        ],
+        "title": "Follow up"
+      }
+    }
+  },
+  "after_bootstrap": {
+    "messages": [],
+    "meta": {
+      "progress_counter": 1,
+      "sequence": 0
+    },
+    "tasks": {
+      "T-001": {
+        "current_phase_index": null,
+        "depends_on": [],
+        "description": "",
+        "owner": null,
+        "persona_policy": {
+          "phase_order": [
+            "implement"
+          ],
+          "phase_overrides": {
+            "implement": {
+              "active_personas": [
+                "implementer"
+              ],
+              "executor_personas": [
+                "implementer"
+              ],
+              "state_transition_personas": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        "plan_status": "pending",
+        "planner": null,
+        "progress_log": [],
+        "requires_plan": true,
+        "status": "pending",
+        "target_paths": [
+          "src/a.ts"
+        ],
+        "title": "Plan first"
+      },
+      "T-002": {
+        "current_phase_index": null,
+        "depends_on": [
+          "T-001"
+        ],
+        "description": "",
+        "owner": null,
+        "persona_policy": null,
+        "plan_status": "not_required",
+        "planner": null,
+        "progress_log": [],
+        "requires_plan": false,
+        "status": "pending",
+        "target_paths": [
+          "src/b.ts"
+        ],
+        "title": "Follow up"
+      }
+    }
+  },
+  "after_claim": {
+    "messages": [],
+    "meta": {
+      "progress_counter": 2,
+      "sequence": 0
+    },
+    "tasks": {
+      "T-001": {
+        "current_phase_index": null,
+        "depends_on": [],
+        "description": "",
+        "owner": null,
+        "persona_policy": {
+          "phase_order": [
+            "implement"
+          ],
+          "phase_overrides": {
+            "implement": {
+              "active_personas": [
+                "implementer"
+              ],
+              "executor_personas": [
+                "implementer"
+              ],
+              "state_transition_personas": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        "plan_status": "drafting",
+        "planner": "tm-1",
+        "progress_log": [],
+        "requires_plan": true,
+        "status": "pending",
+        "target_paths": [
+          "src/a.ts"
+        ],
+        "title": "Plan first"
+      },
+      "T-002": {
+        "current_phase_index": null,
+        "depends_on": [
+          "T-001"
+        ],
+        "description": "",
+        "owner": null,
+        "persona_policy": null,
+        "plan_status": "not_required",
+        "planner": null,
+        "progress_log": [],
+        "requires_plan": false,
+        "status": "pending",
+        "target_paths": [
+          "src/b.ts"
+        ],
+        "title": "Follow up"
+      }
+    }
+  },
+  "after_claim_execution": {
+    "messages": [],
+    "meta": {
+      "progress_counter": 6,
+      "sequence": 0
+    },
+    "tasks": {
+      "T-001": {
+        "current_phase_index": null,
+        "depends_on": [],
+        "description": "",
+        "owner": "tm-1",
+        "persona_policy": {
+          "phase_order": [
+            "implement"
+          ],
+          "phase_overrides": {
+            "implement": {
+              "active_personas": [
+                "implementer"
+              ],
+              "executor_personas": [
+                "implementer"
+              ],
+              "state_transition_personas": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        "plan_status": "approved",
+        "planner": "tm-1",
+        "progress_log": [
+          {
+            "source": "stdout",
+            "text": "implemented"
+          }
+        ],
+        "requires_plan": true,
+        "status": "in_progress",
+        "target_paths": [
+          "src/a.ts"
+        ],
+        "title": "Plan first"
+      },
+      "T-002": {
+        "current_phase_index": null,
+        "depends_on": [
+          "T-001"
+        ],
+        "description": "",
+        "owner": null,
+        "persona_policy": null,
+        "plan_status": "not_required",
+        "planner": null,
+        "progress_log": [],
+        "requires_plan": false,
+        "status": "pending",
+        "target_paths": [
+          "src/b.ts"
+        ],
+        "title": "Follow up"
+      }
+    }
+  },
+  "after_completed": {
+    "messages": [],
+    "meta": {
+      "progress_counter": 7,
+      "sequence": 0
+    },
+    "tasks": {
+      "T-001": {
+        "current_phase_index": null,
+        "depends_on": [],
+        "description": "",
+        "owner": "tm-1",
+        "persona_policy": {
+          "phase_order": [
+            "implement"
+          ],
+          "phase_overrides": {
+            "implement": {
+              "active_personas": [
+                "implementer"
+              ],
+              "executor_personas": [
+                "implementer"
+              ],
+              "state_transition_personas": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        "plan_status": "approved",
+        "planner": "tm-1",
+        "progress_log": [
+          {
+            "source": "stdout",
+            "text": "implemented"
+          }
+        ],
+        "requires_plan": true,
+        "status": "completed",
+        "target_paths": [
+          "src/a.ts"
+        ],
+        "title": "Plan first"
+      },
+      "T-002": {
+        "current_phase_index": null,
+        "depends_on": [
+          "T-001"
+        ],
+        "description": "",
+        "owner": null,
+        "persona_policy": null,
+        "plan_status": "not_required",
+        "planner": null,
+        "progress_log": [],
+        "requires_plan": false,
+        "status": "pending",
+        "target_paths": [
+          "src/b.ts"
+        ],
+        "title": "Follow up"
+      }
+    }
+  },
+  "after_plan_submitted": {
+    "messages": [],
+    "meta": {
+      "progress_counter": 3,
+      "sequence": 0
+    },
+    "tasks": {
+      "T-001": {
+        "current_phase_index": null,
+        "depends_on": [],
+        "description": "",
+        "owner": null,
+        "persona_policy": {
+          "phase_order": [
+            "implement"
+          ],
+          "phase_overrides": {
+            "implement": {
+              "active_personas": [
+                "implementer"
+              ],
+              "executor_personas": [
+                "implementer"
+              ],
+              "state_transition_personas": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        "plan_status": "submitted",
+        "planner": "tm-1",
+        "progress_log": [],
+        "requires_plan": true,
+        "status": "needs_approval",
+        "target_paths": [
+          "src/a.ts"
+        ],
+        "title": "Plan first"
+      },
+      "T-002": {
+        "current_phase_index": null,
+        "depends_on": [
+          "T-001"
+        ],
+        "description": "",
+        "owner": null,
+        "persona_policy": null,
+        "plan_status": "not_required",
+        "planner": null,
+        "progress_log": [],
+        "requires_plan": false,
+        "status": "pending",
+        "target_paths": [
+          "src/b.ts"
+        ],
+        "title": "Follow up"
+      }
+    }
+  },
+  "after_resume_recovery": {
+    "messages": [],
+    "meta": {
+      "progress_counter": 9,
+      "sequence": 0
+    },
+    "tasks": {
+      "T-001": {
+        "current_phase_index": null,
+        "depends_on": [],
+        "description": "",
+        "owner": "tm-1",
+        "persona_policy": {
+          "phase_order": [
+            "implement"
+          ],
+          "phase_overrides": {
+            "implement": {
+              "active_personas": [
+                "implementer"
+              ],
+              "executor_personas": [
+                "implementer"
+              ],
+              "state_transition_personas": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        "plan_status": "approved",
+        "planner": "tm-1",
+        "progress_log": [
+          {
+            "source": "stdout",
+            "text": "implemented"
+          }
+        ],
+        "requires_plan": true,
+        "status": "completed",
+        "target_paths": [
+          "src/a.ts"
+        ],
+        "title": "Plan first"
+      },
+      "T-002": {
+        "current_phase_index": null,
+        "depends_on": [
+          "T-001"
+        ],
+        "description": "",
+        "owner": null,
+        "persona_policy": null,
+        "plan_status": "not_required",
+        "planner": null,
+        "progress_log": [
+          {
+            "source": "system",
+            "text": "resume recovery: requeued from in_progress (owner=tm-2)"
+          }
+        ],
+        "requires_plan": false,
+        "status": "pending",
+        "target_paths": [
+          "src/b.ts"
+        ],
+        "title": "Follow up"
+      }
+    }
+  },
+  "after_second_claim": {
+    "messages": [],
+    "meta": {
+      "progress_counter": 8,
+      "sequence": 0
+    },
+    "tasks": {
+      "T-001": {
+        "current_phase_index": null,
+        "depends_on": [],
+        "description": "",
+        "owner": "tm-1",
+        "persona_policy": {
+          "phase_order": [
+            "implement"
+          ],
+          "phase_overrides": {
+            "implement": {
+              "active_personas": [
+                "implementer"
+              ],
+              "executor_personas": [
+                "implementer"
+              ],
+              "state_transition_personas": [
+                "implementer"
+              ]
+            }
+          }
+        },
+        "plan_status": "approved",
+        "planner": "tm-1",
+        "progress_log": [
+          {
+            "source": "stdout",
+            "text": "implemented"
+          }
+        ],
+        "requires_plan": true,
+        "status": "completed",
+        "target_paths": [
+          "src/a.ts"
+        ],
+        "title": "Plan first"
+      },
+      "T-002": {
+        "current_phase_index": null,
+        "depends_on": [
+          "T-001"
+        ],
+        "description": "",
+        "owner": "tm-2",
+        "persona_policy": null,
+        "plan_status": "not_required",
+        "planner": null,
+        "progress_log": [],
+        "requires_plan": false,
+        "status": "in_progress",
+        "target_paths": [
+          "src/b.ts"
+        ],
+        "title": "Follow up"
+      }
+    }
+  }
+}

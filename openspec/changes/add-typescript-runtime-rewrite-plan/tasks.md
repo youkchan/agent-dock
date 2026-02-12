@@ -18,7 +18,7 @@
   - 対象: team_orchestrator/*.py, tests/*.py, README.md, docs/ts-migration-contract.md
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `docs/ts-migration-contract.md` に CLI/state/compile の互換契約（I/O 要件・禁止変更点）を明記する
-- [ ] 1.2 TypeScript の目標構成を定義する
+- [x] 1.2 TypeScript の目標構成を定義する
   - 依存: 1.1
   - 対象: docs/ts-architecture-blueprint.md, openspec/changes/add-typescript-runtime-rewrite-plan/*
   - フェーズ担当: implement=implementer; spec_check=spec-checker
@@ -33,7 +33,7 @@
   - 対象: README.md, docs/ts-cutover-runbook.md
   - フェーズ担当: implement=implementer; review=code-reviewer; test=test-owner
   - 成果物: `docs/ts-cutover-runbook.md` に runner 切替順序、fallback 条件、完了判定を定義する
-- [ ] 1.5 wrapper 契約を文書化する
+- [x] 1.5 wrapper 契約を文書化する
   - 依存: 1.1
   - 対象: docs/ts-wrapper-contract.md, openspec/changes/add-typescript-runtime-rewrite-plan/*
   - フェーズ担当: implement=implementer; review=code-reviewer

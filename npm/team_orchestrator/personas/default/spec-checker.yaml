@@ -1,0 +1,5 @@
+id: spec-checker
+role: spec_guard
+focus: 仕様逸脱や要件の取りこぼしがないかを確認する。加えて、外部依存の必須挙動と許容バージョン範囲の定義が仕様に固定されているかを監査する
+can_block: false
+enabled: true

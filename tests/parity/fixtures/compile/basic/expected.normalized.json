@@ -1,0 +1,165 @@
+{
+  "meta": {
+    "verification_items": [
+      {
+        "checked": true,
+        "text": "`python -m unittest discover -s tests -v` \u304c\u901a\u308b"
+      },
+      {
+        "checked": false,
+        "text": "`deno test -A src` \u304c\u901a\u308b"
+      }
+    ]
+  },
+  "persona_defaults": {
+    "phase_order": [
+      "implement",
+      "review",
+      "spec_check",
+      "test"
+    ]
+  },
+  "personas": [
+    {
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "command_ref": "default",
+        "enabled": true,
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      },
+      "focus": "quality",
+      "id": "code-reviewer",
+      "role": "reviewer"
+    },
+    {
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "command_ref": "default",
+        "enabled": true,
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      },
+      "focus": "implementation",
+      "id": "implementer",
+      "role": "implementer"
+    },
+    {
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "command_ref": "default",
+        "enabled": true,
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      },
+      "focus": "spec consistency",
+      "id": "spec-checker",
+      "role": "spec_guard"
+    },
+    {
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "command_ref": "default",
+        "enabled": true,
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      },
+      "focus": "test sufficiency",
+      "id": "test-owner",
+      "role": "test_guard"
+    }
+  ],
+  "tasks": [
+    {
+      "depends_on": [],
+      "description": "",
+      "id": "T-001",
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "implementer"
+            ],
+            "executor_personas": [
+              "implementer"
+            ],
+            "state_transition_personas": [
+              "implementer"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "code-reviewer"
+            ],
+            "executor_personas": [
+              "code-reviewer"
+            ],
+            "state_transition_personas": [
+              "code-reviewer"
+            ]
+          }
+        }
+      },
+      "requires_plan": true,
+      "target_paths": [
+        "src/a.ts",
+        "src/b.ts"
+      ],
+      "title": "\u4ed5\u69d8\u3092\u5b9a\u7fa9\u3059\u308b"
+    },
+    {
+      "depends_on": [
+        "T-001"
+      ],
+      "description": "",
+      "id": "T-002",
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "test"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "implementer"
+            ],
+            "executor_personas": [
+              "implementer"
+            ],
+            "state_transition_personas": [
+              "implementer"
+            ]
+          },
+          "test": {
+            "active_personas": [
+              "test-owner"
+            ],
+            "executor_personas": [
+              "test-owner"
+            ],
+            "state_transition_personas": [
+              "test-owner"
+            ]
+          }
+        }
+      },
+      "requires_plan": false,
+      "target_paths": [
+        "*"
+      ],
+      "title": "\u5b9f\u88c5\u3059\u308b"
+    }
+  ],
+  "teammates": [
+    "teammate-a",
+    "teammate-b"
+  ]
+}

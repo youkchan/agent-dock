@@ -1,0 +1,19 @@
+{
+  "name": "agent-dock",
+  "version": "0.0.1-test",
+  "private": true,
+  "description": "TypeScript runtime package for the agent-dock CLI",
+  "bin": {
+    "agent-dock": "./bin/agent-dock"
+  },
+  "files": [
+    "bin",
+    "src",
+    "team_orchestrator",
+    "codex_wrapper.sh",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
