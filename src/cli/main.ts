@@ -120,6 +120,7 @@ interface LoadedTasks {
   teammates: string[];
   personas: PersonaDefinition[] | null;
   personaDefaults: PersonaDefaults | null;
+  sourceChangeId: string | null;
 }
 
 export interface TeammateAdapterArgs {
@@ -1056,7 +1057,10 @@ function runCommand(argv: string[], io: CliIO): number {
   });
 
   const result = orchestrator.run();
-  io.stdout(`${JSON.stringify(result, null, 2)}\n`);
+  const runResult = loaded.sourceChangeId === null
+    ? result
+    : { ...result, openspec_change_id: loaded.sourceChangeId };
+  io.stdout(`${JSON.stringify(runResult, null, 2)}\n`);
   return 0;
 }
 
@@ -1079,7 +1083,11 @@ function resolveTasksForRun(args: RunArgs, io: CliIO): LoadedTasks {
       io.stdout(`[compile] wrote ${writtenPath}\n`);
     }
     try {
-      return loadTasksFromConfigPath(writtenPath);
+      const loaded = loadTasksFromConfigPath(writtenPath);
+      return {
+        ...loaded,
+        sourceChangeId: loaded.sourceChangeId ?? args.openspecChange,
+      };
     } finally {
       if (!args.saveCompiled) {
         Deno.removeSync(writtenPath);
@@ -1183,7 +1191,21 @@ function loadTasksPayload(
     teammates,
     personas: personasForRuntime,
     personaDefaults,
+    sourceChangeId: readSourceChangeId(raw),
   };
+}
+
+function readSourceChangeId(raw: Record<string, unknown>): string | null {
+  const metaRaw = raw.meta;
+  if (!isRecord(metaRaw)) {
+    return null;
+  }
+  const value = metaRaw.source_change_id;
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
 function validateResumeTaskConfigConsistency(

@@ -250,6 +250,7 @@ Constraints:
 - Do not read/reference/edit .env or .env.*
 - Keep steps short and concrete
 - Include local verification commands at the end
+- For \`deno test\`, use \`--allow-read --allow-write --allow-env\` by default
 
 Output format:
 1) Acceptance criteria
@@ -277,6 +278,7 @@ Constraints:
 - Do not edit outside target_paths
 - Do not read/reference/edit .env or .env.*
 - Run required local checks
+- For \`deno test\`, use \`--allow-read --allow-write --allow-env\` by default
 - If failed, provide a short root cause
 
 Final output must be exactly these 4 lines:

@@ -23,7 +23,7 @@ CODEX_FULL_AUTO="${CODEX_FULL_AUTO:-0}"
 CODEX_SKIP_GIT_REPO_CHECK="${CODEX_SKIP_GIT_REPO_CHECK:-1}"
 CODEX_STREAM_LOGS="${CODEX_STREAM_LOGS:-1}"
 CODEX_STREAM_VIEW="${CODEX_STREAM_VIEW:-all}"
-CODEX_STREAM_EXEC_MAX_CHARS="${CODEX_STREAM_EXEC_MAX_CHARS:-180}"
+CODEX_STREAM_EXEC_KEEP_LINES="${CODEX_STREAM_EXEC_KEEP_LINES:-3}"
 CODEX_DENY_DOTENV="${CODEX_DENY_DOTENV:-1}"
 CODEX_WRAPPER_LANG="${CODEX_WRAPPER_LANG:-en_US.UTF-8}"
 CODEX_RUST_BACKTRACE="${CODEX_RUST_BACKTRACE:-0}"
@@ -174,26 +174,31 @@ BEGIN {
 }
 
 stream_all_compact_view() {
-  local exec_max_chars="${1:-180}"
-  awk -v exec_max_chars="$exec_max_chars" '
+  local exec_keep_lines="${1:-3}"
+  awk -v exec_keep_lines="$exec_keep_lines" '
 function trim(s) {
   sub(/^[[:space:]]+/, "", s)
   sub(/[[:space:]]+$/, "", s)
   return s
 }
-function emit_line(current_mode, raw_line, max_chars) {
-  if ((current_mode == "exec" || current_mode == "codex") && max_chars > 0 && length(raw_line) > max_chars) {
-    print substr(raw_line, 1, max_chars) "..."
-    fflush()
-    return
-  }
+function emit_line(raw_line) {
   print raw_line
   fflush()
+}
+function flush_exec_omitted() {
+  if (mode == "exec" && exec_omitted_lines > 0) {
+    print "[all_compact] exec output omitted lines=" exec_omitted_lines
+    fflush()
+  }
+  exec_kept_lines = 0
+  exec_omitted_lines = 0
 }
 BEGIN {
   mode = "default"
   in_codex_diff = 0
   codex_diff_lines = 0
+  exec_kept_lines = 0
+  exec_omitted_lines = 0
 }
 {
   line = $0
@@ -203,6 +208,7 @@ BEGIN {
   lowered = tolower(trim(plain))
 
   if (lowered == "thinking") {
+    flush_exec_omitted()
     if (in_codex_diff) {
       print "[all_compact] codex diff omitted lines=" codex_diff_lines
       fflush()
@@ -215,6 +221,7 @@ BEGIN {
     next
   }
   if (lowered == "codex") {
+    flush_exec_omitted()
     if (in_codex_diff) {
       print "[all_compact] codex diff omitted lines=" codex_diff_lines
       fflush()
@@ -227,6 +234,7 @@ BEGIN {
     next
   }
   if (lowered == "user") {
+    flush_exec_omitted()
     if (in_codex_diff) {
       print "[all_compact] codex diff omitted lines=" codex_diff_lines
       fflush()
@@ -239,6 +247,7 @@ BEGIN {
     next
   }
   if (index(lowered, "exec") == 1) {
+    flush_exec_omitted()
     if (in_codex_diff) {
       print "[all_compact] codex diff omitted lines=" codex_diff_lines
       fflush()
@@ -248,6 +257,16 @@ BEGIN {
     mode = "exec"
     print line
     fflush()
+    next
+  }
+
+  if (mode == "exec") {
+    if (exec_kept_lines < exec_keep_lines) {
+      emit_line(line)
+      exec_kept_lines++
+    } else {
+      exec_omitted_lines++
+    }
     next
   }
 
@@ -270,9 +289,10 @@ BEGIN {
     }
   }
 
-  emit_line(mode, line, exec_max_chars)
+  emit_line(line)
 }
 END {
+  flush_exec_omitted()
   if (in_codex_diff) {
     print "[all_compact] codex diff omitted lines=" codex_diff_lines
     fflush()
@@ -313,7 +333,7 @@ if [[ "$CODEX_STREAM_LOGS" == "1" ]]; then
     run_codex_with_filtered_view 0
     codex_exit_code=$RUN_CODEX_EXIT_CODE
   elif [[ "$CODEX_STREAM_VIEW" == "all_compact" ]]; then
-    run_codex_command 2>&1 | tee "$TMP_STREAM_LOG" | stream_all_compact_view "$CODEX_STREAM_EXEC_MAX_CHARS" 1>&2
+    run_codex_command 2>&1 | tee "$TMP_STREAM_LOG" | stream_all_compact_view "$CODEX_STREAM_EXEC_KEEP_LINES" 1>&2
     codex_exit_code=${PIPESTATUS[0]}
   else
     run_codex_command 2>&1 | tee "$TMP_STREAM_LOG" 1>&2

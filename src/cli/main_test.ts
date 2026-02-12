@@ -506,3 +506,54 @@ Deno.test("main run executes orchestrator with subprocess adapter", () => {
     }
   });
 });
+
+Deno.test("main run includes openspec_change_id when config meta has source_change_id", () => {
+  withTempDir((root) => {
+    const configPath = `${root}/tasks.json`;
+    const stateDir = `${root}/state`;
+
+    Deno.writeTextFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          meta: {
+            source_change_id: "add-sample-change",
+          },
+          teammates: ["tm-1"],
+          tasks: [
+            {
+              id: "T1",
+              title: "sample",
+              target_paths: ["src/a.ts"],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const buffer = createIoBuffer();
+    withEnv("ORCHESTRATOR_PROVIDER", "mock", () => {
+      const exitCode = main([
+        "run",
+        "--config",
+        configPath,
+        "--state-dir",
+        stateDir,
+        "--teammate-adapter",
+        "template",
+        "--max-rounds",
+        "20",
+      ], buffer.io);
+
+      if (exitCode !== 0) {
+        throw new Error(`run should return 0: ${buffer.state.stderr}`);
+      }
+    });
+
+    if (!buffer.state.stdout.includes('"openspec_change_id": "add-sample-change"')) {
+      throw new Error("stdout should include openspec_change_id");
+    }
+  });
+});
