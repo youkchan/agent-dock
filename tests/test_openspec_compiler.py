@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from team_orchestrator.cli import main
@@ -115,6 +117,61 @@ class OpenSpecCompilerTests(unittest.TestCase):
             self.assertEqual(verification_items[0]["text"], "unit tests pass")
             self.assertEqual(verification_items[1]["checked"], False)
             self.assertEqual(verification_items[1]["text"], "smoke run passes")
+
+    def test_compile_fails_when_change_id_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaisesRegex(OpenSpecCompileError, r"change not found"):
+                compile_change_to_config(
+                    change_id="missing-change",
+                    openspec_root=root / "openspec",
+                    overrides_root=root / "task_configs" / "overrides",
+                )
+
+    def test_compile_openspec_cli_succeeds_after_polish_ready_input_and_is_diff_zero_on_rerun(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            change_id = "add-polish-ready"
+            self._write_change(
+                root,
+                change_id,
+                get_openspec_tasks_template("ja"),
+                proposal_md="# Change: polish ready\n",
+            )
+            non_markdown_path = root / "openspec" / "changes" / change_id / "configs" / "rules.json"
+            non_markdown_path.parent.mkdir(parents=True, exist_ok=True)
+            non_markdown_path.write_text('{"strict": true}\n', encoding="utf-8")
+            non_markdown_before = non_markdown_path.read_bytes()
+
+            output_path = root / "task_configs" / f"{change_id}.json"
+            argv = [
+                "compile-openspec",
+                "--change-id",
+                change_id,
+                "--openspec-root",
+                str(root / "openspec"),
+                "--overrides-root",
+                str(root / "task_configs" / "overrides"),
+                "--output",
+                str(output_path),
+            ]
+
+            first_stdout = io.StringIO()
+            with redirect_stdout(first_stdout):
+                first_exit = main(argv)
+            self.assertEqual(first_exit, 0)
+            self.assertEqual(first_stdout.getvalue().strip(), str(output_path))
+            first_payload = output_path.read_bytes()
+
+            second_stdout = io.StringIO()
+            with redirect_stdout(second_stdout):
+                second_exit = main(argv)
+            self.assertEqual(second_exit, 0)
+            self.assertEqual(second_stdout.getvalue().strip(), str(output_path))
+            second_payload = output_path.read_bytes()
+
+            self.assertEqual(first_payload, second_payload)
+            self.assertEqual(non_markdown_path.read_bytes(), non_markdown_before)
 
     def test_parse_tasks_markdown_accepts_ja_template_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -36,6 +36,11 @@ import {
   writeCompiledConfig,
 } from "../infrastructure/openspec/compiler.ts";
 import {
+  buildPolishSummary,
+  checkNonMarkdownConsistency,
+  collectChangeFilesRecursively,
+  polishMarkdownFiles,
+  type SpecCreatorPolishSummary,
   writeCodeSummaryMarkdown,
   writeDeltaSpecMarkdown,
   writeProposalMarkdown,
@@ -87,6 +92,10 @@ interface SpecCreatorArgs {
   output: string | null;
   noRun: boolean;
   stateDir: string | null;
+}
+
+interface SpecCreatorPolishArgs {
+  changeId: string;
 }
 
 interface RunArgs {
@@ -160,6 +169,11 @@ const SPEC_CREATOR_PREPROCESS_USAGE = [
 
 const SPEC_CREATOR_USAGE = [
   "usage: spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--no-run]",
+  "       spec-creator polish --change-id CHANGE_ID",
+].join("\n");
+
+const SPEC_CREATOR_POLISH_USAGE = [
+  "usage: spec-creator polish --change-id CHANGE_ID",
 ].join("\n");
 
 const GLOBAL_USAGE = [
@@ -475,6 +489,31 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
   return parsed;
 }
 
+function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
+  if (argv.includes("-h") || argv.includes("--help")) {
+    throw new HelpRequestedError(SPEC_CREATOR_POLISH_USAGE);
+  }
+
+  let changeId = "";
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    const next = argv[index + 1];
+
+    if (arg === "--change-id") {
+      changeId = requireOptionValue(arg, next);
+      index += 1;
+      continue;
+    }
+
+    throw new Error(`unrecognized argument: ${arg}`);
+  }
+
+  if (!changeId) {
+    throw new Error("argument --change-id is required");
+  }
+  return { changeId };
+}
+
 function parseRunArgs(argv: string[]): RunArgs {
   if (argv.includes("-h") || argv.includes("--help")) {
     throw new HelpRequestedError(RUN_USAGE);
@@ -724,7 +763,71 @@ function defaultSpecCreatorStateDir(changeId: string): string {
   return path.join(".team_state", "spec_creator", changeId);
 }
 
+function specCreatorPolishCommand(argv: string[], io: CliIO): number {
+  const args = parseSpecCreatorPolishArgs(argv);
+  const changeDir = path.resolve("openspec", "changes", args.changeId);
+  if (!isDirectory(changeDir)) {
+    throw new Error(`change not found: ${changeDir}`);
+  }
+
+  const queue = collectChangeFilesRecursively(changeDir);
+  const markdownResult = polishMarkdownFiles(queue.markdownFiles);
+  const nonMarkdownResult = checkNonMarkdownConsistency(queue.nonMarkdownFiles);
+  for (const warning of nonMarkdownResult.warnings) {
+    io.stderr(`[spec-creator polish] warning: ${warning}\n`);
+  }
+
+  const summary = buildPolishSummary({
+    totalFileCount: queue.totalFileCount,
+    changedFiles: markdownResult.changedFiles,
+    ruleCounts: markdownResult.ruleCounts,
+  });
+  io.stdout(renderSpecCreatorPolishSummary(summary));
+  return 0;
+}
+
+function renderSpecCreatorPolishSummary(
+  summary: SpecCreatorPolishSummary,
+): string {
+  const lines = [
+    `[spec-creator polish] total_files: ${summary.totalFileCount}`,
+    `[spec-creator polish] changed_files: ${summary.changedFileCount}`,
+  ];
+  if (summary.changedFiles.length === 0) {
+    lines.push("[spec-creator polish] changed_file: (none)");
+  } else {
+    for (const changedFile of summary.changedFiles) {
+      lines.push(
+        `[spec-creator polish] changed_file: ${asDisplayPath(changedFile)}`,
+      );
+    }
+  }
+  lines.push(
+    "[spec-creator polish] rule_counts: " +
+      `formatting=${summary.ruleCounts.formatting} ` +
+      `fixed_lines=${summary.ruleCounts.fixedLines} ` +
+      `headings=${summary.ruleCounts.headings}`,
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+function asDisplayPath(filePathRaw: string): string {
+  const filePath = path.resolve(filePathRaw);
+  const relativePath = path.relative(Deno.cwd(), filePath);
+  if (
+    relativePath.length === 0 || relativePath.startsWith("..") ||
+    path.isAbsolute(relativePath)
+  ) {
+    return filePath;
+  }
+  return relativePath;
+}
+
 function specCreatorCommand(argv: string[], io: CliIO): number {
+  if (argv[0] === "polish") {
+    return specCreatorPolishCommand(argv.slice(1), io);
+  }
+
   const args = parseSpecCreatorArgs(argv);
   const context = collectSpecContextInteractive({
     changeId: args.changeId,
@@ -925,7 +1028,11 @@ function firstPersonaIdFromPhasePolicy(
   },
 ): string | null {
   for (
-    const key of ["executor_personas", "active_personas", "state_transition_personas"] as const
+    const key of [
+      "executor_personas",
+      "active_personas",
+      "state_transition_personas",
+    ] as const
   ) {
     const value = phasePolicy[key];
     if (!Array.isArray(value) || value.length === 0) {
@@ -1316,6 +1423,14 @@ function findWrapperFrom(startDir: string): string | null {
 function isFile(filePath: string): boolean {
   try {
     return Deno.statSync(filePath).isFile;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isDirectory(dirPath: string): boolean {
+  try {
+    return Deno.statSync(dirPath).isDirectory;
   } catch (_error) {
     return false;
   }
