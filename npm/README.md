@@ -8,7 +8,7 @@ deno run -A scripts/build_npm.ts 0.0.0-dev
 ```
 
 Version:
-- 0.0.1-test
+- 0.0.0-dev
 
 Usage:
 ```bash
