@@ -44,7 +44,7 @@ class TemplateAdapter implements TeammateAdapter {
   }
 
   executeTask(_teammateId: string, task: Task): string {
-    return `done task=${task.id}`;
+    return completedResult(`done task=${task.id}`);
   }
 }
 
@@ -57,7 +57,7 @@ class RecordingAdapter implements TeammateAdapter {
 
   executeTask(teammateId: string, _task: Task): string {
     this.seenExecutionIds.push(teammateId);
-    return `done:${teammateId}`;
+    return completedResult(`done:${teammateId}`);
   }
 }
 
@@ -463,3 +463,55 @@ function createPersona(
     },
   };
 }
+
+function completedResult(summary: string): string {
+  return [
+    "RESULT: completed",
+    `SUMMARY: ${summary}`,
+    "CHANGED_FILES: src/sample.ts",
+    "CHECKS: deno test src",
+  ].join("\n");
+}
+
+Deno.test("orchestrator blocks when RESULT is blocked", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "task1",
+        target_paths: ["src/a.ts"],
+      }),
+    ]);
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter: new FixedResultAdapter(
+        [
+          "RESULT: blocked",
+          "SUMMARY: tests failed",
+          "CHANGED_FILES: src/a.ts",
+          "CHECKS: deno test src",
+        ].join("\n"),
+      ),
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        teammateIds: ["tm-1"],
+        personas: [],
+        maxRounds: 3,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+      }),
+    });
+
+    const result = orchestrator.run();
+    assertEqual(result.stop_reason, "idle_rounds_limit", "stop reason");
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "blocked", "task status");
+    assert(
+      String(task.block_reason).includes("execution result is blocked"),
+      "block reason should include result status",
+    );
+  });
+});

@@ -38,14 +38,10 @@ import {
   compileChangeToConfig,
   defaultCompiledOutputPath,
   OpenSpecCompileError,
+  updateTasksMarkdownCheckboxes,
   writeCompiledConfig,
 } from "../infrastructure/openspec/compiler.ts";
 import {
-  buildPolishSummary,
-  checkNonMarkdownConsistency,
-  collectChangeFilesRecursively,
-  polishMarkdownFiles,
-  type SpecCreatorPolishSummary,
   writeCodeSummaryMarkdown,
   writeDeltaSpecMarkdown,
   writeProposalMarkdown,
@@ -103,10 +99,15 @@ interface SpecCreatorArgs {
   output: string | null;
   noRun: boolean;
   stateDir: string | null;
+  resume: boolean;
 }
 
 interface SpecCreatorPolishArgs {
   changeId: string;
+  output: string | null;
+  noRun: boolean;
+  stateDir: string | null;
+  resume: boolean;
 }
 
 interface RunArgs {
@@ -179,12 +180,12 @@ const SPEC_CREATOR_PREPROCESS_USAGE = [
 ].join("\n");
 
 const SPEC_CREATOR_USAGE = [
-  "usage: spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--no-run]",
+  "usage: spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--resume] [--no-run]",
   "       spec-creator polish --change-id CHANGE_ID",
 ].join("\n");
 
 const SPEC_CREATOR_POLISH_USAGE = [
-  "usage: spec-creator polish --change-id CHANGE_ID",
+  "usage: spec-creator polish --change-id CHANGE_ID [--output PATH] [--state-dir DIR] [--resume] [--no-run]",
 ].join("\n");
 
 const GLOBAL_USAGE = [
@@ -468,6 +469,7 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
     output: null,
     noRun: false,
     stateDir: null,
+    resume: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -493,6 +495,10 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
       parsed.noRun = true;
       continue;
     }
+    if (arg === "--resume") {
+      parsed.resume = true;
+      continue;
+    }
 
     throw new Error(`unrecognized argument: ${arg}`);
   }
@@ -506,6 +512,10 @@ function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
   }
 
   let changeId = "";
+  let output: string | null = null;
+  let noRun = false;
+  let stateDir: string | null = null;
+  let resume = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     const next = argv[index + 1];
@@ -515,6 +525,24 @@ function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
       index += 1;
       continue;
     }
+    if (arg === "--output") {
+      output = requireOptionValue(arg, next);
+      index += 1;
+      continue;
+    }
+    if (arg === "--state-dir") {
+      stateDir = requireOptionValue(arg, next);
+      index += 1;
+      continue;
+    }
+    if (arg === "--no-run") {
+      noRun = true;
+      continue;
+    }
+    if (arg === "--resume") {
+      resume = true;
+      continue;
+    }
 
     throw new Error(`unrecognized argument: ${arg}`);
   }
@@ -522,7 +550,7 @@ function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
   if (!changeId) {
     throw new Error("argument --change-id is required");
   }
-  return { changeId };
+  return { changeId, output, noRun, stateDir, resume };
 }
 
 function parseRunArgs(argv: string[]): RunArgs {
@@ -781,82 +809,26 @@ function specCreatorPolishCommand(argv: string[], io: CliIO): number {
     throw new Error(`change not found: ${paths.changeDir}`);
   }
 
-  const queueBefore = collectChangeFilesRecursively(paths.changeDir);
-  const beforeSnapshot = collectMarkdownSnapshot([
-    ...queueBefore.markdownFiles,
-    paths.proposalPath,
-    paths.tasksPath,
-    paths.designPath,
-    paths.codeSummaryPath,
-    paths.deltaSpecPath,
-  ]);
-
   const context = buildSpecCreatorContextFromExistingChange(args.changeId, paths);
-  writeSpecCreatorArtifacts({
-    context,
-    paths,
-    outputPath: path.resolve(defaultSpecCreatorOutputPath(args.changeId)),
-  });
-
-  const queueAfter = collectChangeFilesRecursively(paths.changeDir);
-  const markdownResult = polishMarkdownFiles(queueAfter.markdownFiles);
-  const changedFiles = detectChangedMarkdownFiles(beforeSnapshot, [
-    ...queueAfter.markdownFiles,
-    paths.proposalPath,
-    paths.tasksPath,
-    paths.designPath,
-    paths.codeSummaryPath,
-    paths.deltaSpecPath,
-  ]);
-  const nonMarkdownResult = checkNonMarkdownConsistency(queueAfter.nonMarkdownFiles);
-  for (const warning of nonMarkdownResult.warnings) {
-    io.stderr(`[spec-creator polish] warning: ${warning}\n`);
-  }
-
-  const summary = buildPolishSummary({
-    totalFileCount: queueAfter.totalFileCount,
-    changedFiles,
-    ruleCounts: markdownResult.ruleCounts,
-  });
-  io.stdout(renderSpecCreatorPolishSummary(summary));
-  return 0;
-}
-
-function renderSpecCreatorPolishSummary(
-  summary: SpecCreatorPolishSummary,
-): string {
-  const lines = [
-    `[spec-creator polish] total_files: ${summary.totalFileCount}`,
-    `[spec-creator polish] changed_files: ${summary.changedFileCount}`,
-  ];
-  if (summary.changedFiles.length === 0) {
-    lines.push("[spec-creator polish] changed_file: (none)");
-  } else {
-    for (const changedFile of summary.changedFiles) {
-      lines.push(
-        `[spec-creator polish] changed_file: ${asDisplayPath(changedFile)}`,
-      );
-    }
-  }
-  lines.push(
-    "[spec-creator polish] rule_counts: " +
-      `formatting=${summary.ruleCounts.formatting} ` +
-      `fixed_lines=${summary.ruleCounts.fixedLines} ` +
-      `headings=${summary.ruleCounts.headings}`,
+  const outputPath = path.resolve(
+    args.output ?? defaultSpecCreatorOutputPath(args.changeId),
   );
-  return `${lines.join("\n")}\n`;
-}
-
-function asDisplayPath(filePathRaw: string): string {
-  const filePath = path.resolve(filePathRaw);
-  const relativePath = path.relative(Deno.cwd(), filePath);
-  if (
-    relativePath.length === 0 || relativePath.startsWith("..") ||
-    path.isAbsolute(relativePath)
-  ) {
-    return filePath;
+  writeTaskConfigFile(context.task_config, outputPath);
+  io.stdout(`[spec-creator polish] wrote ${outputPath}\n`);
+  if (args.noRun) {
+    return 0;
   }
-  return relativePath;
+  const stateDir = args.stateDir
+    ? path.resolve(args.stateDir)
+    : path.resolve(defaultSpecCreatorStateDir(args.changeId), "polish");
+  io.stdout(`[spec-creator polish] run --config ${outputPath}\n`);
+  return runCommand([
+    "--config",
+    outputPath,
+    "--state-dir",
+    stateDir,
+    ...(args.resume ? ["--resume"] : []),
+  ], io);
 }
 
 function specCreatorCommand(argv: string[], io: CliIO): number {
@@ -893,6 +865,7 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
     outputPath,
     "--state-dir",
     stateDir,
+    ...(args.resume ? ["--resume"] : []),
   ], io);
 }
 
@@ -980,10 +953,17 @@ function writeSpecCreatorArtifacts(
     requirementsText: context.spec_context.requirements_text,
   });
 
+  writeTaskConfigFile(context.task_config, outputPath);
+}
+
+function writeTaskConfigFile(
+  taskConfig: SpecCreatorTaskConfig,
+  outputPath: string,
+): void {
   Deno.mkdirSync(path.dirname(outputPath), { recursive: true });
   Deno.writeTextFileSync(
     outputPath,
-    `${JSON.stringify(context.task_config, null, 2)}\n`,
+    `${JSON.stringify(taskConfig, null, 2)}\n`,
   );
 }
 
@@ -1090,41 +1070,6 @@ function firstMeaningfulLine(text: string): string {
 
 function readOptionalText(filePath: string): string | null {
   return isFile(filePath) ? Deno.readTextFileSync(filePath) : null;
-}
-
-function collectMarkdownSnapshot(
-  filePaths: string[],
-): Map<string, string | null> {
-  const snapshot = new Map<string, string | null>();
-  for (const filePathRaw of filePaths) {
-    const filePath = path.resolve(filePathRaw);
-    if (snapshot.has(filePath)) {
-      continue;
-    }
-    snapshot.set(filePath, readOptionalText(filePath));
-  }
-  return snapshot;
-}
-
-function detectChangedMarkdownFiles(
-  before: Map<string, string | null>,
-  filePaths: string[],
-): string[] {
-  const targets = new Set<string>([
-    ...before.keys(),
-    ...filePaths.map((filePath) => path.resolve(filePath)),
-  ]);
-  const changed: string[] = [];
-  for (const filePath of [...targets].sort((left, right) =>
-    left.localeCompare(right)
-  )) {
-    const beforeText = before.get(filePath) ?? null;
-    const afterText = readOptionalText(filePath);
-    if (beforeText !== afterText) {
-      changed.push(filePath);
-    }
-  }
-  return changed;
 }
 
 function asBulletLines(items: string[]): string {
@@ -1399,6 +1344,16 @@ function runCommand(argv: string[], io: CliIO): number {
   });
 
   const result = orchestrator.run();
+  if (args.openspecChange !== null) {
+    const completedTaskIds = store.listTasks()
+      .filter((task) => task.status === "completed")
+      .map((task) => task.id);
+    const syncedCount = updateTasksMarkdownCheckboxes(
+      path.join(args.openspecRoot, "changes", args.openspecChange, "tasks.md"),
+      completedTaskIds,
+    );
+    io.stdout(`[run] synced_tasks_md=${syncedCount}\n`);
+  }
   const runResult = loaded.sourceChangeId === null
     ? result
     : { ...result, openspec_change_id: loaded.sourceChangeId };

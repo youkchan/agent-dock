@@ -72,6 +72,14 @@ function writePackageJson(context: BuildContext): void {
   Deno.writeTextFileSync(`${context.npmRoot}/package.json`, output);
 }
 
+function writeDenoJson(context: BuildContext): void {
+  const denoJson = {
+    nodeModulesDir: "auto",
+  };
+  const output = `${JSON.stringify(denoJson, null, 2)}\n`;
+  Deno.writeTextFileSync(`${context.npmRoot}/deno.json`, output);
+}
+
 function writeNpmReadme(context: BuildContext): void {
   const content = [
     "# agent-dock (local build)",
@@ -127,6 +135,7 @@ function buildNpmArtifacts(context: BuildContext): void {
   ensureCleanDir(context.npmRoot);
 
   writePackageJson(context);
+  writeDenoJson(context);
   writeNpmReadme(context);
   writeBinScript(context);
 
