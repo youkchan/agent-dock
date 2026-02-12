@@ -2,6 +2,7 @@ import {
   compileChangeToConfig,
   OpenSpecCompileError,
   parseTasksMarkdown,
+  updateTasksMarkdownCheckboxes,
 } from "./compiler.ts";
 import { getOpenSpecTasksTemplate } from "./template.ts";
 
@@ -237,6 +238,145 @@ Deno.test("compileChangeToConfig validates missing task phase assignments", () =
           overridesRoot: `${root}/task_configs/overrides`,
         }),
       "task 1.2 must define phase assignments via persona_policy.phase_overrides",
+    );
+  });
+});
+
+Deno.test("updateTasksMarkdownCheckboxes updates only completed task lines", () => {
+  withTempDir((root) => {
+    const tasksPath = `${root}/tasks.md`;
+    Deno.writeTextFileSync(
+      tasksPath,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 1.1 完了済みにしたい",
+        "- [ ] 1.2 未完了のまま維持する",
+        "- [x] T-003 すでに完了済み",
+      ].join("\n"),
+    );
+
+    const updatedCount = updateTasksMarkdownCheckboxes(tasksPath, [
+      "1.1",
+      "T-003",
+    ]);
+    const updated = Deno.readTextFileSync(tasksPath);
+
+    assertDeepEqual(updatedCount, 1);
+    assertDeepEqual(
+      updated,
+      [
+        "## 1. 実装タスク",
+        "- [x] 1.1 完了済みにしたい",
+        "- [ ] 1.2 未完了のまま維持する",
+        "- [x] T-003 すでに完了済み",
+      ].join("\n"),
+    );
+  });
+});
+
+Deno.test("updateTasksMarkdownCheckboxes keeps markdown unchanged when no IDs complete", () => {
+  withTempDir((root) => {
+    const tasksPath = `${root}/tasks.md`;
+    const original = [
+      "## 1. 実装タスク",
+      "- [ ] 1.1 未完了",
+      "- [ ] 1.2 未完了",
+    ].join("\n");
+    Deno.writeTextFileSync(tasksPath, original);
+
+    const updatedCount = updateTasksMarkdownCheckboxes(tasksPath, []);
+    const after = Deno.readTextFileSync(tasksPath);
+
+    assertDeepEqual(updatedCount, 0);
+    assertDeepEqual(after, original);
+  });
+});
+
+Deno.test("updateTasksMarkdownCheckboxes is idempotent on rerun", () => {
+  withTempDir((root) => {
+    const tasksPath = `${root}/tasks.md`;
+    Deno.writeTextFileSync(
+      tasksPath,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 1.1 1回目で完了",
+        "- [ ] 1.2 未完了",
+      ].join("\n"),
+    );
+
+    const firstUpdatedCount = updateTasksMarkdownCheckboxes(tasksPath, ["1.1"]);
+    const afterFirst = Deno.readTextFileSync(tasksPath);
+    const secondUpdatedCount = updateTasksMarkdownCheckboxes(tasksPath, [
+      "1.1",
+    ]);
+    const afterSecond = Deno.readTextFileSync(tasksPath);
+
+    assertDeepEqual(firstUpdatedCount, 1);
+    assertDeepEqual(secondUpdatedCount, 0);
+    assertDeepEqual(afterSecond, afterFirst);
+  });
+});
+
+Deno.test("updateTasksMarkdownCheckboxes updates only implementation section checkboxes", () => {
+  withTempDir((root) => {
+    const tasksPath = `${root}/tasks.md`;
+    Deno.writeTextFileSync(
+      tasksPath,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 1.1 実装タスク",
+        "## 2. 人間向けメモ（コンパイラ非対象）",
+        "- [ ] 9.9 人間向けのメモ",
+      ].join("\n"),
+    );
+
+    const updatedCount = updateTasksMarkdownCheckboxes(tasksPath, [
+      "1.1",
+      "9.9",
+    ]);
+    const updated = Deno.readTextFileSync(tasksPath);
+
+    assertDeepEqual(updatedCount, 1);
+    assertDeepEqual(
+      updated,
+      [
+        "## 1. 実装タスク",
+        "- [x] 1.1 実装タスク",
+        "## 2. 人間向けメモ（コンパイラ非対象）",
+        "- [ ] 9.9 人間向けのメモ",
+      ].join("\n"),
+    );
+  });
+});
+
+Deno.test("updateTasksMarkdownCheckboxes supports english implementation heading", () => {
+  withTempDir((root) => {
+    const tasksPath = `${root}/tasks.md`;
+    Deno.writeTextFileSync(
+      tasksPath,
+      [
+        "## 1. Implementation",
+        "- [ ] 1.1 implementation task",
+        "## 2. Human Notes (non-compiled)",
+        "- [ ] 2.1 should remain unchanged",
+      ].join("\n"),
+    );
+
+    const updatedCount = updateTasksMarkdownCheckboxes(tasksPath, [
+      "1.1",
+      "2.1",
+    ]);
+    const updated = Deno.readTextFileSync(tasksPath);
+
+    assertDeepEqual(updatedCount, 1);
+    assertDeepEqual(
+      updated,
+      [
+        "## 1. Implementation",
+        "- [x] 1.1 implementation task",
+        "## 2. Human Notes (non-compiled)",
+        "- [ ] 2.1 should remain unchanged",
+      ].join("\n"),
     );
   });
 });

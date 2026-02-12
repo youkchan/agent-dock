@@ -38,6 +38,7 @@ import {
   compileChangeToConfig,
   defaultCompiledOutputPath,
   OpenSpecCompileError,
+  updateTasksMarkdownCheckboxes,
   writeCompiledConfig,
 } from "../infrastructure/openspec/compiler.ts";
 import {
@@ -1399,6 +1400,16 @@ function runCommand(argv: string[], io: CliIO): number {
   });
 
   const result = orchestrator.run();
+  if (args.openspecChange !== null) {
+    const completedTaskIds = store.listTasks()
+      .filter((task) => task.status === "completed")
+      .map((task) => task.id);
+    const syncedCount = updateTasksMarkdownCheckboxes(
+      path.join(args.openspecRoot, "changes", args.openspecChange, "tasks.md"),
+      completedTaskIds,
+    );
+    io.stdout(`[run] synced_tasks_md=${syncedCount}\n`);
+  }
   const runResult = loaded.sourceChangeId === null
     ? result
     : { ...result, openspec_change_id: loaded.sourceChangeId };

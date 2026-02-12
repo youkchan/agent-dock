@@ -731,69 +731,49 @@ Deno.test("main run executes orchestrator with template adapter", () => {
     if (!buffer.state.stdout.includes("[run] progress_log_ref=")) {
       throw new Error("stdout should include progress_log_ref");
     }
+    if (buffer.state.stdout.includes("[run] synced_tasks_md=")) {
+      throw new Error("stdout should not include synced_tasks_md for --config");
+    }
     if (!buffer.state.stdout.includes('"stop_reason": "all_tasks_completed"')) {
       throw new Error("stdout should include successful stop reason");
     }
   });
 });
 
-Deno.test("main run executes orchestrator with subprocess adapter", () => {
+Deno.test("main run with --openspec-change syncs tasks.md and logs synced count", () => {
   withTempDir((root) => {
-    const configPath = `${root}/tasks.json`;
+    const changeId = "sync-run-change";
+    const openspecRoot = `${root}/openspec`;
+    const changeDir = `${openspecRoot}/changes/${changeId}`;
     const stateDir = `${root}/state`;
-    const wrapperPath = `${root}/fake_wrapper.sh`;
+    const tasksPath = `${changeDir}/tasks.md`;
 
+    Deno.mkdirSync(changeDir, { recursive: true });
     Deno.writeTextFileSync(
-      configPath,
-      JSON.stringify(
-        {
-          teammates: ["tm-1"],
-          tasks: [
-            {
-              id: "T1",
-              title: "sample",
-              requires_plan: true,
-              target_paths: ["src/a.ts"],
-            },
-          ],
-        },
-        null,
-        2,
-      ),
-    );
-    Deno.writeTextFileSync(
-      wrapperPath,
+      tasksPath,
       [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        'payload="$(cat)"',
-        'if [[ "$payload" == *\'"mode":"plan"\'* ]]; then',
-        "  echo 'plan from wrapper'",
-        "else",
-        "  echo 'RESULT: completed'",
-        "  echo 'SUMMARY: ok'",
-        "  echo 'CHANGED_FILES: src/a.ts'",
-        "  echo 'CHECKS: deno test -A src'",
-        "fi",
-        "echo '[wrapper] progress' >&2",
+        "## 1. 実装タスク",
+        "- [ ] 1.1 同期テスト",
+        "  - 依存: なし",
+        "  - 対象: src/a.ts",
+        "  - フェーズ担当: implement=implementer",
       ].join("\n"),
     );
-    Deno.chmodSync(wrapperPath, 0o755);
 
     const buffer = createIoBuffer();
     withEnv("ORCHESTRATOR_PROVIDER", "mock", () => {
       const exitCode = main([
         "run",
-        "--config",
-        configPath,
+        "--openspec-change",
+        changeId,
+        "--openspec-root",
+        openspecRoot,
         "--state-dir",
         stateDir,
         "--teammate-adapter",
-        "subprocess",
-        "--teammate-command",
-        `bash ${wrapperPath}`,
+        "template",
         "--max-rounds",
-        "30",
+        "20",
       ], buffer.io);
 
       if (exitCode !== 0) {
@@ -801,10 +781,95 @@ Deno.test("main run executes orchestrator with subprocess adapter", () => {
       }
     });
 
-    if (!buffer.state.stdout.includes('"stop_reason": "all_tasks_completed"')) {
-      throw new Error("stdout should include successful stop reason");
+    if (!buffer.state.stdout.includes("[run] synced_tasks_md=1")) {
+      throw new Error("stdout should include synced task count");
+    }
+    if (!buffer.state.stdout.includes('"openspec_change_id": "sync-run-change"')) {
+      throw new Error("stdout should include openspec_change_id");
+    }
+    const tasksAfterRun = Deno.readTextFileSync(tasksPath);
+    if (!tasksAfterRun.includes("- [x] 1.1 同期テスト")) {
+      throw new Error("tasks.md should be updated before main() returns");
     }
   });
+});
+
+const hasBashRunPermission =
+  Deno.permissions.querySync({ name: "run", command: "bash" }).state ===
+    "granted";
+
+Deno.test({
+  name: "main run executes orchestrator with subprocess adapter",
+  ignore: !hasBashRunPermission,
+  fn: () => {
+    withTempDir((root) => {
+      const configPath = `${root}/tasks.json`;
+      const stateDir = `${root}/state`;
+      const wrapperPath = `${root}/fake_wrapper.sh`;
+
+      Deno.writeTextFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            teammates: ["tm-1"],
+            tasks: [
+              {
+                id: "T1",
+                title: "sample",
+                requires_plan: true,
+                target_paths: ["src/a.ts"],
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+      Deno.writeTextFileSync(
+        wrapperPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'payload="$(cat)"',
+          'if [[ "$payload" == *\'"mode":"plan"\'* ]]; then',
+          "  echo 'plan from wrapper'",
+          "else",
+          "  echo 'RESULT: completed'",
+          "  echo 'SUMMARY: ok'",
+          "  echo 'CHANGED_FILES: src/a.ts'",
+          "  echo 'CHECKS: deno test -A src'",
+          "fi",
+          "echo '[wrapper] progress' >&2",
+        ].join("\n"),
+      );
+      Deno.chmodSync(wrapperPath, 0o755);
+
+      const buffer = createIoBuffer();
+      withEnv("ORCHESTRATOR_PROVIDER", "mock", () => {
+        const exitCode = main([
+          "run",
+          "--config",
+          configPath,
+          "--state-dir",
+          stateDir,
+          "--teammate-adapter",
+          "subprocess",
+          "--teammate-command",
+          `bash ${wrapperPath}`,
+          "--max-rounds",
+          "30",
+        ], buffer.io);
+
+        if (exitCode !== 0) {
+          throw new Error(`run should return 0: ${buffer.state.stderr}`);
+        }
+      });
+
+      if (!buffer.state.stdout.includes('"stop_reason": "all_tasks_completed"')) {
+        throw new Error("stdout should include successful stop reason");
+      }
+    });
+  },
 });
 
 Deno.test("main run includes openspec_change_id when config meta has source_change_id", () => {
@@ -854,6 +919,11 @@ Deno.test("main run includes openspec_change_id when config meta has source_chan
 
     if (!buffer.state.stdout.includes('"openspec_change_id": "add-sample-change"')) {
       throw new Error("stdout should include openspec_change_id");
+    }
+    if (buffer.state.stdout.includes("[run] synced_tasks_md=")) {
+      throw new Error(
+        "stdout should not include synced_tasks_md when running with --config",
+      );
     }
   });
 });

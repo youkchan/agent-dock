@@ -17,6 +17,11 @@ const TASK_ID_PATTERN =
   /(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*)/gi;
 const TASK_ID_FULL_PATTERN =
   /^(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*)$/i;
+const TASK_CHECKBOX_SYNC_PATTERN =
+  /^(\s*-\s*\[)([ xX])(\]\s*)((?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*))(.*)$/i;
+const MARKDOWN_HEADING_PATTERN = /^\s*(#{2,6})\s+(.+?)\s*$/;
+const IMPLEMENTATION_SECTION_HEADING_PATTERN =
+  /^(?:1\.\s*)?(?:実装タスク|implementation(?:\s+tasks?)?)$/i;
 const TASK_HEADER_PATTERN = /^\s*-\s*\[[ xX]\]\s*(.+?)\s*$/;
 const CHECK_ITEM_PATTERN = /^\s*-\s*\[([ xX])\]\s*(.+?)\s*$/;
 const DEPENDENCY_PATTERN =
@@ -93,6 +98,68 @@ export function writeCompiledConfig(
   const serialized = JSON.stringify(sortJsonValue(configPayload), null, 2);
   Deno.writeTextFileSync(target, serialized);
   return target;
+}
+
+export function updateTasksMarkdownCheckboxes(
+  tasksPath: string,
+  completedTaskIds: Iterable<string>,
+): number {
+  const originalContent = Deno.readTextFileSync(tasksPath);
+  const lineSeparator = originalContent.includes("\r\n") ? "\r\n" : "\n";
+  const lines = originalContent.split(/\r?\n/);
+  const completed = new Set(
+    [...completedTaskIds]
+      .map((taskId) => String(taskId).trim())
+      .filter((taskId) => taskId.length > 0),
+  );
+
+  let updatedCount = 0;
+  let inImplementationSection = false;
+  let implementationHeadingLevel = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const headingMatch = MARKDOWN_HEADING_PATTERN.exec(lines[index]);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const headingTitle = headingMatch[2].trim();
+      if (isImplementationSectionHeading(headingTitle)) {
+        inImplementationSection = true;
+        implementationHeadingLevel = level;
+      } else if (inImplementationSection && level <= implementationHeadingLevel) {
+        inImplementationSection = false;
+        implementationHeadingLevel = 0;
+      }
+      continue;
+    }
+
+    if (!inImplementationSection) {
+      continue;
+    }
+
+    const matched = TASK_CHECKBOX_SYNC_PATTERN.exec(lines[index]);
+    if (!matched) {
+      continue;
+    }
+
+    const marker = matched[2].toLowerCase();
+    const taskId = matched[4];
+    if (marker === "x" || !completed.has(taskId)) {
+      continue;
+    }
+
+    lines[index] = `${matched[1]}x${matched[3]}${taskId}${matched[5]}`;
+    updatedCount += 1;
+  }
+
+  if (updatedCount > 0) {
+    Deno.writeTextFileSync(tasksPath, lines.join(lineSeparator));
+  }
+
+  return updatedCount;
+}
+
+function isImplementationSectionHeading(heading: string): boolean {
+  const normalized = heading.trim().replaceAll(/\s+/g, " ");
+  return IMPLEMENTATION_SECTION_HEADING_PATTERN.test(normalized);
 }
 
 export function compileChangeToConfig(
