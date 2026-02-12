@@ -20,40 +20,41 @@
 - `not implemented` 等の未実装エラーは未完了として扱う（fail-closed）。
 
 ## 1. 実装タスク
-- [x] 1.1 `spec-creator polish` の CLI 契約と fail-closed 条件を実装する
+- [ ] 1.1 `tasks.md` チェックボックス同期関数を実装する
   - 依存: なし
-  - 対象: src/cli/main.ts, src/cli/main_test.ts
+  - 対象: src/infrastructure/openspec/compiler.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
-  - 成果物: `agent-dock spec-creator polish --change-id <id>` を追加し、`--change-id` 未指定と対象 change 非存在時に即エラーで終了する。
-- [x] 1.2 change 配下の再帰走査とファイル分類を実装する
+  - 成果物: `updateTasksMarkdownCheckboxes` を追加し、`- [ ]`/`- [x]` 行の task_id を completed 集合で `- [x]` へ更新し、更新件数を返す。
+- [ ] 1.2 run 完了フックへ同期処理を組み込む
   - 依存: 1.1
-  - 対象: src/infrastructure/openspec/spec_creator.ts, src/infrastructure/openspec/spec_creator_test.ts
+  - 対象: src/cli/main.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
-  - 成果物: `openspec/changes/<change-id>/` 配下を再帰走査し、Markdown と非Markdownを判定して処理キューを構築する。
-- [x] 1.3 Markdown 整備ロジックを実装する
+  - 成果物: `store.listTasks()` から completed task_id を取得し、`--openspec-change` 実行時のみ同期関数を呼び出す。
+- [ ] 1.3 同期結果ログを追加する
   - 依存: 1.2
-  - 対象: src/infrastructure/openspec/spec_creator.ts, src/infrastructure/openspec/template.ts, src/infrastructure/openspec/spec_creator_test.ts
+  - 対象: src/cli/main.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
-  - 成果物: `*.md` に対して整形、不足固定行補完、見出し正規化を適用し、再実行時に差分ゼロとなるよう冪等化する。
-- [x] 1.4 非Markdown整合チェックと警告出力を実装する
-  - 依存: 1.2
-  - 対象: src/infrastructure/openspec/spec_creator.ts, src/infrastructure/openspec/spec_creator_test.ts
-  - フェーズ担当: implement=implementer; review=code-reviewer
-  - 成果物: 非Markdown (`yaml/json` 等) は無変更を維持し、整合チェック結果のみを警告として出力する。
-- [x] 1.5 実行結果サマリ出力を実装する
-  - 依存: 1.3, 1.4
-  - 対象: src/cli/main.ts, src/cli/main_test.ts, src/infrastructure/openspec/spec_creator.ts
-  - フェーズ担当: implement=implementer; review=code-reviewer
-  - 成果物: 対象総ファイル数、変更ファイル一覧、整備ルール別適用件数を標準出力へ出し、変更なし時の表示を定義する。
-- [x] 1.6 受け入れ条件を自動検証する
-  - 依存: 1.1, 1.3, 1.4, 1.5
-  - 対象: src/infrastructure/openspec/spec_creator_test.ts, src/cli/main_test.ts, tests/test_openspec_compiler.py
+  - 成果物: 同期実行時に `[run] synced_tasks_md=<count>` を標準出力へ出し、`--config` 実行時は出力しない。
+- [ ] 1.4 compiler 側の同期ロジックをテストする
+  - 依存: 1.1
+  - 対象: src/infrastructure/openspec/compiler_test.ts
   - フェーズ担当: spec_check=spec-checker; test=test-owner
-  - 成果物: 非存在 change-id の失敗、`compile-openspec` 成功、再実行差分ゼロ、非Markdown無変更をテストで担保する。
+  - 成果物: completed 行のみ更新、未完了行維持、再実行差分ゼロ（冪等）をテストで担保する。
+- [ ] 1.5 run 側の分岐とログをテストする
+  - 依存: 1.2, 1.3
+  - 対象: src/cli/main_test.ts
+  - フェーズ担当: spec_check=spec-checker; test=test-owner
+  - 成果物: `--openspec-change` 時の同期呼び出しと件数ログ、`--config` 時の非同期をテストで担保する。
+- [ ] 1.6 受け入れ検証を実行する
+  - 依存: 1.4, 1.5
+  - 対象: src/infrastructure/openspec/compiler_test.ts, src/cli/main_test.ts
+  - フェーズ担当: spec_check=spec-checker; test=test-owner
+  - 成果物: `deno test --allow-read --allow-write --allow-env src/infrastructure/openspec/compiler_test.ts src/cli/main_test.ts` が成功する。
 
 ## 2. 人間向けメモ（コンパイラ非対象）
-- 要件メモ: 対象は `openspec/changes/<change-id>/` 配下の全ファイル（再帰）に固定する。
-- 要件メモ: `*.md` は整形・固定行補完・見出し正規化を行い、非Markdownは整合チェックのみで内容を変更しない。
-- 要件メモ: 出力は総ファイル数、変更ファイル一覧、整備ルール別適用件数を必須とする。
-- 非目標メモ: 非Markdownの自動修復と `compile-openspec` 仕様変更は本 change の対象外。
+- 要件メモ: 同期は run の `--openspec-change` 経由時のみ実行し、`--config` は対象外とする。
+- 要件メモ: `tasks.md` 更新は `- [ ]` / `- [x]` の task 行だけに限定し、他行は変更しない。
+- 要件メモ: 同期入力は `store.listTasks()` の completed task_id 一覧を単一ソースとして扱う。
+- 要件メモ: 同一 completed 集合で再実行しても追加変更が出ない冪等性を維持する。
+- 要件メモ: 同期実行時は `[run] synced_tasks_md=<count>` の 1 行ログを出力する。
 - メモ: 重大違反時は `REVIEWER_STOP:requirement_drift|over_editing|verbosity` を reviewer 出力に含める。
