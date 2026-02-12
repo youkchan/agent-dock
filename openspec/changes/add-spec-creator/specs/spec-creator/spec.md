@@ -48,3 +48,20 @@ The system SHALL run spec creator tasks with `spec-planner`, `spec-reviewer`, an
 - **WHEN** spec creator が実行される
 - **THEN** 実行主体は `spec` ペルソナ集合になる
 - **AND** 通常 run の実装系ペルソナ集合は混在しない
+
+### Requirement: Spec Creator SHALL inject completion readiness gates into generated artifacts
+The system SHALL include mandatory completion gates in generated `proposal.md` and `tasks.md`.
+
+#### Scenario: Mock-only execution is not accepted as completion
+- **WHEN** 生成された OpenSpec の完了判定を行う
+- **THEN** `ORCHESTRATOR_PROVIDER=mock` の実行結果のみでは完了扱いにしない
+
+#### Scenario: Operational acceptance run is mandatory
+- **WHEN** 生成された OpenSpec で完了判定を行う
+- **THEN** 対象プロジェクトの実運用実行経路での受け入れ実行を必須とする
+- **AND** 完了報告には実行コマンド、最終結果 JSON、使用 provider、失敗時ログ抜粋を含める
+
+#### Scenario: Not implemented failures fail closed
+- **WHEN** 受け入れ実行で `not implemented` 等の未実装エラーを検出する
+- **THEN** 生成された OpenSpec は未完了として扱う
+- **AND** 完了チェックを進めない

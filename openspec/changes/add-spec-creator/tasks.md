@@ -56,10 +56,18 @@
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: spec creator 実行コマンドと運用手順
 - [ ] 1.9 テストを追加する
-  - 依存: 1.2, 1.3, 1.4, 1.6, 1.7, 1.8
+  - 依存: 1.2, 1.3, 1.4, 1.6, 1.7, 1.8, 1.10
   - 対象: `src/infrastructure/openspec/*_test.ts`, `src/application/orchestrator/*_test.ts`
   - フェーズ担当: test=test-owner; review=spec-reviewer
   - 成果物: テンプレ準拠、整合検証、停止条件、固定task_profile注入、run本体共通経路の回帰テスト
+- [ ] 1.10 生成成果物へ provider 完了判定ゲートを固定挿入する
+  - 依存: 1.3
+  - 対象: `src/infrastructure/openspec/template.ts`, `src/infrastructure/openspec/spec_creator.ts`
+  - フェーズ担当: implement=spec-planner; review=spec-reviewer
+  - 成果物: 生成される `proposal.md` / `tasks.md` に以下を固定で含める
+    - `mock` 実行のみでは完了不可
+    - 対象プロジェクトの実運用実行経路での受け入れ実行を必須
+    - `not implemented` 等の未実装エラーは未完了（fail-closed）
 
 ## 2. 人間向けメモ（コンパイラ非対象）
 - メモ: `spec-reviewer` は proposal.md の過剰修正/要件外提案を停止対象にする。

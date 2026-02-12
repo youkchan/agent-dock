@@ -20,6 +20,10 @@
   - `spec-code-creator`: `code_summary.md` 作成
 - `spec-reviewer` は「要件外追加」「過剰修正」「冗長化」の検出を必須化し、重大不整合は停止できるようにする。
 - `spec creator` は常時インタラクティブで実行し、必須入力が確定しない場合は fail-closed で停止する。
+- `spec creator` が生成する `proposal.md` / `tasks.md` には、完了判定ゲートを固定文言として必ず含める。
+  - `mock` 実行のみでは完了不可
+  - 対象プロジェクトの実運用実行経路での受け入れ実行を必須化
+  - `not implemented` 等の未実装エラーを検出した場合は未完了（fail-closed）
 
 ## 目的
 - OpenSpec のフォーマット揺れを抑制する。

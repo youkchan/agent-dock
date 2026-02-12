@@ -26,6 +26,8 @@
   - 理由: 要件外追加や過剰修正をレビュー段階で止めるため。
 - Decision 7: spec creator は常時インタラクティブ実行とし、非TTY/未確定入力は fail-closed で停止する。
   - 理由: 仕様入力の曖昧さを残したまま生成しないため。
+- Decision 8: spec creator の生成成果物に、provider 完了判定ゲートを固定挿入する。
+  - 理由: `mock` のみで完了扱いになる誤判定を防ぎ、対象プロジェクトの実運用経路での受け入れ確認を必須化するため。
 
 ## Data Contract
 - spec creator input:
@@ -72,6 +74,7 @@
 - spec creator 実行時は `spec` ペルソナ集合のみ使用し、通常 run ペルソナ集合を混在させない。
 - 前処理完了後の実行経路は既存 `run` と同じ結果契約（stop_reason/summary/provider_calls）を維持する。
 - spec creator 実行時は `--config` 経路のみを使い、OpenSpec入力前提の処理に依存しない。
+- 生成される `proposal.md` / `tasks.md` には、完了判定ゲート（`mock` 完了不可、実運用経路の受け入れ必須、`not implemented` 等の未実装エラーは未完了）が必ず含まれる。
 
 ## Risks / Trade-offs
 - リスク: `code_summary.md` 記述量が増える。
