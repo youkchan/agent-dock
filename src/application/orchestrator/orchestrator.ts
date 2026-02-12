@@ -1404,6 +1404,45 @@ export class AgentTeamsLikeOrchestrator {
       };
     }
 
+    const executionResult = parseExecutionResultBlock(result);
+    if (executionResult.status !== "completed") {
+      const blockReason = executionResult.status === "blocked"
+        ? `execution result is blocked${
+          executionResult.summary ? `: ${executionResult.summary}` : ""
+        }`
+        : "execution result must include RESULT: completed|blocked";
+      const blocked = this.store.markTaskBlocked(
+        task.id,
+        teammateId,
+        this.short(blockReason, 180),
+      );
+      this.appendTaskProgressLog(
+        blocked.id,
+        "system",
+        `execution blocked: ${this.short(result, 160)}`,
+      );
+      this.store.sendMessage(
+        teammateId,
+        this.config.leadId,
+        `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        blocked.id,
+      );
+      this.log(
+        `[${teammateId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+      );
+      return {
+        changed: true,
+        events: [
+          this.makeEvent(
+            "Blocked",
+            blocked.id,
+            teammateId,
+            blocked.block_reason ?? "blocked",
+          ),
+        ],
+      };
+    }
+
     const nextPhase = this.taskNextPhase(taskForExecution);
     if (nextPhase !== null) {
       const [nextPhaseIndex, nextPhaseName] = nextPhase;
@@ -1608,6 +1647,43 @@ function detectReviewerStopRule(text: string): string | null {
 function normalizeReviewerStopRule(rawRule: string): string {
   const normalizedKey = rawRule.trim().toLowerCase().replaceAll("-", "_");
   return REVIEWER_STOP_RULE_ALIASES[normalizedKey] ?? normalizedKey;
+}
+
+function parseExecutionResultBlock(
+  text: string,
+): { status: "completed" | "blocked" | null; summary: string | null } {
+  const lines = text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  let status: "completed" | "blocked" | null = null;
+  let summary: string | null = null;
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (status === null) {
+      const resultMatch = /^RESULT:\s*(.+)$/iu.exec(line);
+      if (resultMatch) {
+        const normalized = resultMatch[1].trim().toLowerCase();
+        if (normalized === "completed" || normalized === "blocked") {
+          status = normalized;
+        } else {
+          status = null;
+        }
+      }
+    }
+    if (summary === null) {
+      const summaryMatch = /^SUMMARY:\s*(.+)$/iu.exec(line);
+      if (summaryMatch) {
+        summary = summaryMatch[1].trim();
+      }
+    }
+    if (status !== null && summary !== null) {
+      break;
+    }
+  }
+
+  return { status, summary };
 }
 
 function getEnv(name: string, fallback: string): string {

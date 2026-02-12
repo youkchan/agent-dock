@@ -17,8 +17,12 @@ export class TemplateTeammateAdapter implements TeammateAdapter {
       "2) Edit owned files only",
       "3) Run local checks and report",
     ].join("\n");
-    this.resultTemplate = options.resultTemplate ??
-      "Implemented task {task_id} on {paths}";
+    this.resultTemplate = options.resultTemplate ?? [
+      "RESULT: completed",
+      "SUMMARY: Implemented task {task_id} on {paths}",
+      "CHANGED_FILES: {paths}",
+      "CHECKS: template-adapter",
+    ].join("\n");
   }
 
   buildPlan(teammateId: string, task: Task): string {
