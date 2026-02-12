@@ -2,6 +2,30 @@ export const SUPPORTED_TEMPLATE_LANGS = ["ja", "en"] as const;
 export type SupportedTemplateLang = (typeof SUPPORTED_TEMPLATE_LANGS)[number];
 export const DEFAULT_TEMPLATE_LANG: SupportedTemplateLang = "ja";
 
+export interface OpenSpecTasksTemplateSections {
+  preamble: string;
+  implementationHeading: string;
+  defaultImplementationBody: string;
+  humanNotesHeading: string;
+  defaultHumanNotesBody: string;
+}
+
+const PROVIDER_COMPLETION_GATE_SECTION_BY_LANG: Record<
+  SupportedTemplateLang,
+  string
+> = {
+  ja: `### 0.2 Provider 完了判定ゲート（固定）
+- \`ORCHESTRATOR_PROVIDER=mock\` 実行のみでは完了扱いにしない。
+- 対象プロジェクトの実運用実行経路での受け入れ実行を必須とする。
+- \`not implemented\` 等の未実装エラーは未完了として扱う（fail-closed）。
+`,
+  en: `### 0.2 Provider Completion Gates (fixed)
+- Do not treat runs with \`ORCHESTRATOR_PROVIDER=mock\` only as completion.
+- Require acceptance execution on the target project's operational execution path.
+- Treat \`not implemented\` and equivalent unimplemented errors as incomplete (fail-closed).
+`,
+};
+
 const OPENSPEC_TASKS_TEMPLATE_BY_LANG: Record<SupportedTemplateLang, string> = {
   ja: `## 0. Persona Defaults
 - persona_defaults.phase_order: implement, review, spec_check, test
@@ -18,6 +42,8 @@ const OPENSPEC_TASKS_TEMPLATE_BY_LANG: Record<SupportedTemplateLang, string> = {
 - 例: \`- フェーズ担当: implement=implementer; review=code-reviewer\`（未指定フェーズはグローバル既定を使う）。
 - すべての実施項目（検証を含む）は **\`## 1. 実装タスク\` のチェックボックス付きタスク** として記述する（\`## 2. 検証項目\` は使わない）。
 - 人間向けメモは \`## 2. 人間向けメモ（コンパイラ非対象）\` に **チェックボックスなし** で記述する。
+
+${PROVIDER_COMPLETION_GATE_SECTION_BY_LANG.ja}
 
 ## 1. 実装タスク
 - [ ] 1.1 <タスクタイトル>
@@ -51,6 +77,8 @@ const OPENSPEC_TASKS_TEMPLATE_BY_LANG: Record<SupportedTemplateLang, string> = {
 - Put every executable item (including verification) in **\`## 1. Implementation\` as checkbox tasks** (\`## 2. Verification Checklist\` should not be used).
 - Keep human notes under \`## 2. Human Notes (non-compiled)\` with **no checkboxes**.
 
+${PROVIDER_COMPLETION_GATE_SECTION_BY_LANG.en}
+
 ## 1. Implementation
 - [ ] 1.1 <task title>
   - Depends on: none
@@ -69,9 +97,7 @@ const OPENSPEC_TASKS_TEMPLATE_BY_LANG: Record<SupportedTemplateLang, string> = {
 `,
 };
 
-export function getOpenSpecTasksTemplate(
-  lang: string = DEFAULT_TEMPLATE_LANG,
-): string {
+function normalizeTemplateLang(lang: string): SupportedTemplateLang {
   const normalized = String(lang).trim().toLowerCase();
   if (normalized !== "ja" && normalized !== "en") {
     const allowed = SUPPORTED_TEMPLATE_LANGS.join(", ");
@@ -79,5 +105,55 @@ export function getOpenSpecTasksTemplate(
       `unsupported template language: ${lang} (allowed: ${allowed})`,
     );
   }
+  return normalized;
+}
+
+export function getOpenSpecTasksTemplate(
+  lang: string = DEFAULT_TEMPLATE_LANG,
+): string {
+  const normalized = normalizeTemplateLang(lang);
   return OPENSPEC_TASKS_TEMPLATE_BY_LANG[normalized];
+}
+
+export function getProviderCompletionGateSection(
+  lang: string = DEFAULT_TEMPLATE_LANG,
+): string {
+  return PROVIDER_COMPLETION_GATE_SECTION_BY_LANG[normalizeTemplateLang(lang)];
+}
+
+export function getOpenSpecTasksTemplateSections(
+  lang: string = DEFAULT_TEMPLATE_LANG,
+): OpenSpecTasksTemplateSections {
+  const template = getOpenSpecTasksTemplate(lang);
+  const lines = template.split(/\r?\n/);
+  const implementationIndex = lines.findIndex((line) =>
+    /^\s*##\s+1\./u.test(line)
+  );
+  const humanNotesIndex = lines.findIndex((line) => /^\s*##\s+2\./u.test(line));
+
+  if (implementationIndex <= 0 || humanNotesIndex <= implementationIndex) {
+    throw new Error(`invalid tasks template structure: ${lang}`);
+  }
+
+  const preamble = lines.slice(0, implementationIndex).join("\n").trimEnd();
+  const implementationHeading = lines[implementationIndex].trimEnd();
+  const defaultImplementationBody = lines.slice(
+    implementationIndex + 1,
+    humanNotesIndex,
+  ).join("\n").trim();
+  const humanNotesHeading = lines[humanNotesIndex].trimEnd();
+  const defaultHumanNotesBody = lines.slice(humanNotesIndex + 1).join("\n")
+    .trim();
+
+  if (!implementationHeading || !humanNotesHeading) {
+    throw new Error(`invalid tasks template headings: ${lang}`);
+  }
+
+  return {
+    preamble,
+    implementationHeading,
+    defaultImplementationBody,
+    humanNotesHeading,
+    defaultHumanNotesBody,
+  };
 }

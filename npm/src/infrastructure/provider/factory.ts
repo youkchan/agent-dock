@@ -146,7 +146,55 @@ export class OpenAIOrchestratorProvider implements OrchestratorProvider {
   run(snapshotJson: Record<string, unknown>): OrchestratorDecision {
     const startedAt = Date.now();
     const snapshotText = this.compressSnapshot(snapshotJson);
-    const requestPayload = {
+    const retrySnapshotText = this.compressSnapshotForRetry(snapshotJson);
+
+    let parsed: Record<string, unknown> | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const currentSnapshotText = attempt === 0 ? snapshotText : retrySnapshotText;
+      const requestPayload = this.buildRequestPayload(currentSnapshotText);
+      const rawResponse = this.invokeResponsesApi(requestPayload);
+      const outputText = this.extractText(rawResponse).trim();
+      const incomplete = this.isIncompleteResponse(rawResponse);
+
+      if (!outputText) {
+        if (attempt === 0 && incomplete) {
+          continue;
+        }
+        throw new DecisionValidationError(
+          `openai provider returned empty output (status=${this.responseStatus(rawResponse)})`,
+        );
+      }
+
+      try {
+        parsed = this.parseJson(outputText, rawResponse);
+        break;
+      } catch (error) {
+        if (attempt === 0 && incomplete) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (parsed === null) {
+      throw new DecisionValidationError(
+        "openai provider returned invalid json (status=incomplete) after retry",
+      );
+    }
+
+    const validated = validateDecisionJson(parsed);
+    validated.meta.provider = this.providerName;
+    validated.meta.model = this.model;
+    validated.meta.token_budget = {
+      input: this.inputTokenBudget,
+      output: this.outputTokenBudget,
+    };
+    validated.meta.elapsed_ms = Math.max(0, Date.now() - startedAt);
+    return validated;
+  }
+
+  private buildRequestPayload(snapshotText: string): Record<string, unknown> {
+    return {
       model: this.model,
       instructions: this.systemPrompt,
       input: [
@@ -165,22 +213,6 @@ export class OpenAIOrchestratorProvider implements OrchestratorProvider {
         },
       },
     };
-
-    const rawResponse = this.invokeResponsesApi(requestPayload);
-    const outputText = this.extractText(rawResponse).trim();
-    if (!outputText) {
-      throw new DecisionValidationError("openai provider returned empty output");
-    }
-    const parsed = this.parseJson(outputText, rawResponse);
-    const validated = validateDecisionJson(parsed);
-    validated.meta.provider = this.providerName;
-    validated.meta.model = this.model;
-    validated.meta.token_budget = {
-      input: this.inputTokenBudget,
-      output: this.outputTokenBudget,
-    };
-    validated.meta.elapsed_ms = Math.max(0, Date.now() - startedAt);
-    return validated;
   }
 
   private compressSnapshot(snapshotJson: Record<string, unknown>): string {
@@ -194,6 +226,27 @@ export class OpenAIOrchestratorProvider implements OrchestratorProvider {
       snapshot_prefix: compact.slice(0, maxChars - 80),
     };
     return JSON.stringify(wrapped);
+  }
+
+  private compressSnapshotForRetry(snapshotJson: Record<string, unknown>): string {
+    const compact = JSON.stringify(snapshotJson);
+    const retryMaxChars = Math.max(1000, this.inputTokenBudget * 2);
+    const prefixMax = Math.max(120, retryMaxChars - 110);
+    const prefixLen = Math.min(prefixMax, Math.max(120, Math.floor(compact.length / 2)));
+    const wrapped = {
+      truncated: true,
+      retry_compaction: true,
+      snapshot_prefix: compact.slice(0, prefixLen),
+    };
+    return JSON.stringify(wrapped);
+  }
+
+  private responseStatus(response: Record<string, unknown>): string {
+    return typeof response.status === "string" ? response.status : "unknown";
+  }
+
+  private isIncompleteResponse(response: Record<string, unknown>): boolean {
+    return this.responseStatus(response).toLowerCase() === "incomplete";
   }
 
   private invokeResponsesApi(payload: Record<string, unknown>): Record<string, unknown> {

@@ -26,7 +26,6 @@ const DEFAULT_PERSONA_IDS = [
   "spec-checker",
   "test-owner",
 ] as const;
-const DEFAULT_PERSONA_ID_SET = new Set<string>(DEFAULT_PERSONA_IDS);
 const DEFAULT_PERSONAS_DIR = new URL(
   "../../../team_orchestrator/personas/default/",
   import.meta.url,
@@ -107,16 +106,6 @@ function loadDefaultPersonas(): PersonaDefinition[] {
   const orderedPaths: URL[] = [];
   for (const personaId of DEFAULT_PERSONA_IDS) {
     const path = personaFiles.get(personaId);
-    if (!path) {
-      continue;
-    }
-    orderedPaths.push(path);
-  }
-  const extras = [...personaFiles.keys()]
-    .filter((personaId) => !DEFAULT_PERSONA_ID_SET.has(personaId))
-    .sort();
-  for (const extraId of extras) {
-    const path = personaFiles.get(extraId);
     if (!path) {
       continue;
     }

@@ -293,6 +293,24 @@ Deno.test("main print-openspec-template rejects unsupported lang", () => {
   }
 });
 
+Deno.test("main supports global help flags", () => {
+  const buffer = createIoBuffer();
+  const exitCode = main(["--help"], buffer.io);
+
+  if (exitCode !== 0) {
+    throw new Error("--help should return 0");
+  }
+  if (buffer.state.stderr.length !== 0) {
+    throw new Error("stderr should be empty");
+  }
+  if (!buffer.state.stdout.includes("usage: agent-dock <command> [options]")) {
+    throw new Error("stdout should include global usage");
+  }
+  if (!buffer.state.stdout.includes("spec-creator")) {
+    throw new Error("stdout should list spec-creator command");
+  }
+});
+
 Deno.test("main compile-openspec writes compiled config", () => {
   withTempDir((root) => {
     const changeId = "add-cli-compile";
