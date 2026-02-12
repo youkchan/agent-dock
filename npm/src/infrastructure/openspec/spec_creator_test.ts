@@ -1,6 +1,7 @@
 import { parseTasksMarkdown } from "./compiler.ts";
 import {
   buildCodeSummaryMarkdown,
+  buildDeltaSpecMarkdown,
   buildProposalMarkdown,
   buildTasksMarkdown,
 } from "./spec_creator.ts";
@@ -96,6 +97,38 @@ Deno.test("buildProposalMarkdown injects fixed completion and reviewer gates", (
     ) {
       throw new Error(`proposal ${lang} must include reviewer stop rule`);
     }
+  }
+});
+
+Deno.test("buildDeltaSpecMarkdown contains ADDED requirement and scenario", () => {
+  const ja = buildDeltaSpecMarkdown({
+    lang: "ja",
+    requirementName: "add-spec-creator baseline",
+    requirementsText: "要件本文",
+  });
+  if (!ja.includes("## ADDED Requirements")) {
+    throw new Error("ja delta must include ADDED section");
+  }
+  if (!ja.includes("#### Scenario:")) {
+    throw new Error("ja delta must include Scenario");
+  }
+  if (!ja.includes("要件本文")) {
+    throw new Error("ja delta must include requirement memo");
+  }
+
+  const en = buildDeltaSpecMarkdown({
+    lang: "en",
+    requirementName: "add-spec-creator baseline",
+    requirementsText: "requirements text",
+  });
+  if (!en.includes("## ADDED Requirements")) {
+    throw new Error("en delta must include ADDED section");
+  }
+  if (!en.includes("#### Scenario:")) {
+    throw new Error("en delta must include Scenario");
+  }
+  if (!en.includes("requirements text")) {
+    throw new Error("en delta must include requirement memo");
   }
 });
 

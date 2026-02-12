@@ -58,10 +58,7 @@ Deno.test("normalizeChangeId rejects invalid format", () => {
 Deno.test("collectSpecContextInteractive collects required inputs", () => {
   const driver = createPromptIo([
     "要件本文",
-    "非目的",
-    "受け入れ条件",
     "ja",
-    "src/a.ts, src/b.ts, src/a.ts",
     "yes",
   ]);
 
@@ -75,16 +72,6 @@ Deno.test("collectSpecContextInteractive collects required inputs", () => {
   }
   if (result.spec_context.language !== "ja") {
     throw new Error("language mismatch");
-  }
-  if (
-    JSON.stringify(result.spec_context.scope_paths) !==
-      JSON.stringify(["src/a.ts", "src/b.ts"])
-  ) {
-    throw new Error(
-      `scope_paths mismatch: ${
-        JSON.stringify(result.spec_context.scope_paths)
-      }`,
-    );
   }
   if (
     JSON.stringify(result.spec_context.persona_policy.active_personas) !==
@@ -123,10 +110,7 @@ Deno.test("collectSpecContextInteractive fails closed when non-interactive", () 
 Deno.test("collectSpecContextInteractive fails closed when required input missing", () => {
   const driver = createPromptIo([
     "",
-    "非目的",
-    "受け入れ条件",
     "ja",
-    "",
     "yes",
   ]);
 
@@ -143,11 +127,7 @@ Deno.test("collectSpecContextInteractive fails closed when required input missin
 Deno.test("collectSpecContextInteractive fails closed for invalid language", () => {
   const driver = createPromptIo([
     "要件",
-    "非目的",
-    "受け入れ条件",
     "fr",
-    "",
-    "yes",
   ]);
 
   assertThrowsMessage(
@@ -163,10 +143,7 @@ Deno.test("collectSpecContextInteractive fails closed for invalid language", () 
 Deno.test("collectSpecContextInteractive fails closed when confirmation is denied", () => {
   const driver = createPromptIo([
     "要件",
-    "非目的",
-    "受け入れ条件",
     "en",
-    "",
     "no",
   ]);
 
@@ -178,4 +155,40 @@ Deno.test("collectSpecContextInteractive fails closed when confirmation is denie
       }),
     "aborted",
   );
+});
+
+Deno.test("collectSpecContextInteractive proposes change_id and accepts Enter", () => {
+  const driver = createPromptIo([
+    "Add Spec Creator Mode",
+    "en",
+    "",
+    "yes",
+  ]);
+
+  const result = collectSpecContextInteractive({
+    io: driver.io,
+    proposeChangeId: () => "add-spec-creator-mode",
+  });
+
+  if (result.change_id !== "add-spec-creator-mode") {
+    throw new Error(`unexpected change_id: ${result.change_id}`);
+  }
+});
+
+Deno.test("collectSpecContextInteractive allows overriding proposed change_id", () => {
+  const driver = createPromptIo([
+    "Add Spec Creator Mode",
+    "en",
+    "add-custom-change-id",
+    "yes",
+  ]);
+
+  const result = collectSpecContextInteractive({
+    io: driver.io,
+    proposeChangeId: () => "add-spec-creator-mode",
+  });
+
+  if (result.change_id !== "add-custom-change-id") {
+    throw new Error(`unexpected change_id: ${result.change_id}`);
+  }
 });
