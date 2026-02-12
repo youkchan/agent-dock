@@ -7,12 +7,14 @@ import {
   OrchestratorConfig,
   type TeammateAdapter,
 } from "../application/orchestrator/orchestrator.ts";
+import { collectSpecContextInteractive } from "../application/spec_creator/preprocess.ts";
 import { createApplicationModule } from "../application/mod.ts";
 import type { PersonaDefinition } from "../domain/persona.ts";
 import {
   normalizePersonaDefaults,
   normalizeTaskPersonaPolicy,
   type PersonaDefaults,
+  type TaskPersonaPolicy,
 } from "../domain/persona_policy.ts";
 import {
   createTask,
@@ -33,6 +35,11 @@ import {
   OpenSpecCompileError,
   writeCompiledConfig,
 } from "../infrastructure/openspec/compiler.ts";
+import {
+  writeCodeSummaryMarkdown,
+  writeProposalMarkdown,
+  writeTasksMarkdown,
+} from "../infrastructure/openspec/spec_creator.ts";
 import {
   DEFAULT_TEMPLATE_LANG,
   getOpenSpecTasksTemplate,
@@ -68,6 +75,17 @@ interface CompileOpenSpecArgs {
 
 interface PrintTemplateArgs {
   lang: string;
+}
+
+interface SpecCreatorPreprocessArgs {
+  changeId: string;
+}
+
+interface SpecCreatorArgs {
+  changeId: string;
+  output: string | null;
+  noRun: boolean;
+  stateDir: string | null;
 }
 
 interface RunArgs {
@@ -132,6 +150,14 @@ const COMPILE_USAGE = [
 
 const PRINT_TEMPLATE_USAGE = [
   "usage: print-openspec-template [--lang {ja,en}]",
+].join("\n");
+
+const SPEC_CREATOR_PREPROCESS_USAGE = [
+  "usage: spec-creator-preprocess --change-id CHANGE_ID",
+].join("\n");
+
+const SPEC_CREATOR_USAGE = [
+  "usage: spec-creator --change-id CHANGE_ID [--output PATH] [--state-dir DIR] [--no-run]",
 ].join("\n");
 
 export function buildSkeletonSummary(): string {
@@ -362,6 +388,83 @@ function parsePrintTemplateArgs(argv: string[]): PrintTemplateArgs {
     );
   }
   parsed.lang = normalizedLang;
+  return parsed;
+}
+
+function parseSpecCreatorPreprocessArgs(
+  argv: string[],
+): SpecCreatorPreprocessArgs {
+  if (argv.includes("-h") || argv.includes("--help")) {
+    throw new HelpRequestedError(SPEC_CREATOR_PREPROCESS_USAGE);
+  }
+
+  const parsed: SpecCreatorPreprocessArgs = {
+    changeId: "",
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    const next = argv[index + 1];
+
+    if (arg === "--change-id") {
+      parsed.changeId = requireOptionValue(arg, next);
+      index += 1;
+      continue;
+    }
+
+    throw new Error(`unrecognized argument: ${arg}`);
+  }
+
+  if (!parsed.changeId) {
+    throw new Error("argument --change-id is required");
+  }
+
+  return parsed;
+}
+
+function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
+  if (argv.includes("-h") || argv.includes("--help")) {
+    throw new HelpRequestedError(SPEC_CREATOR_USAGE);
+  }
+
+  const parsed: SpecCreatorArgs = {
+    changeId: "",
+    output: null,
+    noRun: false,
+    stateDir: null,
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    const next = argv[index + 1];
+
+    if (arg === "--change-id") {
+      parsed.changeId = requireOptionValue(arg, next);
+      index += 1;
+      continue;
+    }
+    if (arg === "--output") {
+      parsed.output = requireOptionValue(arg, next);
+      index += 1;
+      continue;
+    }
+    if (arg === "--state-dir") {
+      parsed.stateDir = requireOptionValue(arg, next);
+      index += 1;
+      continue;
+    }
+    if (arg === "--no-run") {
+      parsed.noRun = true;
+      continue;
+    }
+
+    throw new Error(`unrecognized argument: ${arg}`);
+  }
+
+  if (!parsed.changeId) {
+    throw new Error("argument --change-id is required");
+  }
+
   return parsed;
 }
 
@@ -597,6 +700,297 @@ function printTemplateCommand(argv: string[], io: CliIO): number {
   return 0;
 }
 
+function specCreatorPreprocessCommand(argv: string[], io: CliIO): number {
+  const args = parseSpecCreatorPreprocessArgs(argv);
+  const context = collectSpecContextInteractive({
+    changeId: args.changeId,
+  });
+  io.stdout(`${JSON.stringify(context, null, 2)}\n`);
+  return 0;
+}
+
+function defaultSpecCreatorOutputPath(changeId: string): string {
+  return path.join("task_configs", "spec_creator", `${changeId}.json`);
+}
+
+function defaultSpecCreatorStateDir(changeId: string): string {
+  return path.join(".team_state", "spec_creator", changeId);
+}
+
+function specCreatorCommand(argv: string[], io: CliIO): number {
+  const args = parseSpecCreatorArgs(argv);
+  const context = collectSpecContextInteractive({
+    changeId: args.changeId,
+  });
+  const changeDir = path.resolve("openspec", "changes", context.change_id);
+  const proposalPath = path.join(changeDir, "proposal.md");
+  const tasksPath = path.join(changeDir, "tasks.md");
+  const designPath = path.join(changeDir, "design.md");
+  const codeSummaryPath = path.join(changeDir, "code_summary.md");
+  const lang = context.spec_context.language;
+
+  writeProposalMarkdown({
+    proposalPath,
+    lang,
+    whyMarkdown: asBulletLines([
+      context.spec_context.requirements_text,
+      context.spec_context.acceptance_criteria,
+    ]),
+    whatChangesMarkdown: asBulletLines([
+      lang === "ja"
+        ? "spec creator の固定 task_config テンプレートを使う"
+        : "Use fixed task_config template for spec creator",
+      lang === "ja"
+        ? "tasks.md と code_summary.md を整合生成する"
+        : "Generate aligned tasks.md and code_summary.md",
+    ]),
+    impactMarkdown: asBulletLines([
+      `${lang === "ja" ? "non_goals" : "non_goals"}: ${
+        context.spec_context.non_goals
+      }`,
+      `${lang === "ja" ? "scope_paths" : "scope_paths"}: ${
+        context.spec_context.scope_paths.length > 0
+          ? context.spec_context.scope_paths.join(", ")
+          : "(none)"
+      }`,
+    ]),
+  });
+
+  writeTasksMarkdown({
+    tasksPath,
+    lang,
+    implementationMarkdown: buildImplementationMarkdownForSpecCreator(
+      context.task_config.tasks,
+      lang,
+    ),
+    humanNotesMarkdown: buildHumanNotesMarkdownForSpecCreator(
+      context.spec_context,
+      lang,
+    ),
+  });
+
+  writeCodeSummaryMarkdown({
+    tasksPath,
+    outputPath: codeSummaryPath,
+  });
+  writeDesignMarkdownStub({
+    designPath,
+    lang,
+    acceptanceCriteria: context.spec_context.acceptance_criteria,
+  });
+
+  const outputPath = path.resolve(
+    args.output ?? defaultSpecCreatorOutputPath(context.change_id),
+  );
+  Deno.mkdirSync(path.dirname(outputPath), { recursive: true });
+  Deno.writeTextFileSync(
+    outputPath,
+    `${JSON.stringify(context.task_config, null, 2)}\n`,
+  );
+  io.stdout(`[spec-creator] wrote ${proposalPath}\n`);
+  io.stdout(`[spec-creator] wrote ${tasksPath}\n`);
+  io.stdout(`[spec-creator] wrote ${designPath}\n`);
+  io.stdout(`[spec-creator] wrote ${codeSummaryPath}\n`);
+  io.stdout(`[spec-creator] wrote ${outputPath}\n`);
+
+  if (args.noRun) {
+    return 0;
+  }
+
+  const stateDir = args.stateDir
+    ? path.resolve(args.stateDir)
+    : path.resolve(defaultSpecCreatorStateDir(context.change_id));
+  io.stdout(`[spec-creator] run --config ${outputPath}\n`);
+  return runCommand([
+    "--config",
+    outputPath,
+    "--state-dir",
+    stateDir,
+  ], io);
+}
+
+function asBulletLines(items: string[]): string {
+  const normalized = items
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  if (normalized.length === 0) {
+    return "- (none)";
+  }
+  return normalized.map((item) => `- ${item}`).join("\n");
+}
+
+function buildImplementationMarkdownForSpecCreator(
+  tasks: Array<{
+    id: string;
+    title: string;
+    description: string;
+    depends_on: string[];
+    target_paths: string[];
+    persona_policy: TaskPersonaPolicy | null;
+  }>,
+  lang: "ja" | "en",
+): string {
+  const lines: string[] = [];
+  for (const task of tasks) {
+    const dependsOn = task.depends_on.length > 0
+      ? task.depends_on.join(", ")
+      : (lang === "ja" ? "なし" : "none");
+    const targetPaths = task.target_paths.length > 0
+      ? task.target_paths.join(", ")
+      : "*";
+    const description = compactTaskDescription(task.description);
+    const phaseAssignments = formatPhaseAssignments(task.persona_policy, lang);
+
+    lines.push(`- [ ] ${task.id} ${task.title}`);
+    if (lang === "ja") {
+      lines.push(`  - 依存: ${dependsOn}`);
+      lines.push(`  - 対象: ${targetPaths}`);
+      lines.push(`  - フェーズ担当: ${phaseAssignments}`);
+      lines.push(`  - 成果物: ${description}`);
+    } else {
+      lines.push(`  - Depends on: ${dependsOn}`);
+      lines.push(`  - Target paths: ${targetPaths}`);
+      lines.push(`  - phase assignments: ${phaseAssignments}`);
+      lines.push(`  - Description: ${description}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function compactTaskDescription(raw: string): string {
+  const normalized = raw.trim();
+  if (!normalized) {
+    return "(none)";
+  }
+  const marker = "\nspec_context:";
+  const markerIndex = normalized.indexOf(marker);
+  const base = markerIndex >= 0 ? normalized.slice(0, markerIndex) : normalized;
+  const oneLine = base.replaceAll(/\s+/gu, " ").trim();
+  return oneLine || "(none)";
+}
+
+function formatPhaseAssignments(
+  policyRaw: TaskPersonaPolicy | null,
+  lang: "ja" | "en",
+): string {
+  if (!policyRaw) {
+    return lang === "ja"
+      ? "implement=implementer; review=code-reviewer"
+      : "implement=implementer; review=code-reviewer";
+  }
+
+  const phaseOverridesRaw = policyRaw.phase_overrides;
+  if (phaseOverridesRaw === undefined) {
+    return lang === "ja"
+      ? "implement=implementer; review=code-reviewer"
+      : "implement=implementer; review=code-reviewer";
+  }
+
+  const assignments: string[] = [];
+  for (const [phase, phasePolicyRaw] of Object.entries(phaseOverridesRaw)) {
+    if (phasePolicyRaw === undefined || phasePolicyRaw === null) {
+      continue;
+    }
+    const executor = firstPersonaIdFromPhasePolicy(phasePolicyRaw);
+    if (!executor) {
+      continue;
+    }
+    assignments.push(`${phase}=${executor}`);
+  }
+
+  if (assignments.length === 0) {
+    return lang === "ja"
+      ? "implement=implementer; review=code-reviewer"
+      : "implement=implementer; review=code-reviewer";
+  }
+  return assignments.join("; ");
+}
+
+function firstPersonaIdFromPhasePolicy(
+  phasePolicy: {
+    active_personas?: string[];
+    executor_personas?: string[];
+    state_transition_personas?: string[];
+  },
+): string | null {
+  for (
+    const key of ["executor_personas", "active_personas", "state_transition_personas"] as const
+  ) {
+    const value = phasePolicy[key];
+    if (!Array.isArray(value) || value.length === 0) {
+      continue;
+    }
+    const first = String(value[0] ?? "").trim();
+    if (first) {
+      return first;
+    }
+  }
+  return null;
+}
+
+function buildHumanNotesMarkdownForSpecCreator(
+  specContext: {
+    requirements_text: string;
+    non_goals: string;
+    acceptance_criteria: string;
+    scope_paths: string[];
+  },
+  lang: "ja" | "en",
+): string {
+  if (lang === "ja") {
+    return [
+      `- 要件メモ: ${specContext.requirements_text}`,
+      `- 非目標: ${specContext.non_goals}`,
+      `- 受け入れ条件: ${specContext.acceptance_criteria}`,
+      `- 対象パス: ${
+        specContext.scope_paths.length > 0
+          ? specContext.scope_paths.join(", ")
+          : "(none)"
+      }`,
+    ].join("\n");
+  }
+  return [
+    `- Requirement memo: ${specContext.requirements_text}`,
+    `- Non-goals: ${specContext.non_goals}`,
+    `- Acceptance criteria: ${specContext.acceptance_criteria}`,
+    `- Scope paths: ${
+      specContext.scope_paths.length > 0
+        ? specContext.scope_paths.join(", ")
+        : "(none)"
+    }`,
+  ].join("\n");
+}
+
+function writeDesignMarkdownStub(options: {
+  designPath: string;
+  lang: "ja" | "en";
+  acceptanceCriteria: string;
+}): void {
+  const body = options.lang === "ja"
+    ? [
+      "# Design",
+      "",
+      "## 目的",
+      "- 必要時のみ設計判断を追記する。",
+      "",
+      "## 受け入れ条件メモ",
+      `- ${options.acceptanceCriteria}`,
+      "",
+    ].join("\n")
+    : [
+      "# Design",
+      "",
+      "## Purpose",
+      "- Add design decisions only when needed.",
+      "",
+      "## Acceptance Criteria Memo",
+      `- ${options.acceptanceCriteria}`,
+      "",
+    ].join("\n");
+  Deno.mkdirSync(path.dirname(options.designPath), { recursive: true });
+  Deno.writeTextFileSync(options.designPath, body);
+}
+
 function runCommand(argv: string[], io: CliIO): number {
   const args = parseRunArgs(argv);
 
@@ -691,20 +1085,26 @@ function resolveTasksForRun(args: RunArgs, io: CliIO): LoadedTasks {
       overridesRoot: args.overridesRoot,
       teammates: parseTeammatesArg(args.teammates),
     });
-
+    const outputPath = args.saveCompiled
+      ? defaultCompiledOutputPath(args.openspecChange, args.taskConfigRoot)
+      : Deno.makeTempFileSync({ suffix: ".json" });
+    const writtenPath = writeCompiledConfig(compiled, outputPath);
     if (args.saveCompiled) {
-      const outputPath = defaultCompiledOutputPath(
-        args.openspecChange,
-        args.taskConfigRoot,
-      );
-      writeCompiledConfig(compiled, outputPath);
-      io.stdout(`[compile] wrote ${outputPath}\n`);
+      io.stdout(`[compile] wrote ${writtenPath}\n`);
     }
-
-    return loadTasksPayload(compiled, `openspec:${args.openspecChange}`);
+    try {
+      return loadTasksFromConfigPath(writtenPath);
+    } finally {
+      if (!args.saveCompiled) {
+        Deno.removeSync(writtenPath);
+      }
+    }
   }
 
-  const configPath = args.config ?? "examples/sample_tasks.json";
+  return loadTasksFromConfigPath(args.config ?? "examples/sample_tasks.json");
+}
+
+function loadTasksFromConfigPath(configPath: string): LoadedTasks {
   const loaded = JSON.parse(Deno.readTextFileSync(configPath)) as unknown;
   if (!isRecord(loaded)) {
     throw new Error(`task config must be an object (${configPath})`);
@@ -1037,6 +1437,12 @@ export function main(
     }
     if (command === "compile-openspec") {
       return compileOpenSpecCommand(commandArgs, io);
+    }
+    if (command === "spec-creator-preprocess") {
+      return specCreatorPreprocessCommand(commandArgs, io);
+    }
+    if (command === "spec-creator") {
+      return specCreatorCommand(commandArgs, io);
     }
     if (command === "run") {
       return runCommand(commandArgs, io);

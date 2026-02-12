@@ -9,6 +9,7 @@ const SEVERITY_BY_EVENT: Record<string, PersonaSeverity> = {
   NoProgress: "warn",
   Collision: "warn",
   Blocked: "critical",
+  ReviewerViolation: "blocker",
 };
 
 const SEVERITY_PRIORITY: Record<PersonaSeverity, number> = {

@@ -77,6 +77,57 @@ interface NormalizedTaskPersonaPolicy {
   phase_overrides?: Record<string, Record<string, string[]>>;
 }
 
+const REVIEWER_STOP_RULE_ALIASES: Record<string, string> = {
+  requirement_drift: "requirement_drift",
+  requirementdrift: "requirement_drift",
+  out_of_scope: "requirement_drift",
+  outofscope: "requirement_drift",
+  over_editing: "over_editing",
+  overediting: "over_editing",
+  verbosity: "verbosity",
+  excessive_verbosity: "verbosity",
+  redundancy: "verbosity",
+  redundant: "verbosity",
+};
+
+const REVIEWER_STOP_TOKEN_PATTERN =
+  /\b(?:reviewer_stop|review_stop|spec_reviewer_stop)\s*:\s*([a-z_-]+)\b/iu;
+
+const REVIEWER_STOP_HINT_PATTERNS: RegExp[] = [
+  /\bblocker\b/iu,
+  /\bstop\b/iu,
+  /\bhalt\b/iu,
+  /\bdetected\b/iu,
+  /\bviolation\b/iu,
+  /停止/u,
+  /中断/u,
+  /検出/u,
+  /違反/u,
+  /ブロッカー/u,
+];
+
+const REVIEWER_STOP_RULE_PATTERNS: Record<string, RegExp[]> = {
+  requirement_drift: [
+    /要件外追加/u,
+    /要件逸脱/u,
+    /\brequirement drift\b/iu,
+    /\bout[-\s]?of[-\s]?scope\b/iu,
+    /\bscope creep\b/iu,
+  ],
+  over_editing: [
+    /過剰修正/u,
+    /\bover[-\s]?editing\b/iu,
+    /\bover[-\s]?edited\b/iu,
+    /\btoo many edits\b/iu,
+  ],
+  verbosity: [
+    /冗長化/u,
+    /\bexcessive verbosity\b/iu,
+    /\bredundan(?:t|cy)\b/iu,
+    /\btoo verbose\b/iu,
+  ],
+};
+
 export class OrchestratorConfig {
   leadId: string;
   teammateIds: string[] | null;
@@ -1319,6 +1370,40 @@ export class AgentTeamsLikeOrchestrator {
       };
     }
 
+    const reviewerStopRule = this.detectReviewerStopRule(teammateId, result);
+    if (reviewerStopRule !== null) {
+      const flagged = this.store.applyTaskUpdate(task.id, "needs_approval");
+      this.appendTaskProgressLog(
+        flagged.id,
+        "system",
+        `reviewer stop candidate rule=${reviewerStopRule}: ${
+          this.short(result, 160)
+        }`,
+      );
+      this.store.sendMessage(
+        teammateId,
+        this.config.leadId,
+        `reviewer stop candidate task=${flagged.id} rule=${reviewerStopRule}`,
+        flagged.id,
+      );
+      this.log(
+        `[${teammateId}] reviewer stop candidate task=${flagged.id} ` +
+          `rule=${reviewerStopRule}`,
+      );
+
+      return {
+        changed: true,
+        events: [
+          this.makeEvent(
+            "ReviewerViolation",
+            flagged.id,
+            teammateId,
+            `rule=${reviewerStopRule}`,
+          ),
+        ],
+      };
+    }
+
     const nextPhase = this.taskNextPhase(taskForExecution);
     if (nextPhase !== null) {
       const [nextPhaseIndex, nextPhaseName] = nextPhase;
@@ -1380,6 +1465,27 @@ export class AgentTeamsLikeOrchestrator {
         ),
       ],
     };
+  }
+
+  private detectReviewerStopRule(
+    executionSubjectId: string,
+    result: string,
+  ): string | null {
+    if (this.executionSubjectMode !== "persona") {
+      return null;
+    }
+    if (!this.isReviewerExecutionSubject(executionSubjectId)) {
+      return null;
+    }
+    return detectReviewerStopRule(result);
+  }
+
+  private isReviewerExecutionSubject(executionSubjectId: string): boolean {
+    const persona = this.personaById.get(executionSubjectId);
+    if (persona !== undefined && persona.role === "reviewer") {
+      return true;
+    }
+    return /reviewer/iu.test(executionSubjectId);
   }
 
   private collectCollisionEvents(): EventPayload[] {
@@ -1471,6 +1577,37 @@ function personaToRecord(persona: PersonaDefinition): Record<string, unknown> {
     };
   }
   return payload;
+}
+
+function detectReviewerStopRule(text: string): string | null {
+  const normalizedText = text.trim();
+  if (!normalizedText) {
+    return null;
+  }
+
+  const tokenMatch = REVIEWER_STOP_TOKEN_PATTERN.exec(normalizedText);
+  if (tokenMatch) {
+    return normalizeReviewerStopRule(tokenMatch[1]);
+  }
+
+  if (
+    !REVIEWER_STOP_HINT_PATTERNS.some((pattern) => pattern.test(normalizedText))
+  ) {
+    return null;
+  }
+
+  for (const [rule, patterns] of Object.entries(REVIEWER_STOP_RULE_PATTERNS)) {
+    if (patterns.some((pattern) => pattern.test(normalizedText))) {
+      return rule;
+    }
+  }
+
+  return null;
+}
+
+function normalizeReviewerStopRule(rawRule: string): string {
+  const normalizedKey = rawRule.trim().toLowerCase().replaceAll("-", "_");
+  return REVIEWER_STOP_RULE_ALIASES[normalizedKey] ?? normalizedKey;
 }
 
 function getEnv(name: string, fallback: string): string {

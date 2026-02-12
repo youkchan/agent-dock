@@ -107,6 +107,22 @@ python -m team_orchestrator.cli print-openspec-template --lang en \
 
 未対応言語を指定した場合（例: `fr`）は、`ja`, `en` の許可値付きでエラーになります。
 
+### spec creator の実行（agent-dock）
+`spec creator` は対話で `spec_context` を収集し、固定 task_config を生成して `run --config` に渡す運用を想定しています。
+
+1. spec creator 用 task_config を生成する（出力先は標準で `task_configs/spec_creator/<change-id>.json`）
+```bash
+./node_modules/.bin/agent-dock spec-creator --change-id add-my-change
+```
+2. 生成した task_config で実行する
+```bash
+./node_modules/.bin/agent-dock run \
+  --config task_configs/spec_creator/add-my-change.json \
+  --state-dir /tmp/codex_agent_spec_creator_state
+```
+
+互換のため、前処理 JSON を標準出力へ出す `spec-creator-preprocess` も利用できます。
+
 推奨フロー（OpenSpec 運用）:
 1. `print-openspec-template` で `tasks.md` を生成する。
 2. プレースホルダを実タスクに置き換える（`persona_defaults.phase_order` と `フェーズ担当/phase assignments` の固定行は保持）。
