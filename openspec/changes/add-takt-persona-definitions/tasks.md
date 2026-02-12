@@ -1,17 +1,57 @@
-## 1. Source Mapping
+## 0. Persona Defaults
+- persona_defaults.phase_order: implement, review, spec_check, test
+- persona_defaults: {"phase_order":["implement","review","spec_check","test"]}
+- フェーズ担当: implement=implementer; review=code-reviewer; spec_check=spec-checker; test=test-owner
+- personas: [{"id":"implementer","role":"implementer","focus":"実装を前進させる","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"code-reviewer","role":"reviewer","focus":"品質と回帰リスクを確認する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"spec-checker","role":"spec_guard","focus":"仕様逸脱を防ぐ","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"test-owner","role":"test_guard","focus":"検証の十分性を担保する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}}]
+
+## 1. 実装タスク
 - [ ] 1.1 `takt` のコピー元ファイルを確定し、4 persona ごとの移植対象ルールを整理する
+  - 依存: なし
+  - 対象: openspec/changes/add-takt-persona-definitions/proposal.md, openspec/changes/add-takt-persona-definitions/tasks.md
+  - フェーズ担当: implement=implementer; review=code-reviewer
+  - 成果物: `implementer` `code-reviewer` `spec-checker` `test-owner` ごとに、移植元ファイル一覧と採用方針を明文化する。
 - [ ] 1.2 移植対象を `focus` へ要約する際に、意味欠落がないことを確認する
-
-## 2. Persona Definition Update
-- [ ] 2.1 `team_orchestrator/personas/default/implementer.yaml` の `focus` を既存内容にマージする
-- [ ] 2.2 `team_orchestrator/personas/default/code-reviewer.yaml` の `focus` を既存内容にマージする
-- [ ] 2.3 `team_orchestrator/personas/default/spec-checker.yaml` の `focus` を既存内容にマージする
-- [ ] 2.4 `team_orchestrator/personas/default/test-owner.yaml` の `focus` を既存内容にマージする
-- [ ] 2.5 `npm/team_orchestrator/personas/default/*.yaml` を同内容へ同期する
-
-## 3. Compatibility Guard
-- [ ] 3.1 既存スキーマ（`id`, `role`, `focus`, `can_block`, `enabled`, optional `execution`）以外のキーを追加しない
-- [ ] 3.2 default persona の読込テストを実行し、未知キーエラーや型エラーが発生しないことを確認する
-
-## 4. Validation
-- [ ] 4.1 `openspec validate add-takt-persona-definitions --strict` を実行し成功させる
+  - 依存: 1.1
+  - 対象: openspec/changes/add-takt-persona-definitions/proposal.md, openspec/changes/add-takt-persona-definitions/tasks.md
+  - フェーズ担当: implement=implementer; review=code-reviewer
+  - 成果物: 既存 focus と追加ルールのマージ方針を定義し、置き換えではなく追記であることを明記する。
+- [ ] 1.3 `team_orchestrator/personas/default/implementer.yaml` の `focus` を既存内容にマージする
+  - 依存: 1.2
+  - 対象: team_orchestrator/personas/default/implementer.yaml
+  - フェーズ担当: implement=implementer; review=code-reviewer
+  - 成果物: `implementer` の focus に `takt` 由来の実装注意事項を統合し、既存ガイド文を保持する。
+- [ ] 1.4 `team_orchestrator/personas/default/code-reviewer.yaml` の `focus` を既存内容にマージする
+  - 依存: 1.2
+  - 対象: team_orchestrator/personas/default/code-reviewer.yaml
+  - フェーズ担当: implement=implementer; review=code-reviewer
+  - 成果物: `code-reviewer` の focus に `takt` 由来のレビュー観点を統合し、既存ガイド文を保持する。
+- [ ] 1.5 `team_orchestrator/personas/default/spec-checker.yaml` の `focus` を既存内容にマージする
+  - 依存: 1.2
+  - 対象: team_orchestrator/personas/default/spec-checker.yaml
+  - フェーズ担当: implement=implementer; review=code-reviewer
+  - 成果物: `spec-checker` の focus に planner 由来の仕様監査観点を統合し、既存ガイド文を保持する。
+- [ ] 1.6 `team_orchestrator/personas/default/test-owner.yaml` の `focus` を既存内容にマージする
+  - 依存: 1.2
+  - 対象: team_orchestrator/personas/default/test-owner.yaml
+  - フェーズ担当: implement=implementer; review=code-reviewer
+  - 成果物: `test-owner` の focus に test-planner/qa-reviewer 由来の検証観点を統合し、既存ガイド文を保持する。
+- [ ] 1.7 `npm/team_orchestrator/personas/default/*.yaml` を同内容へ同期する
+  - 依存: 1.3, 1.4, 1.5, 1.6
+  - 対象: npm/team_orchestrator/personas/default/implementer.yaml, npm/team_orchestrator/personas/default/code-reviewer.yaml, npm/team_orchestrator/personas/default/spec-checker.yaml, npm/team_orchestrator/personas/default/test-owner.yaml
+  - フェーズ担当: implement=implementer; review=code-reviewer
+  - 成果物: Python runtime 側と npm 配布側の default persona 定義を同一内容にそろえる。
+- [ ] 1.8 既存スキーマ（`id`, `role`, `focus`, `can_block`, `enabled`, optional `execution`）以外のキーを追加しない
+  - 依存: 1.3, 1.4, 1.5, 1.6, 1.7
+  - 対象: team_orchestrator/personas/default/implementer.yaml, team_orchestrator/personas/default/code-reviewer.yaml, team_orchestrator/personas/default/spec-checker.yaml, team_orchestrator/personas/default/test-owner.yaml, npm/team_orchestrator/personas/default/implementer.yaml, npm/team_orchestrator/personas/default/code-reviewer.yaml, npm/team_orchestrator/personas/default/spec-checker.yaml, npm/team_orchestrator/personas/default/test-owner.yaml
+  - フェーズ担当: review=code-reviewer; spec_check=spec-checker
+  - 成果物: persona loader 互換を壊す未知キーを追加していないことを確認する。
+- [ ] 1.9 default persona の読込テストを実行し、未知キーエラーや型エラーが発生しないことを確認する
+  - 依存: 1.8
+  - 対象: src/infrastructure/persona/catalog_test.ts, tests/test_cli.py
+  - フェーズ担当: spec_check=spec-checker; test=test-owner
+  - 成果物: TypeScript/Python の双方で default persona 読込が成功し、スキーマ整合が保たれる。
+- [ ] 1.10 `openspec validate add-takt-persona-definitions --strict` を実行し成功させる
+  - 依存: 1.9
+  - 対象: openspec/changes/add-takt-persona-definitions/proposal.md, openspec/changes/add-takt-persona-definitions/tasks.md, openspec/changes/add-takt-persona-definitions/specs/persona-catalog/spec.md
+  - フェーズ担当: spec_check=spec-checker; test=test-owner
+  - 成果物: OpenSpec change 一式が strict validation を通過し、コンパイラ入力として受理可能になる。
