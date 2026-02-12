@@ -30,7 +30,7 @@ export interface SpecCreatorPromptIO {
 }
 
 interface CollectSpecContextOptions {
-  changeId: string;
+  changeId?: string | null;
   io?: SpecCreatorPromptIO;
 }
 
@@ -71,7 +71,6 @@ export function collectSpecContextInteractive(
   options: CollectSpecContextOptions,
 ): SpecCreatorPreprocessResult {
   const io = options.io ?? DEFAULT_PROMPT_IO;
-  const changeId = normalizeChangeId(options.changeId);
 
   if (!io.isInteractiveTerminal()) {
     throw new Error(
@@ -91,6 +90,11 @@ export function collectSpecContextInteractive(
     "scope_paths (optional, comma-separated)",
   );
   const scopePaths = parseScopePaths(scopePathsRaw);
+  const changeId = resolveChangeIdInteractive(
+    io,
+    options.changeId,
+    requirementsText,
+  );
 
   if (!confirmSpecContext(io, changeId)) {
     throw new Error(
@@ -217,6 +221,41 @@ function parseScopePaths(raw: string): string[] {
     }
   }
   return [...unique];
+}
+
+function resolveChangeIdInteractive(
+  io: SpecCreatorPromptIO,
+  rawChangeId: string | null | undefined,
+  requirementsText: string,
+): string {
+  const seeded = typeof rawChangeId === "string" ? rawChangeId.trim() : "";
+  if (seeded.length > 0) {
+    return normalizeChangeId(seeded);
+  }
+
+  const proposal = proposeChangeId(requirementsText);
+  const entered = promptOptional(
+    io,
+    `change_id 第1案: ${proposal}\nchange_id (Enterで採用)`,
+  );
+  const selected = entered.trim().length > 0 ? entered.trim() : proposal;
+  return normalizeChangeId(selected);
+}
+
+function proposeChangeId(requirementsText: string): string {
+  const normalized = requirementsText
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/gu, "-")
+    .replaceAll(/-+/gu, "-")
+    .replace(/^-+/u, "")
+    .replace(/-+$/u, "");
+  if (!normalized) {
+    return "add-change";
+  }
+  if (/^[a-z]/u.test(normalized)) {
+    return normalized.startsWith("add-") ? normalized : `add-${normalized}`;
+  }
+  return `add-${normalized}`;
 }
 
 function confirmSpecContext(

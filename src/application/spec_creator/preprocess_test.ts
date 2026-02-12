@@ -179,3 +179,43 @@ Deno.test("collectSpecContextInteractive fails closed when confirmation is denie
     "aborted",
   );
 });
+
+Deno.test("collectSpecContextInteractive proposes change_id and accepts Enter", () => {
+  const driver = createPromptIo([
+    "Add Spec Creator Mode",
+    "non-goals",
+    "acceptance criteria",
+    "en",
+    "",
+    "",
+    "yes",
+  ]);
+
+  const result = collectSpecContextInteractive({
+    io: driver.io,
+  });
+
+  if (result.change_id !== "add-spec-creator-mode") {
+    throw new Error(`unexpected change_id: ${result.change_id}`);
+  }
+});
+
+Deno.test("collectSpecContextInteractive allows overriding proposed change_id", () => {
+  const driver = createPromptIo([
+    "Add Spec Creator Mode",
+    "non-goals",
+    "acceptance criteria",
+    "en",
+    "",
+    "add-custom-change-id",
+    "yes",
+  ]);
+
+  const result = collectSpecContextInteractive({
+    io: driver.io,
+  });
+
+  if (result.change_id !== "add-custom-change-id") {
+    throw new Error(`unexpected change_id: ${result.change_id}`);
+  }
+});

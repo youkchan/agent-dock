@@ -78,11 +78,11 @@ interface PrintTemplateArgs {
 }
 
 interface SpecCreatorPreprocessArgs {
-  changeId: string;
+  changeId: string | null;
 }
 
 interface SpecCreatorArgs {
-  changeId: string;
+  changeId: string | null;
   output: string | null;
   noRun: boolean;
   stateDir: string | null;
@@ -153,11 +153,11 @@ const PRINT_TEMPLATE_USAGE = [
 ].join("\n");
 
 const SPEC_CREATOR_PREPROCESS_USAGE = [
-  "usage: spec-creator-preprocess --change-id CHANGE_ID",
+  "usage: spec-creator-preprocess [--change-id CHANGE_ID]",
 ].join("\n");
 
 const SPEC_CREATOR_USAGE = [
-  "usage: spec-creator --change-id CHANGE_ID [--output PATH] [--state-dir DIR] [--no-run]",
+  "usage: spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--no-run]",
 ].join("\n");
 
 const GLOBAL_USAGE = [
@@ -412,7 +412,7 @@ function parseSpecCreatorPreprocessArgs(
   }
 
   const parsed: SpecCreatorPreprocessArgs = {
-    changeId: "",
+    changeId: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -428,10 +428,6 @@ function parseSpecCreatorPreprocessArgs(
     throw new Error(`unrecognized argument: ${arg}`);
   }
 
-  if (!parsed.changeId) {
-    throw new Error("argument --change-id is required");
-  }
-
   return parsed;
 }
 
@@ -441,7 +437,7 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
   }
 
   const parsed: SpecCreatorArgs = {
-    changeId: "",
+    changeId: null,
     output: null,
     noRun: false,
     stateDir: null,
@@ -472,10 +468,6 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
     }
 
     throw new Error(`unrecognized argument: ${arg}`);
-  }
-
-  if (!parsed.changeId) {
-    throw new Error("argument --change-id is required");
   }
 
   return parsed;

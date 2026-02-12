@@ -112,8 +112,9 @@ python -m team_orchestrator.cli print-openspec-template --lang en \
 
 1. spec creator 用 task_config を生成する（出力先は標準で `task_configs/spec_creator/<change-id>.json`）
 ```bash
-./node_modules/.bin/agent-dock spec-creator --change-id add-my-change
+./node_modules/.bin/agent-dock spec-creator
 ```
+`change_id` は対話内で `change_id 第1案` が提示され、Enter で採用または上書き入力できます（`--change-id` は任意）。
 2. 生成した task_config で実行する
 ```bash
 ./node_modules/.bin/agent-dock run \
