@@ -38,6 +38,7 @@ ENV/
 # Runtime/state outputs
 .team_state/
 *.log
+node_modules/
 
 # Generated task configs (keep overrides managed in git)
 task_configs/*.json

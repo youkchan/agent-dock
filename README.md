@@ -507,6 +507,7 @@ cd ../codex_agent
 - 開発時はグローバル `agent-dock` ではなく `./node_modules/.bin/agent-dock` を使います。
 - 反映確認は `./node_modules/.bin/agent-dock --help` を正とします。
 - 再インストール運用ではなく、`build_npm.ts` の再生成で反映します。
+- `npm` 生成物には `task_configs/` を含めません（実行時入力は呼び出し側で管理）。
 - 本番切替の順序とロールバック条件は `docs/ts-cutover-runbook.md` を正とします。
 
 ### TS 切替判定（fail-closed）
