@@ -102,14 +102,6 @@ interface SpecCreatorArgs {
   resume: boolean;
 }
 
-interface SpecCreatorPolishArgs {
-  changeId: string;
-  output: string | null;
-  noRun: boolean;
-  stateDir: string | null;
-  resume: boolean;
-}
-
 interface RunArgs {
   config: string | null;
   openspecChange: string | null;
@@ -181,11 +173,6 @@ const SPEC_CREATOR_PREPROCESS_USAGE = [
 
 const SPEC_CREATOR_USAGE = [
   "usage: spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--resume] [--no-run]",
-  "       spec-creator polish --change-id CHANGE_ID",
-].join("\n");
-
-const SPEC_CREATOR_POLISH_USAGE = [
-  "usage: spec-creator polish --change-id CHANGE_ID [--output PATH] [--state-dir DIR] [--resume] [--no-run]",
 ].join("\n");
 
 const GLOBAL_USAGE = [
@@ -506,53 +493,6 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
   return parsed;
 }
 
-function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
-  if (argv.includes("-h") || argv.includes("--help")) {
-    throw new HelpRequestedError(SPEC_CREATOR_POLISH_USAGE);
-  }
-
-  let changeId = "";
-  let output: string | null = null;
-  let noRun = false;
-  let stateDir: string | null = null;
-  let resume = false;
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    const next = argv[index + 1];
-
-    if (arg === "--change-id") {
-      changeId = requireOptionValue(arg, next);
-      index += 1;
-      continue;
-    }
-    if (arg === "--output") {
-      output = requireOptionValue(arg, next);
-      index += 1;
-      continue;
-    }
-    if (arg === "--state-dir") {
-      stateDir = requireOptionValue(arg, next);
-      index += 1;
-      continue;
-    }
-    if (arg === "--no-run") {
-      noRun = true;
-      continue;
-    }
-    if (arg === "--resume") {
-      resume = true;
-      continue;
-    }
-
-    throw new Error(`unrecognized argument: ${arg}`);
-  }
-
-  if (!changeId) {
-    throw new Error("argument --change-id is required");
-  }
-  return { changeId, output, noRun, stateDir, resume };
-}
-
 function parseRunArgs(argv: string[]): RunArgs {
   if (argv.includes("-h") || argv.includes("--help")) {
     throw new HelpRequestedError(RUN_USAGE);
@@ -802,40 +742,7 @@ function defaultSpecCreatorStateDir(changeId: string): string {
   return path.join(".team_state", "spec_creator", changeId);
 }
 
-function specCreatorPolishCommand(argv: string[], io: CliIO): number {
-  const args = parseSpecCreatorPolishArgs(argv);
-  const paths = resolveSpecCreatorArtifactPaths(args.changeId);
-  if (!isDirectory(paths.changeDir)) {
-    throw new Error(`change not found: ${paths.changeDir}`);
-  }
-
-  const context = buildSpecCreatorContextFromExistingChange(args.changeId, paths);
-  const outputPath = path.resolve(
-    args.output ?? defaultSpecCreatorOutputPath(args.changeId),
-  );
-  writeTaskConfigFile(context.task_config, outputPath);
-  io.stdout(`[spec-creator polish] wrote ${outputPath}\n`);
-  if (args.noRun) {
-    return 0;
-  }
-  const stateDir = args.stateDir
-    ? path.resolve(args.stateDir)
-    : path.resolve(defaultSpecCreatorStateDir(args.changeId), "polish");
-  io.stdout(`[spec-creator polish] run --config ${outputPath}\n`);
-  return runCommand([
-    "--config",
-    outputPath,
-    "--state-dir",
-    stateDir,
-    ...(args.resume ? ["--resume"] : []),
-  ], io);
-}
-
 function specCreatorCommand(argv: string[], io: CliIO): number {
-  if (argv[0] === "polish") {
-    return specCreatorPolishCommand(argv.slice(1), io);
-  }
-
   const args = parseSpecCreatorArgs(argv);
   const context = collectSpecContextInteractive({
     changeId: args.changeId,
@@ -965,111 +872,6 @@ function writeTaskConfigFile(
     outputPath,
     `${JSON.stringify(taskConfig, null, 2)}\n`,
   );
-}
-
-function buildSpecCreatorContextFromExistingChange(
-  changeId: string,
-  paths: SpecCreatorArtifactPaths,
-): SpecCreatorContextPayload {
-  const sourceTextsForRequirements = [
-    readOptionalText(paths.proposalPath),
-    readOptionalText(paths.tasksPath),
-    readOptionalText(paths.designPath),
-    readOptionalText(paths.deltaSpecPath),
-    readOptionalText(paths.codeSummaryPath),
-  ].filter((text): text is string => text !== null);
-  const sourceTextsForLanguage = [
-    readOptionalText(paths.proposalPath),
-    readOptionalText(paths.tasksPath),
-    readOptionalText(paths.designPath),
-    readOptionalText(paths.deltaSpecPath),
-  ].filter((text): text is string => text !== null);
-
-  const language = detectSpecCreatorLanguage(sourceTextsForLanguage);
-  const requirementsText = deriveSpecCreatorRequirementsText(
-    sourceTextsForRequirements,
-    changeId,
-  );
-  const specContext: SpecContext = {
-    requirements_text: requirementsText,
-    language,
-    persona_policy: {
-      active_personas: [...SPEC_CREATOR_ACTIVE_PERSONAS],
-    },
-  };
-
-  return {
-    change_id: changeId,
-    spec_context: specContext,
-    task_config: buildSpecCreatorTaskConfig(changeId, specContext),
-  };
-}
-
-function detectSpecCreatorLanguage(
-  sourceTexts: string[],
-): "ja" | "en" {
-  const joined = sourceTexts.join("\n");
-  if (
-    /##\s*1\.\s*Implementation\b/u.test(joined) ||
-    /\bphase assignments\s*:/iu.test(joined) ||
-    /Provider Completion Gates \(fixed\)/u.test(joined) ||
-    /Template Usage Rules/u.test(joined)
-  ) {
-    return "en";
-  }
-  if (
-    /##\s*1\.\s*実装タスク/u.test(joined) ||
-    /フェーズ担当\s*:/u.test(joined) ||
-    /Provider 完了判定ゲート（固定）/u.test(joined) ||
-    /テンプレート利用ルール/u.test(joined)
-  ) {
-    return "ja";
-  }
-  for (const source of sourceTexts) {
-    if (/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/u.test(source)) {
-      return "ja";
-    }
-  }
-  return "en";
-}
-
-function deriveSpecCreatorRequirementsText(
-  sourceTexts: string[],
-  changeId: string,
-): string {
-  for (const source of sourceTexts) {
-    const line = firstMeaningfulLine(source);
-    if (line.length > 0) {
-      return line;
-    }
-  }
-  return `Refine OpenSpec artifacts for ${changeId}`;
-}
-
-function firstMeaningfulLine(text: string): string {
-  const lines = text.split(/\r?\n/u);
-  for (const lineRaw of lines) {
-    const line = lineRaw.trim();
-    if (line.length === 0) {
-      continue;
-    }
-    if (/^#{1,6}\s+/u.test(line)) {
-      continue;
-    }
-    const stripped = line
-      .replace(/^[-*]\s+/u, "")
-      .replace(/`/gu, "")
-      .trim();
-    if (stripped.length === 0) {
-      continue;
-    }
-    return stripped.replaceAll(/\s+/gu, " ").slice(0, 240);
-  }
-  return "";
-}
-
-function readOptionalText(filePath: string): string | null {
-  return isFile(filePath) ? Deno.readTextFileSync(filePath) : null;
 }
 
 function asBulletLines(items: string[]): string {

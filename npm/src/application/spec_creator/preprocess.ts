@@ -10,6 +10,7 @@ export type SpecCreatorLanguage = (typeof SPEC_CREATOR_LANGS)[number];
 export interface SpecContext {
   requirements_text: string;
   language: SpecCreatorLanguage;
+  runtime_stack: "typescript";
   persona_policy: {
     active_personas: string[];
   };
@@ -104,6 +105,7 @@ export function collectSpecContextInteractive(
   const specContext: SpecContext = {
     requirements_text: requirementsText,
     language,
+    runtime_stack: "typescript",
     persona_policy: {
       active_personas: [...DEFAULT_SPEC_CREATOR_PERSONAS],
     },
@@ -154,6 +156,7 @@ function buildSpecContextPromptSection(specContext: SpecContext): string {
     "spec_context:",
     `- requirements_text: ${normalizeLine(specContext.requirements_text)}`,
     `- language: ${specContext.language}`,
+    `- runtime_stack: ${specContext.runtime_stack} (*.py is forbidden, use src/**/*.ts)`,
     `- active_personas: ${activePersonas}`,
   ].join("\n");
 }
