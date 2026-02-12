@@ -20,32 +20,32 @@
 - `not implemented` 等の未実装エラーは未完了として扱う（fail-closed）。
 
 ## 1. 実装タスク
-- [ ] 1.1 `tasks.md` チェックボックス同期関数を実装する
+- [x] 1.1 `tasks.md` チェックボックス同期関数を実装する
   - 依存: なし
   - 対象: src/infrastructure/openspec/compiler.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `updateTasksMarkdownCheckboxes` を追加し、`- [ ]`/`- [x]` 行の task_id を completed 集合で `- [x]` へ更新し、更新件数を返す。
-- [ ] 1.2 run 完了フックへ同期処理を組み込む
+- [x] 1.2 run 完了フックへ同期処理を組み込む
   - 依存: 1.1
   - 対象: src/cli/main.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `store.listTasks()` から completed task_id を取得し、`--openspec-change` 実行時のみ同期関数を呼び出す。
-- [ ] 1.3 同期結果ログを追加する
+- [x] 1.3 同期結果ログを追加する
   - 依存: 1.2
   - 対象: src/cli/main.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: 同期実行時に `[run] synced_tasks_md=<count>` を標準出力へ出し、`--config` 実行時は出力しない。
-- [ ] 1.4 compiler 側の同期ロジックをテストする
+- [x] 1.4 compiler 側の同期ロジックをテストする
   - 依存: 1.1
   - 対象: src/infrastructure/openspec/compiler_test.ts
   - フェーズ担当: spec_check=spec-checker; test=test-owner
   - 成果物: completed 行のみ更新、未完了行維持、再実行差分ゼロ（冪等）をテストで担保する。
-- [ ] 1.5 run 側の分岐とログをテストする
+- [x] 1.5 run 側の分岐とログをテストする
   - 依存: 1.2, 1.3
   - 対象: src/cli/main_test.ts
   - フェーズ担当: spec_check=spec-checker; test=test-owner
   - 成果物: `--openspec-change` 時の同期呼び出しと件数ログ、`--config` 時の非同期をテストで担保する。
-- [ ] 1.6 受け入れ検証を実行する
+- [x] 1.6 受け入れ検証を実行する
   - 依存: 1.4, 1.5
   - 対象: src/infrastructure/openspec/compiler_test.ts, src/cli/main_test.ts
   - フェーズ担当: spec_check=spec-checker; test=test-owner
