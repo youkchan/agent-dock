@@ -8,6 +8,9 @@
 # Build and tool caches
 dist/
 build/
+__pycache__/
+*.py[cod]
+*.egg-info/
 
 # Local virtual environments
 .venv/
