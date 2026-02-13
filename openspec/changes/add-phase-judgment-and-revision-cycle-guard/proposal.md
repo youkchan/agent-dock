@@ -21,6 +21,7 @@ review/spec_check が修正実行と判定を同時に担うため、`changes_re
 
 ## 影響範囲
 - 影響する仕様: `add-phase-judgment-and-revision-cycle-guard`（ADDED）
-- 主な実装対象: `team_orchestrator/models.py`, `team_orchestrator/orchestrator.py`, `team_orchestrator/state_store.py`
-- 主な検証対象: `tests/test_orchestrator.py`, `tests/test_state_store.py`
+- 主な実装対象: `src/domain/task.ts`, `src/domain/decision.ts`, `src/application/orchestrator/orchestrator.ts`, `src/infrastructure/state/store.ts`
+- 主な検証対象: `src/application/orchestrator/orchestrator_test.ts`, `src/infrastructure/state/store_test.ts`
+- 対象ランタイム: TypeScript 実装（`src/**`）のみ。本 change では Python 実装（`team_orchestrator/**`）は変更対象外
 - 互換性: teammate 実行モード（persona でない経路）は現状維持

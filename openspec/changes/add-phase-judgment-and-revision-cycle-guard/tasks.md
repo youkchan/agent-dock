@@ -57,6 +57,7 @@
   - 成果物: persona mode は新挙動、teammate mode は既存挙動維持を確認し、`openspec validate add-phase-judgment-and-revision-cycle-guard --strict` を通過させる。
 
 ## 2. 人間向けメモ（コンパイラ非対象）
+- MUST: 本変更の実装対象は TypeScript runtime（`src/**`）のみとし、Python runtime（`team_orchestrator/**`）は変更対象外とする。
 - MUST: implement 以外のフェーズは判定のみを行う。
 - MUST: 判定値は `pass|changes_required|blocked` の3値に統一する。
 - MUST: `changes_required` は implement へ差し戻し、理由を progress log と mailbox に残す。
