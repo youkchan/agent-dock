@@ -14,7 +14,7 @@ OpenAI Provider 連携時に発生した停止・不整合・進行停止バグ�
   - `response.output_text` 以外の経路からも本文を抽出するフォールバックを追加。
   - 空応答時に診断情報（`status` / `incomplete_details` / `output_items`）を出力。
 - 対象:
-  - `team_orchestrator/provider.py`
+  - `src/infrastructure/provider/factory.ts`
 
 ## Fix 2: `verbosity` 引数の互換性エラー
 
@@ -25,7 +25,7 @@ OpenAI Provider 連携時に発生した停止・不整合・進行停止バグ�
 - 修正:
   - `responses.create()` から `verbosity` 引数を削除。
 - 対象:
-  - `team_orchestrator/provider.py`
+  - `src/infrastructure/provider/factory.ts`
 
 ## Fix 3: JSON パース失敗（壊れた文字列）
 
@@ -38,7 +38,7 @@ OpenAI Provider 連携時に発生した停止・不整合・進行停止バグ�
   - `json_schema(strict)` を優先し、失敗時は `json_object` にフォールバック。
   - JSON パース救済（`{...}` 再抽出）を追加。
 - 対象:
-  - `team_orchestrator/provider.py`
+  - `src/infrastructure/provider/factory.ts`
 
 ## Fix 4: Provider の不正 `task_updates` で停止
 
@@ -49,7 +49,7 @@ OpenAI Provider 連携時に発生した停止・不整合・進行停止バグ�
 - 修正:
   - `_apply_decision()` で状態妥当性を検証し、不正更新はスキップして継続。
 - 対象:
-  - `team_orchestrator/orchestrator.py`
+  - `src/application/orchestrator/orchestrator.ts`
 
 ## Fix 5: Provider が実行状態を直接更新して進行が壊れる
 
@@ -60,7 +60,7 @@ OpenAI Provider 連携時に発生した停止・不整合・進行停止バグ�
 - 修正:
   - Provider からの `in_progress` / `completed` 更新を禁止（Teammate 管理に限定）。
 - 対象:
-  - `team_orchestrator/orchestrator.py`
+  - `src/application/orchestrator/orchestrator.ts`
 
 ## Fix 6: Provider が `pending -> blocked` を作って詰む
 
@@ -71,7 +71,7 @@ OpenAI Provider 連携時に発生した停止・不整合・進行停止バグ�
 - 修正:
   - `current.status != blocked` のタスクへの `blocked` 遷移を拒否。
 - 対象:
-  - `team_orchestrator/orchestrator.py`
+  - `src/application/orchestrator/orchestrator.ts`
 
 ## Fix 7: 承認後に `owner` が残留し claim 不能
 
@@ -83,7 +83,7 @@ OpenAI Provider 連携時に発生した停止・不整合・進行停止バグ�
   - `review_plan()` で `status=pending` に戻す際、`owner=None` を強制。
   - `pending` 更新時の `owner` 正規化も合わせて強化。
 - 対象:
-  - `team_orchestrator/state_store.py`
+  - `src/infrastructure/state/store.ts`
 
 ## Fix 8: 承認更新が返らないと承認待ちで停滞
 
@@ -95,7 +95,7 @@ OpenAI Provider 連携時に発生した停止・不整合・進行停止バグ�
   - `ORCHESTRATOR_AUTO_APPROVE_FALLBACK=1`（既定）を導入し、
     有効な承認更新がない場合は安全側で自動承認。
 - 対象:
-  - `team_orchestrator/orchestrator.py`
+  - `src/application/orchestrator/orchestrator.ts`
   - `README.md`
 
 ## Fix 9: 失敗時に `provider_calls` が 0 表示
@@ -107,12 +107,12 @@ OpenAI Provider 連携時に発生した停止・不整合・進行停止バグ�
 - 修正:
   - Provider 実行直前に `provider_calls` をインクリメント。
 - 対象:
-  - `team_orchestrator/orchestrator.py`
+  - `src/application/orchestrator/orchestrator.ts`
 
 ## 回帰テスト追加
 
 - 追加・更新テスト:
-  - `tests/test_orchestrator.py`
-  - `tests/test_state_store.py`
+  - `src/application/orchestrator/orchestrator_test.ts`
+  - `src/infrastructure/state/store_test.ts`
 - 検証:
-  - `python -m unittest discover -s tests -v` で全件成功。
+  - `deno task test` で全件成功。

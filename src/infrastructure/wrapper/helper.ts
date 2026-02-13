@@ -37,7 +37,7 @@ function formatError(error: unknown): string {
   return String(error);
 }
 
-function boolAsPython(value: boolean): string {
+function boolAsPromptBoolText(value: boolean): string {
   return value ? "True" : "False";
 }
 
@@ -232,7 +232,7 @@ export function buildPrompt(
   const targetPathsText = normalizeListText(targetPaths);
   const dependsOnText = normalizeListText(dependsOn);
   const progress = buildProgressLogSummary(progressLog, readEnv);
-  const requiresPlanText = boolAsPython(requiresPlan);
+  const requiresPlanText = boolAsPromptBoolText(requiresPlan);
 
   if (mode === "plan") {
     return `You are implementation teammate ${teammateId}.

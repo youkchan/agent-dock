@@ -4,45 +4,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Agent Dock is a Python coordination runtime for multi-agent systems. It uses a "Lead + Teammates" model where a Lead agent orchestrates multiple Teammate agents. The Lead only makes JSON decisions while Teammates handle implementation work.
+Agent Dock is a TypeScript coordination runtime for multi-agent systems. It uses a "Lead + Teammates" model where a Lead agent orchestrates multiple Teammate agents. The Lead only makes JSON decisions while Teammates handle implementation work.
 
 ## Development Commands
 
 ```bash
 # Setup
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-pip install openai  # For OpenAI provider
-
-# Run tests
-python -m unittest discover -s tests -v
+npm install
+deno task check
+deno task test
+./node_modules/.bin/agent-dock --help
 
 # Run with mock provider (testing)
-ORCHESTRATOR_PROVIDER=mock python -m team_orchestrator.cli \
+ORCHESTRATOR_PROVIDER=mock ./node_modules/.bin/agent-dock run \
   --teammate-adapter template \
   --config examples/sample_tasks.json
 
 # Run with OpenAI provider
 set -a; source .env.orchestrator; set +a
 export OPENAI_API_KEY="..."
-python -m team_orchestrator.cli \
+export TEAMMATE_ADAPTER="subprocess"
+export TEAMMATE_COMMAND="bash ./codex_wrapper.sh"
+./node_modules/.bin/agent-dock run \
   --config examples/sample_tasks.json \
   --state-dir /tmp/state
 
 # Resume a run
-python -m team_orchestrator.cli \
+./node_modules/.bin/agent-dock run \
   --config examples/sample_tasks.json \
   --state-dir /tmp/state \
   --resume
 
 # OpenSpec compile
-python -m team_orchestrator.cli compile-openspec \
+./node_modules/.bin/agent-dock compile-openspec \
   --change-id <change-id> \
   --openspec-root ./openspec
 
 # OpenSpec template generation
-python -m team_orchestrator.cli print-openspec-template --lang en
+./node_modules/.bin/agent-dock print-openspec-template --lang en
 ```
 
 ## Architecture
@@ -51,14 +50,15 @@ python -m team_orchestrator.cli print-openspec-template --lang en
 
 | Module | Purpose |
 |--------|---------|
-| `orchestrator.py` | Main event loop, Lead decision logic |
-| `state_store.py` | JSON state persistence with file locking, mailbox, collision detection |
-| `provider.py` | LLM abstraction (Mock, OpenAI implementations) |
-| `adapter.py` / `codex_adapter.py` | Teammate adapter protocol and subprocess implementation |
-| `persona_catalog.py` / `persona_pipeline.py` | Persona-based quality gates and phase routing |
-| `openspec_compiler.py` | Markdown → JSON task config compilation |
-| `cli.py` | CLI entry point |
-| `models.py` | Task dataclasses |
+| `src/application/orchestrator/orchestrator.ts` | Main event loop, Lead decision logic |
+| `src/infrastructure/state/store.ts` | JSON state persistence with file locking, mailbox, collision detection |
+| `src/infrastructure/provider/factory.ts` | LLM abstraction (Mock, OpenAI implementations) |
+| `src/infrastructure/adapter/subprocess.ts` / `src/infrastructure/adapter/template.ts` | Teammate adapter implementations |
+| `src/infrastructure/wrapper/helper.ts` / `codex_wrapper.sh` | Wrapper prompt/result handling, dotenv guard, Codex exec bridge |
+| `src/application/orchestrator/persona_pipeline.ts` / `src/infrastructure/persona/catalog.ts` | Persona-based quality gates and phase routing |
+| `src/infrastructure/openspec/compiler.ts` | Markdown -> JSON task config compilation |
+| `src/cli/main.ts` | CLI entry point |
+| `src/domain/task.ts` | Task model definitions |
 
 ### Event-Driven Model
 
@@ -67,15 +67,15 @@ The Lead provider is only called on specific events (not every tick):
 
 ### Task States
 
-`pending` → `in_progress` → `completed` | `blocked` | `needs_approval`
+`pending` -> `in_progress` -> `completed` | `blocked` | `needs_approval`
 
-Tasks with `requires_plan=true` require approval before execution (states: `not_required` → `pending` → `drafting` → `submitted` → `approved` → `executed`).
+Tasks with `requires_plan=true` require approval before execution (states: `not_required` -> `pending` -> `drafting` -> `submitted` -> `approved` -> `executed`).
 
 ### Persona System
 
-Default personas: `implementer`, `code-reviewer`, `spec-checker`, `test-owner` (defined in `team_orchestrator/personas/default/`).
+Default personas: `implementer`, `code-reviewer`, `spec-checker`, `test-owner` (defined in `personas/default/`).
 
-Tasks flow through configurable phases (e.g., `implement → review → spec_check → test`) with persona evaluation at each phase.
+Tasks flow through configurable phases (e.g., `implement -> review -> spec_check -> test`) with persona evaluation at each phase.
 
 ### Provider Selection
 

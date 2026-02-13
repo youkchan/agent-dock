@@ -5,24 +5,11 @@
 *.swp
 *.swo
 
-# Python
-__pycache__/
-*.py[cod]
-*.pyd
-*.so
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-.coverage.*
-htmlcov/
+# Build and tool caches
 dist/
 build/
-*.egg-info/
-.eggs/
-pip-wheel-metadata/
 
-# Virtual environments
+# Local virtual environments
 .venv/
 venv/
 env/

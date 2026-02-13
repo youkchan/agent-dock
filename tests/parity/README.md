@@ -1,6 +1,6 @@
 # parity fixtures 運用メモ
 
-このディレクトリは Python 実装と TypeScript 実装の parity 比較専用 fixture を管理する。  
+このディレクトリは TypeScript ランタイムの parity 比較専用 fixture を管理する。  
 判定ルールは `docs/ts-parity-gate.md` を正とする。
 
 ## 構成

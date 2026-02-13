@@ -61,8 +61,8 @@ Deno.test("compileChangeToConfig parses tasks markdown", () => {
         "  - 対象: src/runtime/orchestrator.ts, src/runtime/store.ts",
         "  - フェーズ担当: implement=implementer",
         "## 2. 検証項目",
-        "- [x] `python -m unittest discover -s tests -v` が通る",
-        "- [ ] `python -m team_orchestrator.cli run --openspec-change add-sample` で実行開始できる",
+        "- [x] `deno test src --allow-read --allow-write --allow-run --allow-env` が通る",
+        "- [ ] `./node_modules/.bin/agent-dock run --openspec-change add-sample` で実行開始できる",
       ].join("\n"),
     );
 

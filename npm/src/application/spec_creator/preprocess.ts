@@ -156,7 +156,7 @@ function buildSpecContextPromptSection(specContext: SpecContext): string {
     "spec_context:",
     `- requirements_text: ${normalizeLine(specContext.requirements_text)}`,
     `- language: ${specContext.language}`,
-    `- runtime_stack: ${specContext.runtime_stack} (*.py is forbidden, use src/**/*.ts)`,
+    `- runtime_stack: ${specContext.runtime_stack} (TypeScript-only runtime, use src/**/*.ts)`,
     `- active_personas: ${activePersonas}`,
   ].join("\n");
 }

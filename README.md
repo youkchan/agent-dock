@@ -26,8 +26,8 @@
   - 人手承認待ち（`HUMAN_APPROVAL=1`）
 
 ## 前提条件
-- Python `3.10+`
-- 外部 Codex CLI 連携時は Node.js `18+`（任意）
+- Deno `2.x`
+- 外部 Codex CLI 連携時は Node.js `18+`
 - `ORCHESTRATOR_PROVIDER=openai` を使う場合のみ `OPENAI_API_KEY` が必要
 
 ## Thin Orchestrator ルール
@@ -44,21 +44,17 @@
 
 ## クイックスタート
 ```bash
-python3 -m venv .venv
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -e .
-python -m pip install -U openai  # ORCHESTRATOR_PROVIDER=openai を使う場合
-python -m unittest discover -s tests -v
-ORCHESTRATOR_PROVIDER=mock python -m team_orchestrator.cli --teammate-adapter template --config examples/sample_tasks.json
+npm install
+deno task check
+deno task test
+ORCHESTRATOR_PROVIDER=mock ./node_modules/.bin/agent-dock run --teammate-adapter template --config examples/sample_tasks.json
 ```
 
 ## `--resume` で再開実行する
 同じ `state-dir` を使って再開する場合は `--resume` を付けて起動します。
 
 ```bash
-python -m team_orchestrator.cli \
+./node_modules/.bin/agent-dock run \
   --config examples/sample_tasks.json \
   --state-dir /tmp/codex_agent_state \
   --resume
@@ -95,13 +91,13 @@ jq '.tasks["T-001"].progress_log' /tmp/codex_agent_state/state.json
 利用例（テンプレート出力）:
 ```bash
 mkdir -p openspec/changes/add-my-change
-python -m team_orchestrator.cli print-openspec-template --lang ja \
+./node_modules/.bin/agent-dock print-openspec-template --lang ja \
   > openspec/changes/add-my-change/tasks.md
 ```
 
 英語テンプレートを使う場合:
 ```bash
-python -m team_orchestrator.cli print-openspec-template --lang en \
+./node_modules/.bin/agent-dock print-openspec-template --lang en \
   > openspec/changes/add-my-change/tasks.md
 ```
 
@@ -132,7 +128,7 @@ python -m team_orchestrator.cli print-openspec-template --lang en \
 
 コンパイルのみ:
 ```bash
-python -m team_orchestrator.cli compile-openspec \
+./node_modules/.bin/agent-dock compile-openspec \
   --change-id add-openspec-task-config-compiler \
   --openspec-root ./openspec \
   --overrides-root ./task_configs/overrides \
@@ -154,7 +150,7 @@ python -m team_orchestrator.cli compile-openspec \
 
 OpenSpec 直接実行:
 ```bash
-python -m team_orchestrator.cli run \
+./node_modules/.bin/agent-dock run \
   --openspec-change add-openspec-task-config-compiler \
   --save-compiled \
   --state-dir /tmp/codex_agent_openspec_state
@@ -163,29 +159,21 @@ python -m team_orchestrator.cli run \
 注意:
 - `--config` と `--openspec-change` は同時指定できません。
 - `target_paths` 未指定タスクは自動で `["*"]` が補完されます（`meta.auto_target_path_tasks` に記録）。
-- `overrides/*.yaml` を使う場合は `pyyaml` が必要です。
 - 生成 JSON には `meta.verification_items` が含まれ、`tasks.md` の「検証項目」チェックリストを保持します。
 - 検証セクション見出しは日本語/英語の両方に対応します（例: `検証項目`, `Verification Checklist`, `Validation`, `Checks`）。
-
-`override yaml requires PyYAML` が出る場合:
-```bash
-source .venv/bin/activate
-python -m pip install -e .
-```
 
 ## OpenAI 最小確認手順
 `OPENAI_API_KEY` 以外は `.env.orchestrator` から読み込み、API キーのみ `export` する運用を推奨します。
 
 ```bash
 cd /path/to/codex_agent
-source .venv/bin/activate
 set -a; source .env.orchestrator; set +a
 export OPENAI_API_KEY="YOUR_KEY"
 export TEAMMATE_ADAPTER="subprocess"
 export TEAMMATE_COMMAND="bash ./codex_wrapper.sh"
 export CODEX_STREAM_LOGS="1"
 export CODEX_STREAM_VIEW="all_compact"
-python -m team_orchestrator.cli --config examples/sample_tasks.json --state-dir /tmp/codex_agent_openai_state
+./node_modules/.bin/agent-dock run --config examples/sample_tasks.json --state-dir /tmp/codex_agent_openai_state
 ```
 
 成功判定:
@@ -253,17 +241,17 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
   - `0` でこの deny ルールを無効化
 
 ## プロジェクト構成
-- `team_orchestrator/models.py`: タスクモデルと状態フィールド。
-- `team_orchestrator/state_store.py`: 共有 JSON 状態 + ファイルロック + メールボックス + claim/衝突ロジック。
-- `team_orchestrator/orchestrator.py`: イベント駆動の Lead/Teammate 実行ループ。
-- `team_orchestrator/provider.py`: Provider 抽象化、decision 検証、mock/openai Provider。
-- `team_orchestrator/openspec_compiler.py`: OpenSpec change を task_config に変換。
-- `team_orchestrator/adapter.py`: Teammate アダプタ Protocol と最小デモ向けテンプレート実装。
-- `team_orchestrator/codex_adapter.py`: Codex 連携用の外部コマンドアダプタ。
-- `team_orchestrator/cli.py`: CLI エントリポイント。
+- `src/domain/task.ts`: タスクモデルと状態フィールド。
+- `src/infrastructure/state/store.ts`: 共有 JSON 状態 + ファイルロック + メールボックス + claim/衝突ロジック。
+- `src/application/orchestrator/orchestrator.ts`: イベント駆動の Lead/Teammate 実行ループ。
+- `src/infrastructure/provider/factory.ts`: Provider 抽象化、decision 検証、mock/openai Provider。
+- `src/infrastructure/openspec/compiler.ts`: OpenSpec change を task_config に変換。
+- `src/infrastructure/adapter/subprocess.ts`: 外部コマンド連携の Teammate アダプタ。
+- `src/infrastructure/adapter/template.ts`: 最小デモ向けテンプレート実装。
+- `src/cli/main.ts`: CLI エントリポイント。
 - `docs/agent_teams_like_spec.md`: 汎用仕様。
 - `docs/thin_orchestrator_spec.md`: Thin Orchestrator 移行仕様。
-- `docs/ts-migration-contract.md`: TS移行時に守る Python 互換契約。
+- `docs/ts-migration-contract.md`: TS ランタイム契約。
 - `docs/ts-cutover-runbook.md`: TS runner への段階切替・fallback・完了判定手順。
 - `bug_fixes/`: 不具合修正ログ。
 - `examples/sample_tasks.json`: デモ用タスクグラフ。
@@ -297,7 +285,7 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
   - `phase_overrides`: タスク単位のフェーズ別上書き
 
 ## ペルソナ定義の配置と上書き順序
-- デフォルト4ペルソナは `team_orchestrator/personas/default/` の YAML から読み込みます:
+- デフォルト4ペルソナは `personas/default/` の YAML から読み込みます:
   - `implementer.yaml`
   - `code-reviewer.yaml`
   - `spec-checker.yaml`
@@ -404,7 +392,7 @@ Lead(OpenAI) 接続だけを最小確認したい場合は、`--teammate-adapter
 2. 実行主体にしたいペルソナだけ `execution.enabled=true` にする。
 3. `persona_defaults.phase_order` と `phase_policies` を定義し、`executor_personas` を各フェーズに割り当てる。
 4. 必要なタスクに `tasks[].persona_policy`（`disable_personas`, `phase_overrides`）を追加する。
-5. `python -m unittest discover -s tests -v` を実行し、phase handoff と fallback を確認してから本番反映する。
+5. `deno task test` を実行し、phase handoff と fallback を確認してから本番反映する。
 
 ## 制約と失敗条件
 - `personas[].execution` は `enabled/command_ref/sandbox/timeout_sec` をすべて含む必要があります。
@@ -531,18 +519,18 @@ cd ../codex_agent
 TS runner への切替は、次のゲートがすべて成功した場合のみ実施します。
 
 ```bash
-python -m unittest tests.parity.test_parity -v
-python -m unittest tests.test_cli tests.test_state_store tests.test_openspec_compiler -v
-python -m unittest discover -s tests -v
+deno task check
+deno task test
+deno test src/cli/main_test.ts src/infrastructure/state/store_test.ts src/infrastructure/openspec/compiler_test.ts --allow-read --allow-write --allow-run --allow-env
 ```
 
-1 つでも失敗した場合は Python runner を維持します。
+1 つでも失敗した場合は TS runner への切替を実施しません。
 
-### ロールバック（TS -> Python）
-TS 側で回帰を検出した場合は、実行コマンドを即時で Python runner に戻し、同一入力で smoke run を 1 回実施します。
+### ロールバック（TS）
+TS 側で回帰を検出した場合は、安定版コマンドに差し戻し、同一入力で smoke run を 1 回実施します。
 
 ```bash
-python -m team_orchestrator.cli run --config <task_config> --state-dir <state_dir>
+./node_modules/.bin/agent-dock run --config <task_config> --state-dir <state_dir>
 ```
 
 詳細な比較手順（canary 3 連続一致、fallback 条件、完了判定）は `docs/ts-cutover-runbook.md` を参照してください。

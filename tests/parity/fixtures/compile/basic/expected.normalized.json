@@ -3,7 +3,7 @@
     "verification_items": [
       {
         "checked": true,
-        "text": "`python -m unittest discover -s tests -v` \u304c\u901a\u308b"
+        "text": "`deno test src --allow-read --allow-write --allow-run --allow-env` \u304c\u901a\u308b"
       },
       {
         "checked": false,

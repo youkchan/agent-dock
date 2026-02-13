@@ -12,6 +12,5 @@
   - フェーズ担当: implement=implementer; test=test-owner
 
 ## 2. 検証項目
-- [x] `python -m unittest discover -s tests -v` が通る
+- [x] `deno test src --allow-read --allow-write --allow-run --allow-env` が通る
 - [ ] `deno test -A src` が通る
-

@@ -60,7 +60,7 @@ function writePackageJson(context: BuildContext): void {
     files: [
       "bin",
       "src",
-      "team_orchestrator",
+      "personas",
       "codex_wrapper.sh",
       "README.md",
     ],
@@ -144,8 +144,8 @@ function buildNpmArtifacts(context: BuildContext): void {
     `${context.npmRoot}/src`,
   );
   copyDirectoryRecursive(
-    `${context.projectRoot}/team_orchestrator/personas/default`,
-    `${context.npmRoot}/team_orchestrator/personas/default`,
+    `${context.projectRoot}/personas/default`,
+    `${context.npmRoot}/personas/default`,
   );
   Deno.copyFileSync(
     `${context.projectRoot}/codex_wrapper.sh`,

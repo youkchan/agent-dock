@@ -27,7 +27,7 @@ const DEFAULT_PERSONA_IDS = [
   "test-owner",
 ] as const;
 const DEFAULT_PERSONAS_DIR = new URL(
-  "../../../team_orchestrator/personas/default/",
+  "../../../personas/default/",
   import.meta.url,
 );
 

@@ -1,0 +1,5 @@
+id: spec-code-creator
+role: spec_guard
+focus: 実装認知負荷低減のためcode_summary.mdにコード粒度と対応関係を明記する
+can_block: false
+enabled: true

@@ -85,7 +85,7 @@ Deno.test("buildPrompt renders execute template and truncates when too long", ()
   );
 });
 
-Deno.test("buildPrompt keeps Python-style bool text for requires_plan", () => {
+Deno.test("buildPrompt keeps prompt bool text for requires_plan", () => {
   const payload = {
     mode: "execute",
     teammate_id: "tm-1",

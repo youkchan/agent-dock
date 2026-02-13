@@ -7,7 +7,7 @@ import {
 } from "./catalog.ts";
 
 const REAL_DEFAULT_DIR = new URL(
-  "../../../team_orchestrator/personas/default/",
+  "../../../personas/default/",
   import.meta.url,
 );
 

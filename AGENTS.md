@@ -23,24 +23,25 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 このリポジトリは、マルチエージェント実行のための再利用可能な協調ランタイムを提供する。
 
 ## セットアップ
-- Python: `3.10+`
-- 外部 Codex CLI 連携時は Node.js `18+`（任意）
-- 仮想環境作成と実行:
-  - `python3 -m venv .venv`
-  - `python -m venv .venv`
-  - `source .venv/bin/activate`
-  - `python -m unittest discover -s tests -v`
+- Deno: `2.x`
+- Node.js: `18+`
+- 初期確認:
+  - `npm install`
+  - `deno task check`
+  - `deno task test`
 
 ## 開発コマンド
 - デモオーケストレーター実行:
-  - `python -m team_orchestrator.cli --config examples/sample_tasks.json`
+  - `ORCHESTRATOR_PROVIDER=mock ./node_modules/.bin/agent-dock run --teammate-adapter template --config examples/sample_tasks.json`
 - OpenAI 最小確認実行:
   - `set -a; source .env.orchestrator; set +a`
   - `export OPENAI_API_KEY=...`
   - `export ORCHESTRATOR_REASONING_EFFORT=minimal`
-  - `python -m team_orchestrator.cli --config examples/sample_tasks.json --state-dir /tmp/codex_agent_openai_state`
+  - `export TEAMMATE_ADAPTER=subprocess`
+  - `export TEAMMATE_COMMAND="bash ./codex_wrapper.sh"`
+  - `./node_modules/.bin/agent-dock run --config examples/sample_tasks.json --state-dir /tmp/codex_agent_openai_state`
 - テスト実行:
-  - `python -m unittest discover -s tests -v`
+  - `deno task test`
 
 ## チーム運用ルール
 - `Lead` は調整専任とし、実装タスクを実行しない。
@@ -49,7 +50,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - すべてのタスクで `target_paths` を定義し、並行編集の重複を避ける。
 - 全タスク完了または idle 上限でループを停止する。
 - 追跡性のため、メールボックスとタスクボード状態を永続化する。
-- Templateアダプタは使用しない。
+- `Template` アダプタは検証用途のみで使用し、本番運用では使用しない。
 - `ORCHESTRATOR_PROVIDER=mock` はテスト目的でのみ使用し、本番/実運用実行では使用しない。
 - 実運用では `ORCHESTRATOR_PROVIDER=openai`（または将来追加される実プロバイダ）を明示する。
 - 指示されていない変更を行わない。

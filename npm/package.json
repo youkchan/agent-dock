@@ -9,7 +9,7 @@
   "files": [
     "bin",
     "src",
-    "team_orchestrator",
+    "personas",
     "codex_wrapper.sh",
     "README.md"
   ],

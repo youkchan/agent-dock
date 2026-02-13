@@ -1,0 +1,5 @@
+id: spec-planner
+role: spec_guard
+focus: 要件をOpenSpec構成へ正規化し、要件外追加を禁止する
+can_block: false
+enabled: true
