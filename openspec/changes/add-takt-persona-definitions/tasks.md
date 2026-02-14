@@ -5,54 +5,62 @@
 - personas: [{"id":"implementer","role":"implementer","focus":"実装を前進させる","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"code-reviewer","role":"reviewer","focus":"品質と回帰リスクを確認する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"spec-checker","role":"spec_guard","focus":"仕様逸脱を防ぐ","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"test-owner","role":"test_guard","focus":"検証の十分性を担保する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}}]
 
 ## 1. 実装タスク
-- [ ] 1.1 `takt` のコピー元ファイルを確定し、4 persona ごとの移植対象ルールを整理する
+- [x] 1.1 `takt` のコピー元ファイルを確定し、4 persona ごとの移植対象ルールを整理する
   - 依存: なし
   - 対象: openspec/changes/add-takt-persona-definitions/proposal.md, openspec/changes/add-takt-persona-definitions/tasks.md
   - フェーズ担当: implement=implementer; review=code-reviewer
-  - 成果物: `implementer` `code-reviewer` `spec-checker` `test-owner` ごとに、移植元ファイル一覧と採用方針を明文化する。
-- [ ] 1.2 移植対象を `focus` へ要約する際に、意味欠落がないことを確認する
+  - `implementer` の移植元: `../takt/builtins/ja/personas/coder.md`, `../takt/builtins/ja/instructions/implement.md`, `../takt/builtins/ja/instructions/ai-fix.md`
+  - `code-reviewer` の移植元: `../takt/builtins/ja/personas/architecture-reviewer.md`, `../takt/builtins/ja/personas/ai-antipattern-reviewer.md`, `../takt/builtins/ja/policies/review.md`, `../takt/builtins/ja/instructions/review-arch.md`, `../takt/builtins/ja/instructions/review-qa.md`, `../takt/builtins/ja/instructions/review-ai.md`
+  - `spec-checker` の移植元: `../takt/builtins/ja/personas/planner.md`
+  - `test-owner` の移植元: `../takt/builtins/ja/personas/qa-reviewer.md`, `../takt/builtins/ja/personas/test-planner.md`, `../takt/builtins/ja/instructions/review-test.md`, `../takt/builtins/ja/instructions/implement-test.md`
+  - 成果物: `focus` は既存文言を上位に残したまま、`takt` 由来の実装注意事項を追加する。`id`/`role`/`can_block`/`enabled`/`execution` を含む既存スキーマは変更しない。重複・衝突時は `focus` の意味論だけを統合し、上書き禁止とする。
+- [x] 1.2 移植対象を `focus` へ要約する際に、意味欠落がないことを確認する
   - 依存: 1.1
   - 対象: openspec/changes/add-takt-persona-definitions/proposal.md, openspec/changes/add-takt-persona-definitions/tasks.md
   - フェーズ担当: implement=implementer; review=code-reviewer
-  - 成果物: 既存 focus と追加ルールのマージ方針を定義し、置き換えではなく追記であることを明記する。
-- [ ] 1.3 `personas/default/implementer.yaml` の `focus` を既存内容にマージする
+  - 成果物: 既存 focus と追加ルールのマージ方針を定義し、置換ではなく追記であることを明記する。
+  - チェック項目:
+    - 既存 focus の主語・対象・禁止事項・成功条件を残した要約になっていること。
+    - `takt` 由来の追加点が欠落なく追記され、既存ガードレールを削除していないこと。
+    - 重複/衝突は新規条項で吸収し、既存文言の上位優先を維持すること。
+- [x] 1.3 `personas/default/implementer.yaml` の `focus` を既存内容にマージする
   - 依存: 1.2
   - 対象: personas/default/implementer.yaml
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `implementer` の focus に `takt` 由来の実装注意事項を統合し、既存ガイド文を保持する。
-- [ ] 1.4 `personas/default/code-reviewer.yaml` の `focus` を既存内容にマージする
+- [x] 1.4 `personas/default/code-reviewer.yaml` の `focus` を既存内容にマージする
   - 依存: 1.2
   - 対象: personas/default/code-reviewer.yaml
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `code-reviewer` の focus に `takt` 由来のレビュー観点を統合し、既存ガイド文を保持する。
-- [ ] 1.5 `personas/default/spec-checker.yaml` の `focus` を既存内容にマージする
+- [x] 1.5 `personas/default/spec-checker.yaml` の `focus` を既存内容にマージする
   - 依存: 1.2
   - 対象: personas/default/spec-checker.yaml
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `spec-checker` の focus に planner 由来の仕様監査観点を統合し、既存ガイド文を保持する。
-- [ ] 1.6 `personas/default/test-owner.yaml` の `focus` を既存内容にマージする
+- [x] 1.6 `personas/default/test-owner.yaml` の `focus` を既存内容にマージする
   - 依存: 1.2
   - 対象: personas/default/test-owner.yaml
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `test-owner` の focus に test-planner/qa-reviewer 由来の検証観点を統合し、既存ガイド文を保持する。
-- [ ] 1.7 `npm/personas/default/*.yaml` を同内容へ同期する
+- [x] 1.7 `npm/personas/default/*.yaml` を同内容へ同期する
   - 依存: 1.3, 1.4, 1.5, 1.6
   - 対象: npm/personas/default/implementer.yaml, npm/personas/default/code-reviewer.yaml, npm/personas/default/spec-checker.yaml, npm/personas/default/test-owner.yaml
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: TypeScript runtime 側ソースと npm 配布側の default persona 定義を同一内容にそろえる。
-- [ ] 1.8 既存スキーマ（`id`, `role`, `focus`, `can_block`, `enabled`, optional `execution`）以外のキーを追加しない
+- [x] 1.8 既存スキーマ（`id`, `role`, `focus`, `can_block`, `enabled`, optional `execution`）以外のキーを追加しない
   - 依存: 1.3, 1.4, 1.5, 1.6, 1.7
   - 対象: personas/default/implementer.yaml, personas/default/code-reviewer.yaml, personas/default/spec-checker.yaml, personas/default/test-owner.yaml, npm/personas/default/implementer.yaml, npm/personas/default/code-reviewer.yaml, npm/personas/default/spec-checker.yaml, npm/personas/default/test-owner.yaml
   - フェーズ担当: implement=implementer; review=code-reviewer; spec_check=spec-checker
   - persona_policy: {"phase_order":["review","spec_check","implement"]}
   - 成果物: persona loader 互換を壊す未知キーを追加していないことを確認する。あわせて YAML 表現は単純形式（`focus` は1行スカラー、`execution` のみ1段ネスト）を維持し、`|`/`>`、配列、2段以上ネストを導入しないことを確認する。
-- [ ] 1.9 default persona の読込テストを実行し、未知キーエラーや型エラーが発生しないことを確認する
+- [x] 1.9 default persona の読込テストを実行し、未知キーエラーや型エラーが発生しないことを確認する
   - 依存: 1.8
   - 対象: src/infrastructure/persona/catalog_test.ts, npm/src/infrastructure/persona/catalog_test.ts
   - フェーズ担当: implement=implementer; spec_check=spec-checker; test=test-owner
   - persona_policy: {"phase_order":["review","spec_check","implement"]}
   - 成果物: TypeScript runtime と npm 配布物の双方で default persona 読込が成功し、スキーマ整合が保たれる。単純 YAML 制約を破る記述が混入した場合は読込失敗として検知できる。
-- [ ] 1.10 `openspec validate add-takt-persona-definitions --strict` を実行し成功させる
+- [x] 1.10 `openspec validate add-takt-persona-definitions --strict` を実行し成功させる
   - 依存: 1.9
   - 対象: openspec/changes/add-takt-persona-definitions/proposal.md, openspec/changes/add-takt-persona-definitions/tasks.md, openspec/changes/add-takt-persona-definitions/specs/persona-catalog/spec.md
   - フェーズ担当: implement=implementer; spec_check=spec-checker; test=test-owner
