@@ -271,6 +271,38 @@ Deno.test("buildTeammateAdapter with explicit plan and execute does not require 
   });
 });
 
+Deno.test("buildTeammateAdapter forwards normalized persona sandbox mapping", () => {
+  const adapter = buildTeammateAdapter({
+    teammateAdapter: "subprocess",
+    teammateCommand: "echo codex",
+    planCommand: "",
+    executeCommand: "",
+    commandTimeout: 120,
+    personaExecutionSandboxes: {
+      " reviewer ": " workspace-write ",
+      implementer: "danger-full-access",
+      ignored: "   ",
+      "": "workspace-write",
+    },
+  });
+
+  if (!(adapter instanceof SubprocessCodexAdapter)) {
+    throw new Error("expected SubprocessCodexAdapter");
+  }
+  if (
+    JSON.stringify(adapter.executionSandboxByTeammateId) !== JSON.stringify({
+      reviewer: "workspace-write",
+      implementer: "danger-full-access",
+    })
+  ) {
+    throw new Error(
+      `sandbox mapping mismatch: ${
+        JSON.stringify(adapter.executionSandboxByTeammateId)
+      }`,
+    );
+  }
+});
+
 Deno.test("main print-openspec-template outputs ja template", () => {
   const buffer = createIoBuffer();
   const exitCode = main(["print-openspec-template", "--lang", "ja"], buffer.io);
@@ -499,7 +531,9 @@ Deno.test("main run with --openspec-change syncs tasks.md and logs synced count"
     if (!buffer.state.stdout.includes("[run] synced_tasks_md=1")) {
       throw new Error("stdout should include synced task count");
     }
-    if (!buffer.state.stdout.includes('"openspec_change_id": "sync-run-change"')) {
+    if (
+      !buffer.state.stdout.includes('"openspec_change_id": "sync-run-change"')
+    ) {
       throw new Error("stdout should include openspec_change_id");
     }
     const tasksAfterRun = Deno.readTextFileSync(tasksPath);
@@ -580,11 +614,124 @@ Deno.test({
         }
       });
 
-      if (!buffer.state.stdout.includes('"stop_reason": "all_tasks_completed"')) {
+      if (
+        !buffer.state.stdout.includes('"stop_reason": "all_tasks_completed"')
+      ) {
         throw new Error("stdout should include successful stop reason");
       }
     });
   },
+});
+
+Deno.test("main run keeps task max_revision_cycles from config", () => {
+  withTempDir((root) => {
+    const configPath = `${root}/tasks.json`;
+    const stateDir = `${root}/state`;
+
+    Deno.writeTextFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          teammates: ["tm-1"],
+          tasks: [
+            {
+              id: "T1",
+              title: "sample",
+              target_paths: ["src/a.ts"],
+              max_revision_cycles: 9,
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const buffer = createIoBuffer();
+    withEnv("ORCHESTRATOR_PROVIDER", "mock", () => {
+      const exitCode = main([
+        "run",
+        "--config",
+        configPath,
+        "--state-dir",
+        stateDir,
+        "--teammate-adapter",
+        "template",
+        "--max-rounds",
+        "20",
+      ], buffer.io);
+
+      if (exitCode !== 0) {
+        throw new Error(`run should return 0: ${buffer.state.stderr}`);
+      }
+    });
+
+    const state = JSON.parse(
+      Deno.readTextFileSync(`${stateDir}/state.json`),
+    ) as Record<string, unknown>;
+    const tasks = state.tasks as Record<string, Record<string, unknown>>;
+    const task = tasks.T1;
+    if (!task) {
+      throw new Error("state should include task T1");
+    }
+    if (task.max_revision_cycles !== 9) {
+      throw new Error(
+        `expected max_revision_cycles=9, got ${String(task.max_revision_cycles)}`,
+      );
+    }
+  });
+});
+
+Deno.test("main run rejects invalid task max_revision_cycles in config", () => {
+  withTempDir((root) => {
+    const configPath = `${root}/tasks.json`;
+    const stateDir = `${root}/state`;
+
+    Deno.writeTextFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          teammates: ["tm-1"],
+          tasks: [
+            {
+              id: "T1",
+              title: "sample",
+              target_paths: ["src/a.ts"],
+              max_revision_cycles: -1,
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const buffer = createIoBuffer();
+    const exitCode = main([
+      "run",
+      "--config",
+      configPath,
+      "--state-dir",
+      stateDir,
+      "--teammate-adapter",
+      "template",
+      "--max-rounds",
+      "20",
+    ], buffer.io);
+
+    if (exitCode !== 1) {
+      throw new Error("run should fail with invalid max_revision_cycles");
+    }
+    if (
+      !buffer.state.stderr.includes(
+        "tasks[0].max_revision_cycles must be a non-negative integer",
+      )
+    ) {
+      throw new Error(
+        `stderr should include validation error: ${buffer.state.stderr}`,
+      );
+    }
+  });
 });
 
 Deno.test("main run includes openspec_change_id when config meta has source_change_id", () => {
@@ -632,7 +779,9 @@ Deno.test("main run includes openspec_change_id when config meta has source_chan
       }
     });
 
-    if (!buffer.state.stdout.includes('"openspec_change_id": "add-sample-change"')) {
+    if (
+      !buffer.state.stdout.includes('"openspec_change_id": "add-sample-change"')
+    ) {
       throw new Error("stdout should include openspec_change_id");
     }
     if (buffer.state.stdout.includes("[run] synced_tasks_md=")) {

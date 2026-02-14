@@ -1,5 +1,0 @@
-id: test-owner
-role: test_guard
-focus: 必要な検証が揃っているか、再現性があるかを確認する。加えて、ロジック単体テストと実行経路テストの二層化、依存更新時の最小スモーク実行を必須ゲートとして確認する
-can_block: false
-enabled: true

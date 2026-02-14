@@ -3,6 +3,27 @@ import type { TaskStatus } from "./task.ts";
 export const DEFAULT_INPUT_TOKEN_BUDGET = 4000;
 export const DEFAULT_OUTPUT_TOKEN_BUDGET = 800;
 
+export const PHASE_JUDGMENT_VALUES = [
+  "pass",
+  "changes_required",
+  "blocked",
+] as const;
+export type PhaseJudgment = (typeof PHASE_JUDGMENT_VALUES)[number];
+
+const PHASE_JUDGMENT_ALIASES: Record<string, PhaseJudgment> = {
+  pass: "pass",
+  changes_required: "changes_required",
+  changesrequired: "changes_required",
+  blocked: "blocked",
+};
+
+const CHANGED_FILES_EMPTY_ALIASES = new Set<string>([
+  "",
+  "(none)",
+  "none",
+  "-",
+]);
+
 export type PlanAction = "approve" | "reject" | "revise";
 
 export interface DecisionItem {
@@ -53,6 +74,47 @@ export class DecisionValidationError extends Error {
     super(message);
     this.name = "DecisionValidationError";
   }
+}
+
+export function normalizePhaseJudgment(raw: unknown): PhaseJudgment | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const normalized = raw.trim().toLowerCase().replaceAll("-", "_");
+  return PHASE_JUDGMENT_ALIASES[normalized] ?? null;
+}
+
+export function normalizeChangedFiles(raw: unknown): string[] {
+  if (raw === null || raw === undefined) {
+    return [];
+  }
+
+  if (Array.isArray(raw)) {
+    const normalized: string[] = [];
+    for (const item of raw) {
+      normalized.push(...normalizeChangedFiles(item));
+    }
+    return normalized;
+  }
+
+  const text = String(raw).trim();
+  if (isChangedFilesEmptyAlias(text)) {
+    return [];
+  }
+
+  const normalized = text.split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .filter((item) => !isChangedFilesEmptyAlias(item));
+  return normalized;
+}
+
+export function normalizeChangedFilesText(raw: unknown): string {
+  const files = normalizeChangedFiles(raw);
+  if (files.length === 0) {
+    return "(none)";
+  }
+  return files.join(", ");
 }
 
 export function validateDecisionJson(payload: unknown): OrchestratorDecision {
@@ -215,6 +277,10 @@ function safeInt(
 function isTaskStatus(raw: string): raw is TaskStatus {
   return raw === "pending" || raw === "in_progress" || raw === "blocked" ||
     raw === "needs_approval" || raw === "completed";
+}
+
+function isChangedFilesEmptyAlias(raw: string): boolean {
+  return CHANGED_FILES_EMPTY_ALIASES.has(raw.trim().toLowerCase());
 }
 
 function isRecord(raw: unknown): raw is Record<string, unknown> {

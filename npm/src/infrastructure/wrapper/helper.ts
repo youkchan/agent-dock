@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import {
+  normalizeChangedFilesText,
+  normalizePhaseJudgment,
+} from "../../domain/decision.ts";
+import {
+  isDecisionTaskPhase,
+  normalizeTaskPhase,
+  type TaskPhase,
+} from "../../domain/task.ts";
 
 const DOTENV_DENY_MESSAGE =
   "deny rule violation: .env/.env.* references are forbidden in task payload";
@@ -12,8 +21,12 @@ const RESULT_KEYS = [
   "CHANGED_FILES",
   "CHECKS",
 ] as const;
+const OPTIONAL_RESULT_KEYS = [
+  "JUDGMENT",
+] as const;
 
 type ResultKey = (typeof RESULT_KEYS)[number];
+type OptionalResultKey = (typeof OPTIONAL_RESULT_KEYS)[number];
 type EnvReader = (name: string, fallback: string) => string;
 
 export class WrapperHelperError extends Error {
@@ -197,6 +210,50 @@ function buildProgressLogSummary(
   return { count, recent };
 }
 
+function resolveTaskPhase(
+  task: Record<string, unknown>,
+  progressLog: unknown[],
+): TaskPhase | null {
+  const direct = normalizeTaskPhase(task.current_phase);
+  if (direct !== null) {
+    return direct;
+  }
+
+  const indexRaw = task.current_phase_index;
+  if (typeof indexRaw === "number" && Number.isFinite(indexRaw)) {
+    const index = Math.trunc(indexRaw);
+    if (index >= 0) {
+      const policy = isRecord(task.persona_policy) ? task.persona_policy : null;
+      const order = policy && Array.isArray(policy.phase_order)
+        ? policy.phase_order
+        : null;
+      if (order && index < order.length) {
+        const byOrder = normalizeTaskPhase(order[index]);
+        if (byOrder !== null) {
+          return byOrder;
+        }
+      }
+    }
+  }
+
+  for (let idx = progressLog.length - 1; idx >= 0; idx -= 1) {
+    const entry = progressLog[idx];
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const text = String(entry.text ?? "");
+    const match = /\bphase=([a-z0-9_-]+)\b/iu.exec(text);
+    if (!match) {
+      continue;
+    }
+    const phase = normalizeTaskPhase(match[1]);
+    if (phase !== null) {
+      return phase;
+    }
+  }
+  return null;
+}
+
 export function buildPrompt(
   payload: Record<string, unknown>,
   readEnv: EnvReader = defaultEnv,
@@ -250,7 +307,7 @@ Constraints:
 - Do not read/reference/edit .env or .env.*
 - Keep steps short and concrete
 - Include local verification commands at the end
-- For \`deno test\`, use \`--allow-read --allow-write --allow-env\` by default
+- For \`deno test\`, use \`--allow-read --allow-write --allow-env --allow-run\` by default
 
 Output format:
 1) Acceptance criteria
@@ -261,6 +318,24 @@ Keep total output within 12 lines.`;
   }
 
   if (mode === "execute") {
+    const taskPhase = resolveTaskPhase(task, progressLog);
+    const requiresJudgment = isDecisionTaskPhase(taskPhase);
+    const changedFilesConstraint = taskPhase !== null && taskPhase !== "implement"
+      ? "- In non-implement phases, CHANGED_FILES must be (none)"
+      : "";
+    const outputContractText = requiresJudgment
+      ? `Final output must be exactly these 5 lines:
+RESULT: completed|blocked
+SUMMARY: <=100 chars
+CHANGED_FILES: comma-separated
+CHECKS: executed check commands
+JUDGMENT: pass|changes_required|blocked`
+      : `Final output must be exactly these 4 lines:
+RESULT: completed|blocked
+SUMMARY: <=100 chars
+CHANGED_FILES: comma-separated
+CHECKS: executed check commands`;
+
     let prompt = `You are implementation teammate ${teammateId}.
 Execute the task below.
 
@@ -278,14 +353,11 @@ Constraints:
 - Do not edit outside target_paths
 - Do not read/reference/edit .env or .env.*
 - Run required local checks
-- For \`deno test\`, use \`--allow-read --allow-write --allow-env\` by default
+- For \`deno test\`, use \`--allow-read --allow-write --allow-env --allow-run\` by default
 - If failed, provide a short root cause
+${changedFilesConstraint ? `${changedFilesConstraint}\n` : ""}
 
-Final output must be exactly these 4 lines:
-RESULT: completed|blocked
-SUMMARY: <=100 chars
-CHANGED_FILES: comma-separated
-CHECKS: executed check commands`;
+${outputContractText}`;
 
     const maxPromptChars = safeIntEnv(
       readEnv,
@@ -428,28 +500,70 @@ export function verifyDotenvSnapshotUnchanged(
   throw new WrapperHelperError(`${DOTENV_CHANGED_MESSAGE}${suffix}`, 4);
 }
 
-export function extractResultBlock(raw: string): string | null {
-  const lines = raw.split(/\r?\n/u).map((line) => line.trim()).filter((line) =>
-    line.length > 0
-  );
+interface ExtractResultOptions {
+  requiresJudgment?: boolean;
+}
+
+export function extractResultBlock(
+  raw: string,
+  options: ExtractResultOptions = {},
+): string | null {
+  const lines = raw.split(/\r?\n/u).map((line) => line.trim());
   const patterns: Record<ResultKey, RegExp> = {
     RESULT: /^RESULT:\s*(.+)$/u,
     SUMMARY: /^SUMMARY:\s*(.+)$/u,
-    CHANGED_FILES: /^CHANGED_FILES:\s*(.+)$/u,
+    CHANGED_FILES: /^CHANGED_FILES:\s*(.*)$/u,
     CHECKS: /^CHECKS:\s*(.+)$/u,
   };
+  const optionalPatterns: Record<OptionalResultKey, RegExp> = {
+    JUDGMENT: /^JUDGMENT:\s*(.*)$/u,
+  };
   const found: Partial<Record<ResultKey, string>> = {};
+  const optionalFound: Partial<Record<OptionalResultKey, string>> = {};
 
+  let blockStart = -1;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (patterns.RESULT.test(lines[index])) {
+      blockStart = index;
+      break;
+    }
+  }
+  if (blockStart < 0) {
+    return null;
+  }
+
+  for (let index = blockStart; index < lines.length; index += 1) {
     const line = lines[index];
+    if (line.length === 0) {
+      break;
+    }
+    let matched = false;
     for (const key of RESULT_KEYS) {
-      if (found[key] !== undefined) {
-        continue;
-      }
       const match = patterns[key].exec(line);
       if (match) {
+        if (found[key] !== undefined) {
+          return null;
+        }
         found[key] = match[1].trim();
+        matched = true;
+        break;
       }
+    }
+    if (!matched) {
+      for (const key of OPTIONAL_RESULT_KEYS) {
+        const match = optionalPatterns[key].exec(line);
+        if (match) {
+          if (optionalFound[key] !== undefined) {
+            return null;
+          }
+          optionalFound[key] = match[1].trim();
+          matched = true;
+          break;
+        }
+      }
+    }
+    if (!matched) {
+      break;
     }
   }
 
@@ -459,12 +573,25 @@ export function extractResultBlock(raw: string): string | null {
     }
   }
 
-  return [
+  const judgment = optionalFound.JUDGMENT === undefined
+    ? null
+    : normalizePhaseJudgment(optionalFound.JUDGMENT);
+  if (options.requiresJudgment && judgment === null) {
+    return null;
+  }
+  const includeJudgment = options.requiresJudgment || judgment !== null;
+
+  const normalizedChangedFiles = normalizeChangedFilesText(found.CHANGED_FILES);
+  const output = [
     `RESULT: ${found.RESULT}`,
     `SUMMARY: ${found.SUMMARY}`,
-    `CHANGED_FILES: ${found.CHANGED_FILES}`,
+    `CHANGED_FILES: ${normalizedChangedFiles}`,
     `CHECKS: ${found.CHECKS}`,
-  ].join("\n");
+  ];
+  if (includeJudgment) {
+    output.push(`JUDGMENT: ${judgment}`);
+  }
+  return output.join("\n");
 }
 
 export function extractResultToFile(
@@ -472,7 +599,14 @@ export function extractResultToFile(
   outputPath: string,
 ): void {
   const raw = Deno.readTextFileSync(streamPath);
-  const extracted = extractResultBlock(raw);
+  const phaseRaw = Deno.env.get("RESULT_PHASE");
+  const phase = normalizeTaskPhase(phaseRaw);
+  if (phase === null) {
+    throw new WrapperHelperError("missing or invalid RESULT_PHASE", 2);
+  }
+  const extracted = extractResultBlock(raw, {
+    requiresJudgment: isDecisionTaskPhase(phase),
+  });
   if (extracted === null) {
     throw new WrapperHelperError("result block not found", 2);
   }

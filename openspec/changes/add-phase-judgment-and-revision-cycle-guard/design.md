@@ -10,6 +10,14 @@
 そのため review/spec_check が修正要求を返しても、差し戻し遷移がなく、判定フェーズ側で修正継続が起き得る。
 また execute 出力契約は `RESULT: completed|blocked` の2値のみで、`changes_required` を受け取る入力契約が未定義である。
 
+## 要件正規化と受け入れ境界
+- 正規化方針: `requirements_text` は MUST/SHALL 単位に分割し、各要件に受け入れシナリオ（WHEN/THEN/AND）を最低1件対応づける。
+- 境界固定: 本 change の適用対象は TypeScript runtime（`src/**`）の persona 実行経路に限定し、Python runtime（`team_orchestrator/**`）は対象外とする。
+- 判定契約: review/spec_check/test は `JUDGMENT` 必須、implement は既存4行契約維持、判定フェーズは5行契約に拡張する。
+- fail-closed 原則: `JUDGMENT` 欠落・未知値・矛盾、非implement編集（`CHANGED_FILES` 非空）は `blocked` として扱う。
+- 差し戻し境界: `changes_required` は implement へ戻し、判定者が同一 task を連続実行しない運用を固定する。
+- ループ停止境界: `revision_count > max_revision_cycles` で `needs_approval` に遷移し、自動実行を停止する。
+
 ## 決定事項とトレードオフ
 ### 1) 判定値を `pass|changes_required|blocked` に統一する
 - 決定: `PhaseJudgment = Literal["pass", "changes_required", "blocked"]` を導入し、review/spec_check/test の結果をこの3値へ正規化する。

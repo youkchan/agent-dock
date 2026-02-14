@@ -5,6 +5,7 @@ import {
   normalizePersonaDefaults,
   normalizeTaskPersonaPolicy,
 } from "../../domain/persona_policy.ts";
+import { DEFAULT_MAX_REVISION_CYCLES } from "../../domain/task.ts";
 
 export class OpenSpecCompileError extends Error {
   constructor(message: string) {
@@ -58,6 +59,7 @@ const ALLOWED_TASK_OVERRIDE_KEYS = new Set<string>([
   "target_paths",
   "depends_on",
   "requires_plan",
+  "max_revision_cycles",
 ]);
 const DEFAULT_PERSONA_PHASE_ORDER = [
   "implement",
@@ -124,7 +126,9 @@ export function updateTasksMarkdownCheckboxes(
       if (isImplementationSectionHeading(headingTitle)) {
         inImplementationSection = true;
         implementationHeadingLevel = level;
-      } else if (inImplementationSection && level <= implementationHeadingLevel) {
+      } else if (
+        inImplementationSection && level <= implementationHeadingLevel
+      ) {
         inImplementationSection = false;
         implementationHeadingLevel = 0;
       }
@@ -987,6 +991,13 @@ function applyOverrides(
         }
         task.requires_plan = overrideItem.requires_plan;
       }
+
+      if ("max_revision_cycles" in overrideItem) {
+        task.max_revision_cycles = normalizeMaxRevisionCyclesOverride(
+          taskId,
+          overrideItem.max_revision_cycles,
+        );
+      }
     }
   }
 
@@ -1055,6 +1066,18 @@ function normalizeDependsOverride(taskId: string, value: unknown): string[] {
 
   throw new OpenSpecCompileError(
     `depends_on override must be list or string: ${taskId}`,
+  );
+}
+
+function normalizeMaxRevisionCyclesOverride(
+  taskId: string,
+  value: unknown,
+): number {
+  if (isNonNegativeInteger(value)) {
+    return value;
+  }
+  throw new OpenSpecCompileError(
+    `max_revision_cycles override must be a non-negative integer: ${taskId}`,
   );
 }
 
@@ -1138,6 +1161,15 @@ function validateCompiledPayload(
       throw new OpenSpecCompileError(`requires_plan must be bool: ${taskId}`);
     }
     rawTask.requires_plan = requiresPlan;
+
+    const maxRevisionCycles = rawTask.max_revision_cycles ??
+      DEFAULT_MAX_REVISION_CYCLES;
+    if (!isNonNegativeInteger(maxRevisionCycles)) {
+      throw new OpenSpecCompileError(
+        `max_revision_cycles must be a non-negative integer: ${taskId}`,
+      );
+    }
+    rawTask.max_revision_cycles = maxRevisionCycles;
   }
 
   const missingDependencies: string[] = [];
@@ -1193,9 +1225,14 @@ function validatePersonaPayload(
         Array.isArray(personaDefaults.phase_order) &&
         personaDefaults.phase_order.length > 0
       ) {
-        knownPhases = new Set(
-          personaDefaults.phase_order.map((phase) => String(phase)),
-        );
+        const defaultPhaseOrder = personaDefaults.phase_order
+          .map((phase) => String(phase));
+        knownPhases = new Set(defaultPhaseOrder);
+        if (!knownPhases.has("implement")) {
+          validationErrors.push(
+            "persona_defaults.phase_order must include implement",
+          );
+        }
       }
 
       if (isRecord(personaDefaults.phase_policies)) {
@@ -1231,8 +1268,16 @@ function validatePersonaPayload(
       let taskHasError = false;
       if (isRecord(normalizedPolicy)) {
         if (Array.isArray(normalizedPolicy.phase_order)) {
-          const unknownPhases = normalizedPolicy.phase_order
-            .map((phase) => String(phase))
+          const taskPhaseOrder = normalizedPolicy.phase_order
+            .map((phase) => String(phase));
+          if (!taskPhaseOrder.includes("implement")) {
+            validationErrors.push(
+              `task ${taskId} persona_policy.phase_order must include implement`,
+            );
+            taskHasError = true;
+          }
+
+          const unknownPhases = taskPhaseOrder
             .filter((phase) => !knownPhases.has(phase))
             .sort();
           if (unknownPhases.length > 0) {
@@ -1802,6 +1847,11 @@ function sortJsonValue(value: unknown): unknown {
 
 function isRecord(raw: unknown): raw is Record<string, unknown> {
   return typeof raw === "object" && raw !== null && !Array.isArray(raw);
+}
+
+function isNonNegativeInteger(raw: unknown): raw is number {
+  return typeof raw === "number" && Number.isFinite(raw) &&
+    Number.isInteger(raw) && raw >= 0;
 }
 
 function deepClone<T>(value: T): T {

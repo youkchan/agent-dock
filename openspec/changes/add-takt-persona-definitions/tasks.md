@@ -15,41 +15,41 @@
   - 対象: openspec/changes/add-takt-persona-definitions/proposal.md, openspec/changes/add-takt-persona-definitions/tasks.md
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: 既存 focus と追加ルールのマージ方針を定義し、置き換えではなく追記であることを明記する。
-- [ ] 1.3 `team_orchestrator/personas/default/implementer.yaml` の `focus` を既存内容にマージする
+- [ ] 1.3 `personas/default/implementer.yaml` の `focus` を既存内容にマージする
   - 依存: 1.2
-  - 対象: team_orchestrator/personas/default/implementer.yaml
+  - 対象: personas/default/implementer.yaml
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `implementer` の focus に `takt` 由来の実装注意事項を統合し、既存ガイド文を保持する。
-- [ ] 1.4 `team_orchestrator/personas/default/code-reviewer.yaml` の `focus` を既存内容にマージする
+- [ ] 1.4 `personas/default/code-reviewer.yaml` の `focus` を既存内容にマージする
   - 依存: 1.2
-  - 対象: team_orchestrator/personas/default/code-reviewer.yaml
+  - 対象: personas/default/code-reviewer.yaml
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `code-reviewer` の focus に `takt` 由来のレビュー観点を統合し、既存ガイド文を保持する。
-- [ ] 1.5 `team_orchestrator/personas/default/spec-checker.yaml` の `focus` を既存内容にマージする
+- [ ] 1.5 `personas/default/spec-checker.yaml` の `focus` を既存内容にマージする
   - 依存: 1.2
-  - 対象: team_orchestrator/personas/default/spec-checker.yaml
+  - 対象: personas/default/spec-checker.yaml
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `spec-checker` の focus に planner 由来の仕様監査観点を統合し、既存ガイド文を保持する。
-- [ ] 1.6 `team_orchestrator/personas/default/test-owner.yaml` の `focus` を既存内容にマージする
+- [ ] 1.6 `personas/default/test-owner.yaml` の `focus` を既存内容にマージする
   - 依存: 1.2
-  - 対象: team_orchestrator/personas/default/test-owner.yaml
+  - 対象: personas/default/test-owner.yaml
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `test-owner` の focus に test-planner/qa-reviewer 由来の検証観点を統合し、既存ガイド文を保持する。
-- [ ] 1.7 `npm/team_orchestrator/personas/default/*.yaml` を同内容へ同期する
+- [ ] 1.7 `npm/personas/default/*.yaml` を同内容へ同期する
   - 依存: 1.3, 1.4, 1.5, 1.6
-  - 対象: npm/team_orchestrator/personas/default/implementer.yaml, npm/team_orchestrator/personas/default/code-reviewer.yaml, npm/team_orchestrator/personas/default/spec-checker.yaml, npm/team_orchestrator/personas/default/test-owner.yaml
+  - 対象: npm/personas/default/implementer.yaml, npm/personas/default/code-reviewer.yaml, npm/personas/default/spec-checker.yaml, npm/personas/default/test-owner.yaml
   - フェーズ担当: implement=implementer; review=code-reviewer
-  - 成果物: Python runtime 側と npm 配布側の default persona 定義を同一内容にそろえる。
+  - 成果物: TypeScript runtime 側ソースと npm 配布側の default persona 定義を同一内容にそろえる。
 - [ ] 1.8 既存スキーマ（`id`, `role`, `focus`, `can_block`, `enabled`, optional `execution`）以外のキーを追加しない
   - 依存: 1.3, 1.4, 1.5, 1.6, 1.7
-  - 対象: team_orchestrator/personas/default/implementer.yaml, team_orchestrator/personas/default/code-reviewer.yaml, team_orchestrator/personas/default/spec-checker.yaml, team_orchestrator/personas/default/test-owner.yaml, npm/team_orchestrator/personas/default/implementer.yaml, npm/team_orchestrator/personas/default/code-reviewer.yaml, npm/team_orchestrator/personas/default/spec-checker.yaml, npm/team_orchestrator/personas/default/test-owner.yaml
+  - 対象: personas/default/implementer.yaml, personas/default/code-reviewer.yaml, personas/default/spec-checker.yaml, personas/default/test-owner.yaml, npm/personas/default/implementer.yaml, npm/personas/default/code-reviewer.yaml, npm/personas/default/spec-checker.yaml, npm/personas/default/test-owner.yaml
   - フェーズ担当: review=code-reviewer; spec_check=spec-checker
-  - 成果物: persona loader 互換を壊す未知キーを追加していないことを確認する。
+  - 成果物: persona loader 互換を壊す未知キーを追加していないことを確認する。あわせて YAML 表現は単純形式（`focus` は1行スカラー、`execution` のみ1段ネスト）を維持し、`|`/`>`、配列、2段以上ネストを導入しないことを確認する。
 - [ ] 1.9 default persona の読込テストを実行し、未知キーエラーや型エラーが発生しないことを確認する
   - 依存: 1.8
-  - 対象: src/infrastructure/persona/catalog_test.ts, tests/test_cli.py
+  - 対象: src/infrastructure/persona/catalog_test.ts, npm/src/infrastructure/persona/catalog_test.ts
   - フェーズ担当: spec_check=spec-checker; test=test-owner
-  - 成果物: TypeScript/Python の双方で default persona 読込が成功し、スキーマ整合が保たれる。
+  - 成果物: TypeScript runtime と npm 配布物の双方で default persona 読込が成功し、スキーマ整合が保たれる。単純 YAML 制約を破る記述が混入した場合は読込失敗として検知できる。
 - [ ] 1.10 `openspec validate add-takt-persona-definitions --strict` を実行し成功させる
   - 依存: 1.9
   - 対象: openspec/changes/add-takt-persona-definitions/proposal.md, openspec/changes/add-takt-persona-definitions/tasks.md, openspec/changes/add-takt-persona-definitions/specs/persona-catalog/spec.md

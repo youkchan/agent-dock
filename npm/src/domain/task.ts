@@ -16,6 +16,32 @@ export type TaskPlanStatus =
   | "rejected"
   | "revision_requested";
 
+export const TASK_PHASE_VALUES = [
+  "implement",
+  "review",
+  "spec_check",
+  "test",
+] as const;
+export type TaskPhase = (typeof TASK_PHASE_VALUES)[number];
+export type DecisionTaskPhase = Exclude<TaskPhase, "implement">;
+export const DEFAULT_MAX_REVISION_CYCLES = 3;
+
+export function normalizeTaskPhase(raw: unknown): TaskPhase | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const normalized = raw.trim().toLowerCase().replaceAll("-", "_");
+  if (isTaskPhase(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+export function isDecisionTaskPhase(raw: unknown): raw is DecisionTaskPhase {
+  const phase = normalizeTaskPhase(raw);
+  return phase !== null && phase !== "implement";
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -37,6 +63,8 @@ export interface Task {
   completed_at: number | null;
   persona_policy: TaskPersonaPolicy | null;
   current_phase_index: number | null;
+  revision_count: number;
+  max_revision_cycles: number;
 }
 
 export interface TaskInit {
@@ -60,6 +88,8 @@ export interface TaskInit {
   completed_at?: number | null;
   persona_policy?: TaskPersonaPolicy | null;
   current_phase_index?: number | null;
+  revision_count?: number | null;
+  max_revision_cycles?: number | null;
 }
 
 export function createTask(input: TaskInit): Task {
@@ -69,6 +99,8 @@ export function createTask(input: TaskInit): Task {
     input.plan_status ?? null,
     requiresPlan,
   );
+  const revisionCount = resolveRevisionCount(input.revision_count);
+  const maxRevisionCycles = resolveMaxRevisionCycles(input.max_revision_cycles);
 
   return {
     id: input.id,
@@ -91,6 +123,8 @@ export function createTask(input: TaskInit): Task {
     completed_at: input.completed_at ?? null,
     persona_policy: clonePersonaPolicy(input.persona_policy ?? null),
     current_phase_index: input.current_phase_index ?? null,
+    revision_count: revisionCount,
+    max_revision_cycles: maxRevisionCycles,
   };
 }
 
@@ -116,12 +150,22 @@ export function taskToRecord(task: Task): Record<string, unknown> {
     completed_at: task.completed_at,
     persona_policy: clonePersonaPolicy(task.persona_policy),
     current_phase_index: task.current_phase_index,
+    revision_count: task.revision_count,
+    max_revision_cycles: task.max_revision_cycles,
   };
 }
 
 export function taskFromRecord(raw: Record<string, unknown>): Task {
   const now = Date.now() / 1000;
   const currentPhaseIndex = raw.current_phase_index;
+  const revisionCount = asOptionalNonNegativeInteger(
+    raw.revision_count,
+    "revision_count",
+  );
+  const maxRevisionCycles = asOptionalNonNegativeInteger(
+    raw.max_revision_cycles,
+    "max_revision_cycles",
+  );
 
   return createTask({
     id: String(raw.id),
@@ -152,6 +196,8 @@ export function taskFromRecord(raw: Record<string, unknown>): Task {
     current_phase_index: typeof currentPhaseIndex === "number"
       ? Math.trunc(currentPhaseIndex)
       : null,
+    revision_count: revisionCount,
+    max_revision_cycles: maxRevisionCycles,
   });
 }
 
@@ -163,6 +209,26 @@ function resolvePlanStatus(
     return planStatus;
   }
   return requiresPlan ? "pending" : "not_required";
+}
+
+function resolveRevisionCount(raw: number | null | undefined): number {
+  if (raw === undefined) {
+    return 0;
+  }
+  if (raw === null || !isNonNegativeInteger(raw)) {
+    throw new Error("revision_count must be a non-negative integer");
+  }
+  return raw;
+}
+
+function resolveMaxRevisionCycles(raw: number | null | undefined): number {
+  if (raw === undefined) {
+    return DEFAULT_MAX_REVISION_CYCLES;
+  }
+  if (raw === null || !isNonNegativeInteger(raw)) {
+    throw new Error("max_revision_cycles must be a non-negative integer");
+  }
+  return raw;
 }
 
 function asTaskStatus(raw: unknown): TaskStatus {
@@ -177,6 +243,24 @@ function asTaskPlanStatus(raw: unknown): TaskPlanStatus | null {
     return raw as TaskPlanStatus;
   }
   return null;
+}
+
+function asOptionalNonNegativeInteger(
+  raw: unknown,
+  fieldName: string,
+): number | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!isNonNegativeInteger(raw)) {
+    throw new Error(`${fieldName} must be a non-negative integer`);
+  }
+  return raw;
+}
+
+function isTaskPhase(raw: string): raw is TaskPhase {
+  return raw === "implement" || raw === "review" || raw === "spec_check" ||
+    raw === "test";
 }
 
 function asStringArray(raw: unknown): string[] {
@@ -201,6 +285,10 @@ function cloneRecordList(
   raw: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
   return raw.map((item) => ({ ...item }));
+}
+
+function isNonNegativeInteger(raw: unknown): raw is number {
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= 0;
 }
 
 function clonePersonaPolicy(

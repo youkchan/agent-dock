@@ -3,6 +3,7 @@ import {
   collectDotenvSnapshot,
   containsDotenvReference,
   extractResultBlock,
+  extractResultToFile,
   sanitizePromptText,
   verifyDotenvSnapshotUnchanged,
   WrapperHelperError,
@@ -29,6 +30,24 @@ function makeEnv(
   return (name: string, fallback: string): string => {
     return (vars[name] ?? fallback).trim();
   };
+}
+
+function withEnv(name: string, value: string | undefined, run: () => void): void {
+  const original = Deno.env.get(name);
+  if (value === undefined) {
+    Deno.env.delete(name);
+  } else {
+    Deno.env.set(name, value);
+  }
+  try {
+    run();
+  } finally {
+    if (original === undefined) {
+      Deno.env.delete(name);
+    } else {
+      Deno.env.set(name, original);
+    }
+  }
 }
 
 Deno.test("containsDotenvReference detects .env path tokens", () => {
@@ -185,4 +204,91 @@ Deno.test("extractResultBlock reads last 4-line result block", () => {
       ].join("\n"),
     `unexpected extracted block: ${extracted}`,
   );
+});
+
+Deno.test("extractResultBlock fail-closes when decision phase result misses JUDGMENT", () => {
+  const raw = [
+    "RESULT: completed",
+    "SUMMARY: done",
+    "CHANGED_FILES: (none)",
+    "CHECKS: deno test",
+  ].join("\n");
+  const extracted = extractResultBlock(raw, {
+    requiresJudgment: true,
+  });
+  assert(extracted === null, "expected null when JUDGMENT is missing");
+});
+
+Deno.test("extractResultBlock ignores stale JUDGMENT outside last result block", () => {
+  const raw = [
+    "JUDGMENT: pass",
+    "RESULT: completed",
+    "SUMMARY: done",
+    "CHANGED_FILES: (none)",
+    "CHECKS: deno test",
+  ].join("\n");
+  const extracted = extractResultBlock(raw, {
+    requiresJudgment: true,
+  });
+  assert(
+    extracted === null,
+    "expected null when JUDGMENT is not in the last result block",
+  );
+});
+
+Deno.test("extractResultBlock keeps normalized JUDGMENT for decision phase", () => {
+  const raw = [
+    "RESULT: completed",
+    "SUMMARY: done",
+    "CHANGED_FILES: none",
+    "CHECKS: deno test",
+    "JUDGMENT: changes-required",
+  ].join("\n");
+  const extracted = extractResultBlock(raw, {
+    requiresJudgment: true,
+  });
+  assert(extracted !== null, "expected extracted block");
+  assert(
+    extracted ===
+      [
+        "RESULT: completed",
+        "SUMMARY: done",
+        "CHANGED_FILES: (none)",
+        "CHECKS: deno test",
+        "JUDGMENT: changes_required",
+      ].join("\n"),
+    `unexpected extracted block: ${extracted}`,
+  );
+});
+
+Deno.test("extractResultToFile fail-closes when RESULT_PHASE is missing", () => {
+  withTempDir((root) => {
+    const streamPath = `${root}/stream.log`;
+    const outputPath = `${root}/output.log`;
+    Deno.writeTextFileSync(
+      streamPath,
+      [
+        "RESULT: completed",
+        "SUMMARY: done",
+        "CHANGED_FILES: (none)",
+        "CHECKS: deno test",
+      ].join("\n"),
+    );
+
+    let thrown: unknown = null;
+    withEnv("RESULT_PHASE", undefined, () => {
+      try {
+        extractResultToFile(streamPath, outputPath);
+      } catch (error) {
+        thrown = error;
+      }
+    });
+
+    assert(thrown instanceof WrapperHelperError, "expected WrapperHelperError");
+    assert(thrown.exitCode === 2, "expected missing env exit code 2");
+    assert(
+      thrown.message.includes("missing or invalid RESULT_PHASE"),
+      `unexpected message: ${thrown.message}`,
+    );
+  });
 });

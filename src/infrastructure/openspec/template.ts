@@ -42,7 +42,7 @@ const OPENSPEC_TASKS_TEMPLATE_BY_LANG: Record<SupportedTemplateLang, string> = {
 - persona_defaults.phase_order: implement, review, spec_check, test
 - persona_defaults: {"phase_order":["implement","review","spec_check","test"]}
 - フェーズ担当: implement=implementer; review=code-reviewer; spec_check=spec-checker; test=test-owner
-- personas: [{"id":"implementer","role":"implementer","focus":"実装を前進させる","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"code-reviewer","role":"reviewer","focus":"品質と回帰リスクを確認する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"spec-checker","role":"spec_guard","focus":"仕様逸脱を防ぐ","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"test-owner","role":"test_guard","focus":"検証の十分性を担保する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}}]
+- personas: [{"id":"implementer","role":"implementer","focus":"実装を前進させる","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"code-reviewer","role":"reviewer","focus":"品質と回帰リスクを確認する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"spec-checker","role":"spec_guard","focus":"仕様逸脱を防ぐ","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"test-owner","role":"test_guard","focus":"検証の十分性を担保し、要件ごとにtransport経路テストとfail-closed拒否テストを確認する","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}}]
 
 ### 0.1 テンプレート利用ルール
 - この雛形を \`openspec/changes/<change-id>/tasks.md\` にコピーし、\`<...>\` を実タスクで置換する。
@@ -53,6 +53,9 @@ const OPENSPEC_TASKS_TEMPLATE_BY_LANG: Record<SupportedTemplateLang, string> = {
 - 例: \`- フェーズ担当: implement=implementer; review=code-reviewer\`（未指定フェーズはグローバル既定を使う）。
 - すべての実施項目（検証を含む）は **\`## 1. 実装タスク\` のチェックボックス付きタスク** として記述する（\`## 2. 検証項目\` は使わない）。
 - 人間向けメモは \`## 2. 人間向けメモ（コンパイラ非対象）\` に **チェックボックスなし** で記述する。
+- MUST/SHALL ごとに \`transport\` 経路（producer -> carrier -> consumer）を定義し、対象タスクへ明記する。
+- MUST/SHALL ごとに fail-closed の拒否点（どこで、何を理由に reject/block するか）を定義し、対象タスクへ明記する。
+- MUST/SHALL ごとに「経路テスト1件 + 拒否テスト1件」を対応付け、実行コマンドを対象タスクへ明記する。
 
 ${PROVIDER_COMPLETION_GATE_SECTION_BY_LANG.ja}
 
@@ -65,7 +68,7 @@ ${PROVIDER_COMPLETION_GATE_SECTION_BY_LANG.ja}
 - [ ] 1.2 <次のタスクタイトル>
   - 依存: 1.1
   - 対象: <path/to/file>
-  - フェーズ担当: spec_check=spec-checker; test=test-owner
+  - フェーズ担当: implement=implementer; spec_check=spec-checker; test=test-owner
   - 成果物: <成果物または説明>
 
 ## 2. 人間向けメモ（コンパイラ非対象）
@@ -76,7 +79,7 @@ ${PROVIDER_COMPLETION_GATE_SECTION_BY_LANG.ja}
 - persona_defaults.phase_order: implement, review, spec_check, test
 - persona_defaults: {"phase_order":["implement","review","spec_check","test"]}
 - phase assignments: implement=implementer; review=code-reviewer; spec_check=spec-checker; test=test-owner
-- personas: [{"id":"implementer","role":"implementer","focus":"drive implementation forward","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"code-reviewer","role":"reviewer","focus":"check quality and regression risk","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"spec-checker","role":"spec_guard","focus":"prevent requirement drift","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"test-owner","role":"test_guard","focus":"ensure verification completeness","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}}]
+- personas: [{"id":"implementer","role":"implementer","focus":"drive implementation forward","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"code-reviewer","role":"reviewer","focus":"check quality and regression risk","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"spec-checker","role":"spec_guard","focus":"prevent requirement drift","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"test-owner","role":"test_guard","focus":"ensure verification completeness by checking both transport-path tests and fail-closed rejection tests per requirement","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}}]
 
 ### 0.1 Template Usage Rules
 - Copy this template to \`openspec/changes/<change-id>/tasks.md\` and replace \`<...>\` placeholders.
@@ -87,6 +90,9 @@ ${PROVIDER_COMPLETION_GATE_SECTION_BY_LANG.ja}
 - Example: \`- phase assignments: implement=implementer; review=code-reviewer\` (unspecified phases keep global defaults).
 - Put every executable item (including verification) in **\`## 1. Implementation\` as checkbox tasks** (\`## 2. Verification Checklist\` should not be used).
 - Keep human notes under \`## 2. Human Notes (non-compiled)\` with **no checkboxes**.
+- For each MUST/SHALL, define the \`transport\` path (producer -> carrier -> consumer) and map it to implementation tasks.
+- For each MUST/SHALL, define fail-closed rejection points (where and why to reject/block) and map them to implementation tasks.
+- For each MUST/SHALL, attach one transport-path test and one rejection test, and record executable commands in implementation tasks.
 
 ${PROVIDER_COMPLETION_GATE_SECTION_BY_LANG.en}
 
@@ -99,7 +105,7 @@ ${PROVIDER_COMPLETION_GATE_SECTION_BY_LANG.en}
 - [ ] 1.2 <next task title>
   - Depends on: 1.1
   - Target paths: <path/to/file>
-  - phase assignments: spec_check=spec-checker; test=test-owner
+  - phase assignments: implement=implementer; spec_check=spec-checker; test=test-owner
   - Description: <deliverable or description>
 
 ## 2. Human Notes (non-compiled)

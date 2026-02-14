@@ -9,9 +9,9 @@
 - file: openspec/changes/add-phase-judgment-and-revision-cycle-guard/proposal.md
 - service: openspec-change-doc
 - function: normalize-change-scope
-- purpose: requirements_text を proposal の Why/What Changes/Impact に正規化する。
+- purpose: requirements_text を proposal の MUST/SHALL 要件、受け入れシナリオ、最小スコープへ正規化する。
 - input: requirements_text
-- output: 最小スコープの提案定義
+- output: Why/What Changes/Impact と正規化要件・受け入れシナリオを含む提案定義
 - error: 非目標混入は仕様差し戻し
 - test: `openspec validate add-phase-judgment-and-revision-cycle-guard --strict`
 
@@ -19,9 +19,9 @@
 - file: openspec/changes/add-phase-judgment-and-revision-cycle-guard/tasks.md
 - service: openspec-task-plan
 - function: align-task-breakdown
-- purpose: 要求仕様を実装タスクへ分解し、依存関係と担当フェーズを固定する。
+- purpose: 正規化済み要件を実装タスクへ分解し、依存関係と担当フェーズを固定する。
 - input: 正規化済み要件
-- output: チェックボックス付き実装タスク
+- output: チェックボックス付き実装タスクと 1.1 完了条件
 - error: 依存や対象パス欠落は計画不備
 - test: `openspec validate add-phase-judgment-and-revision-cycle-guard --strict`
 
@@ -29,9 +29,9 @@
 - file: openspec/changes/add-phase-judgment-and-revision-cycle-guard/design.md
 - service: openspec-design
 - function: define-transition-design
-- purpose: 判定モデル、差し戻し遷移、revision guard の設計を明文化する。
-- input: requirements_text と非目標
-- output: 実装判断の設計境界
+- purpose: 判定モデル、差し戻し遷移、revision guard の設計と受け入れ境界を明文化する。
+- input: 正規化済み要件と非目標
+- output: 実装判断の設計境界と fail-closed 原則
 - error: teammate 互換性境界の欠落は設計不備
 - test: design 記述レビュー
 
@@ -49,9 +49,9 @@
 - file: openspec/changes/add-phase-judgment-and-revision-cycle-guard/specs/add-phase-judgment-and-revision-cycle-guard/spec.md
 - service: openspec-delta-spec
 - function: encode-requirements-as-scenarios
-- purpose: MUST/SHALL を Requirement/Scenario 形式へ展開する。
+- purpose: MUST/SHALL を Requirement/Scenario 形式へ展開し、判定・差し戻し・上限停止の受け入れ条件を固定する。
 - input: 正規化済み要件
-- output: ADDED Requirements と受け入れシナリオ
+- output: ADDED Requirements と受け入れシナリオ（WHEN/THEN/AND）
 - error: Scenario 欠落は validate 失敗
 - test: `openspec validate add-phase-judgment-and-revision-cycle-guard --strict`
 

@@ -7,7 +7,7 @@
 
 ## Preconditions
 - `add-file-based-persona-catalog` は完了済み（archive 済み）。
-- TypeScript runtime で `team_orchestrator/personas/default/*.yaml` 読込が有効。
+- TypeScript runtime で `personas/default/*.yaml` 読込が有効。
 
 ## What Changes
 - default 4 persona（`implementer`, `code-reviewer`, `spec-checker`, `test-owner`）の `focus` は既存内容を保持しつつ、`takt` の persona/instruction/policy 由来の実装注意事項をマージする（置き換えしない）。
@@ -17,7 +17,8 @@
   - `spec-checker`: `../takt/builtins/ja/personas/planner.md`
   - `test-owner`: `../takt/builtins/ja/personas/qa-reviewer.md`, `../takt/builtins/ja/personas/test-planner.md`, `../takt/builtins/ja/instructions/review-test.md`, `../takt/builtins/ja/instructions/implement-test.md`
 - ランタイム互換維持のため、persona YAML のスキーマは既存互換を維持する（`id`, `role`, `focus`, `can_block`, `enabled`, optional `execution`）。
-- 配布物整合のため、`team_orchestrator/personas/default/*.yaml` と `npm/team_orchestrator/personas/default/*.yaml` の両方を同期更新する。
+- 現行 persona loader 互換のため、YAML 表現は単純形式に限定する（トップレベルはスカラーのみ、`execution` のみ1段ネスト可）。`focus` は1行スカラーで記述し、複数行ブロックスカラー（`|`/`>`）、配列、2段以上のネストは使用しない。
+- 配布物整合のため、ソース定義 `personas/default/*.yaml` を更新し、配布物 `npm/personas/default/*.yaml` を同期更新する。
 
 ## Non-Goals
 - runtime での新キー使用（`principles`, `do_not`, `checklist` 等）。
@@ -26,6 +27,6 @@
 ## Impact
 - Affected specs: `persona-catalog`
 - Affected code:
-  - `team_orchestrator/personas/default/*.yaml`
-  - `npm/team_orchestrator/personas/default/*.yaml`
+  - `personas/default/*.yaml`
+  - `npm/personas/default/*.yaml`
   - （必要時）対応テスト

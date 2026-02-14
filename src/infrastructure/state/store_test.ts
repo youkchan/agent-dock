@@ -260,3 +260,25 @@ Deno.test("StateStore handoff task phase requeues with next phase index", () => 
     assertEqual(handed.current_phase_index, 1, "next phase index");
   });
 });
+
+Deno.test("StateStore sendBackTaskToPhase increments revision count when requested", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "A",
+        title: "task A",
+        status: "in_progress",
+        owner: "tm-1",
+        target_paths: ["src/a.ts"],
+        current_phase_index: 1,
+      }),
+    ]);
+
+    const sentBack = store.sendBackTaskToPhase("A", "tm-1", 0, true);
+    assertEqual(sentBack.status, "pending", "sendback should requeue task");
+    assertEqual(sentBack.owner, null, "sendback should clear owner");
+    assertEqual(sentBack.current_phase_index, 0, "sendback phase index");
+    assertEqual(sentBack.revision_count, 1, "sendback revision count");
+  });
+});

@@ -51,6 +51,8 @@ Deno.test("ja template contains required fixed lines", () => {
     "## 1. 実装タスク",
     "実施項目（検証を含む）",
     "## 2. 人間向けメモ（コンパイラ非対象）",
+    "transport` 経路",
+    "fail-closed の拒否点",
   ];
   for (const item of required) {
     if (!template.includes(item)) {
@@ -71,6 +73,8 @@ Deno.test("en template contains required fixed lines", () => {
     "## 1. Implementation",
     "every executable item (including verification)",
     "## 2. Human Notes (non-compiled)",
+    "transport` path",
+    "fail-closed rejection points",
   ];
   for (const item of required) {
     if (!template.includes(item)) {

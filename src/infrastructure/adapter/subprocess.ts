@@ -5,8 +5,8 @@ import type {
   ProgressCallback,
   TeammateAdapter,
 } from "../../application/orchestrator/orchestrator.ts";
-import type { Task } from "../../domain/task.ts";
-import { taskToRecord } from "../../domain/task.ts";
+import type { Task, TaskPhase } from "../../domain/task.ts";
+import { normalizeTaskPhase, taskToRecord } from "../../domain/task.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 120;
 
@@ -15,6 +15,7 @@ export interface SubprocessCodexAdapterOptions {
   executeCommand: string[];
   timeoutSeconds?: number;
   extraEnv?: Record<string, string>;
+  executionSandboxByTeammateId?: Record<string, string>;
 }
 
 export class SubprocessCodexAdapter implements TeammateAdapter {
@@ -22,6 +23,7 @@ export class SubprocessCodexAdapter implements TeammateAdapter {
   readonly executeCommand: string[];
   readonly timeoutSeconds: number;
   readonly extraEnv: Record<string, string>;
+  readonly executionSandboxByTeammateId: Record<string, string>;
 
   constructor(options: SubprocessCodexAdapterOptions) {
     this.planCommand = [...options.planCommand];
@@ -31,6 +33,9 @@ export class SubprocessCodexAdapter implements TeammateAdapter {
       Math.trunc(options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS),
     );
     this.extraEnv = { ...(options.extraEnv ?? {}) };
+    this.executionSandboxByTeammateId = {
+      ...(options.executionSandboxByTeammateId ?? {}),
+    };
   }
 
   static emitProgress(
@@ -51,11 +56,16 @@ export class SubprocessCodexAdapter implements TeammateAdapter {
   }
 
   buildPlan(teammateId: string, task: Task): string {
-    return this.run(this.planCommand, {
-      mode: "plan",
-      teammate_id: teammateId,
-      task: taskToRecord(task),
-    });
+    return this.run(
+      this.planCommand,
+      {
+        mode: "plan",
+        teammate_id: teammateId,
+        task: taskToRecord(task),
+      },
+      undefined,
+      this.sandboxEnvForTeammate(teammateId),
+    );
   }
 
   executeTask(
@@ -63,6 +73,10 @@ export class SubprocessCodexAdapter implements TeammateAdapter {
     task: Task,
     progressCallback?: ProgressCallback,
   ): string {
+    const runtimeEnv = {
+      ...this.sandboxEnvForTeammate(teammateId),
+      RESULT_PHASE: this.resolveResultPhase(task),
+    };
     return this.run(
       this.executeCommand,
       {
@@ -71,6 +85,7 @@ export class SubprocessCodexAdapter implements TeammateAdapter {
         task: taskToRecord(task),
       },
       progressCallback,
+      runtimeEnv,
     );
   }
 
@@ -78,6 +93,7 @@ export class SubprocessCodexAdapter implements TeammateAdapter {
     command: string[],
     payload: Record<string, unknown>,
     progressCallback?: ProgressCallback,
+    runtimeEnv: Record<string, string> = {},
   ): string {
     if (command.length === 0) {
       throw new Error("command is empty");
@@ -98,6 +114,7 @@ export class SubprocessCodexAdapter implements TeammateAdapter {
       env: {
         ...process.env,
         ...this.extraEnv,
+        ...runtimeEnv,
       },
       maxBuffer: 10 * 1024 * 1024,
     });
@@ -135,6 +152,64 @@ export class SubprocessCodexAdapter implements TeammateAdapter {
       throw new Error(`empty response from command: ${displayCommand}`);
     }
     return stdout;
+  }
+
+  private sandboxEnvForTeammate(teammateId: string): Record<string, string> {
+    const sandbox = this.executionSandboxByTeammateId[teammateId]?.trim();
+    if (!sandbox) {
+      return {};
+    }
+    return { CODEX_SANDBOX: sandbox };
+  }
+
+  private resolveResultPhase(task: Task): TaskPhase {
+    const fromProgressLog = this.resolveResultPhaseFromProgressLog(
+      task.progress_log,
+    );
+    if (fromProgressLog !== null) {
+      return fromProgressLog;
+    }
+
+    const fromPhaseIndex = this.resolveResultPhaseFromCurrentPhaseIndex(task);
+    if (fromPhaseIndex !== null) {
+      return fromPhaseIndex;
+    }
+
+    return "implement";
+  }
+
+  private resolveResultPhaseFromProgressLog(
+    progressLog: Array<Record<string, unknown>>,
+  ): TaskPhase | null {
+    for (let index = progressLog.length - 1; index >= 0; index -= 1) {
+      const text = String(progressLog[index]?.text ?? "");
+      const match = /\bphase=([a-z0-9_-]+)\b/iu.exec(text);
+      if (!match) {
+        continue;
+      }
+      const phase = normalizeTaskPhase(match[1]);
+      if (phase !== null) {
+        return phase;
+      }
+    }
+    return null;
+  }
+
+  private resolveResultPhaseFromCurrentPhaseIndex(task: Task): TaskPhase | null {
+    const phaseIndexRaw = task.current_phase_index;
+    if (typeof phaseIndexRaw !== "number" || !Number.isFinite(phaseIndexRaw)) {
+      return null;
+    }
+    const phaseIndex = Math.trunc(phaseIndexRaw);
+    if (phaseIndex < 0) {
+      return null;
+    }
+
+    const phaseOrder = task.persona_policy?.phase_order;
+    if (!Array.isArray(phaseOrder) || phaseIndex >= phaseOrder.length) {
+      return null;
+    }
+    return normalizeTaskPhase(phaseOrder[phaseIndex]);
   }
 }
 

@@ -20,37 +20,38 @@
 - `not implemented` 等の未実装エラーは未完了として扱う（fail-closed）。
 
 ## 1. 実装タスク
-- [ ] 1.1 要件をOpenSpec要素へ正規化する
+- [x] 1.1 要件をOpenSpec要素へ正規化する
   - 依存: なし
   - 対象: openspec/changes/add-phase-judgment-and-revision-cycle-guard/proposal.md, openspec/changes/add-phase-judgment-and-revision-cycle-guard/tasks.md, openspec/changes/add-phase-judgment-and-revision-cycle-guard/design.md, openspec/changes/add-phase-judgment-and-revision-cycle-guard/code_summary.md, openspec/changes/add-phase-judgment-and-revision-cycle-guard/specs/add-phase-judgment-and-revision-cycle-guard/spec.md, openspec/changes/add-phase-judgment-and-revision-cycle-guard/specs/runtime-platform-migration/spec.md
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: requirements_text を MUST/SHALL と受け入れシナリオへ整理し、change の最小スコープを固定する。
-- [ ] 1.2 フェーズ判定結果モデルを導入する
+  - 完了条件: proposal/design/spec に正規化要件と受け入れシナリオが反映され、対象外スコープが明示されている。
+- [x] 1.2 フェーズ判定結果モデルを導入する
   - 依存: 1.1
   - 対象: src/domain/task.ts, src/domain/decision.ts, src/application/orchestrator/orchestrator.ts, src/infrastructure/wrapper/helper.ts, docs/ts-wrapper-contract.md, openspec/changes/add-phase-judgment-and-revision-cycle-guard/specs/runtime-platform-migration/spec.md
   - フェーズ担当: implement=implementer; review=code-reviewer; spec_check=spec-checker
   - 成果物: 判定値 `pass|changes_required|blocked` を扱う共通モデルと正規化処理を追加し、判定フェーズ出力に `JUDGMENT` 必須契約を導入する。wrapper 契約は implement=4行維持、review/spec_check/test=5行（`JUDGMENT` 追加）の互換拡張として定義する。`CHANGED_FILES` は `"(none)"` を正規空表現にし、`none` / `-` / 空文字を互換空表現として正規化する。
-- [ ] 1.3 changes_required 差し戻し遷移を実装する
+- [x] 1.3 changes_required 差し戻し遷移を実装する
   - 依存: 1.2
   - 対象: src/application/orchestrator/orchestrator.ts, src/infrastructure/state/store.ts, src/infrastructure/wrapper/helper.ts, src/cli/main.ts, src/infrastructure/adapter/subprocess.ts
   - フェーズ担当: implement=implementer; review=code-reviewer; spec_check=spec-checker
   - 成果物: `changes_required` 時に `status=pending` / `owner=null` / `current_phase_index=implement` を適用し、判定者の連続実行を止める。非implementフェーズで `CHANGED_FILES` が非空の場合は `blocked` に倒す。persona の `execution.sandbox` を実行時に `CODEX_SANDBOX` へ反映する。
-- [ ] 1.4 revision cycle guard を実装する
+- [x] 1.4 revision cycle guard を実装する
   - 依存: 1.3
   - 対象: src/domain/task.ts, src/infrastructure/state/store.ts, src/application/orchestrator/orchestrator.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `revision_count` と `max_revision_cycles` を state 管理し、`initial=0`、`changes_required` でのみ加算、`pass` では未リセット、`resume` で保持、`>` 境界で停止を実装する。`max_revision_cycles` は task 単位の非負整数とし、未設定時は `3` を補完、不正値は compile で fail-closed reject する。
-- [ ] 1.5 差し戻し通知の標準文言を実装する
+- [x] 1.5 差し戻し通知の標準文言を実装する
   - 依存: 1.3, 1.4
   - 対象: src/application/orchestrator/orchestrator.ts, src/infrastructure/state/store.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: 差し戻し理由を progress log と mailbox に保存する定型メッセージを追加する。
-- [ ] 1.6 orchestrator/state のユニットテストを追加する
+- [x] 1.6 orchestrator/state のユニットテストを追加する
   - 依存: 1.2, 1.3, 1.4, 1.5
   - 対象: src/application/orchestrator/orchestrator_test.ts, src/infrastructure/state/store_test.ts, src/infrastructure/wrapper/helper_test.ts, src/cli/main_test.ts, src/infrastructure/adapter/subprocess_test.ts
   - フェーズ担当: implement=implementer; review=code-reviewer; test=test-owner
   - 成果物: pass / changes_required / blocked、`JUDGMENT` 欠落 fail-closed、非implement編集違反（`CHANGED_FILES` 非空）blocked、差し戻し、上限超過遷移、persona `sandbox` 実行時反映をテストで固定する。
-- [ ] 1.7 persona mode / teammate mode の回帰を検証する
+- [x] 1.7 persona mode / teammate mode の回帰を検証する
   - 依存: 1.6
   - 対象: src/application/orchestrator/orchestrator_test.ts, src/infrastructure/openspec/compiler.ts, src/infrastructure/openspec/compiler_test.ts
   - フェーズ担当: implement=implementer; review=code-reviewer; spec_check=spec-checker; test=test-owner
@@ -63,7 +64,7 @@
 - MUST: 判定値は `pass|changes_required|blocked` の3値に統一する。
 - MUST: review/spec_check/test の判定フェーズでは `JUDGMENT: pass|changes_required|blocked` を必須とし、欠落・未知値は fail-closed で `blocked` とする。
 - MUST: wrapper 出力契約は互換拡張とし、implement は既存4行を維持し、review/spec_check/test は `JUDGMENT` を追加した5行を必須とする。
-- MUST: `CHANGED_FILES` の正規空表現は `"(none)"` とし、`none` / `-` / 空文字は互換空表現として空に正規化する。
+- MUST: `CHANGED_FILES` の正規空表現は `(none)` とし、`none` / `-` / 空文字は互換空表現として空に正規化する。
 - MUST: review/spec_check/test で `CHANGED_FILES` が非空の場合は、編集違反として fail-closed で `blocked` とする。
 - MUST: persona の `execution.sandbox` は実行時に `CODEX_SANDBOX` へ反映され、phase ごとの sandbox 方針が実際の実行コマンドに適用される。
 - MUST: `pass` 判定時は `phase_order` に従って前進し、次フェーズが存在する場合は handoff、存在しない場合は `completed` へ遷移する。

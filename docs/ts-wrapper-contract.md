@@ -71,4 +71,4 @@
   - `build-prompt`: `PAYLOAD` を解釈して prompt を stdout へ出力。
   - `snapshot-dotenv`: `TARGET_PROJECT_DIR` を走査し、`SNAPSHOT_PATH` へハッシュ JSON を保存。
   - `verify-dotenv`: `SNAPSHOT_PATH` と現行スナップショットを比較し、差分時は fail-closed で終了。
-  - `extract-result`: `STREAM_PATH` から phase に応じて 4 行（implement）または 5 行（review/spec_check/test）結果を抽出して `OUTPUT_PATH` へ保存。`CHANGED_FILES` の空表現は `(none)` を正規値として出力し、互換空表現は内部で正規化する。
+  - `extract-result`: `STREAM_PATH` から phase に応じて 4 行（implement）または 5 行（review/spec_check/test）結果を抽出して `OUTPUT_PATH` へ保存。`RESULT_PHASE` が `review|spec_check|test` の場合は `JUDGMENT` を必須として fail-closed で抽出失敗とする。`CHANGED_FILES` の空表現は `(none)` を正規値として出力し、互換空表現は内部で正規化する。

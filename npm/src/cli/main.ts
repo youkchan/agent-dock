@@ -142,6 +142,7 @@ export interface TeammateAdapterArgs {
   planCommand: string;
   executeCommand: string;
   commandTimeout: number;
+  personaExecutionSandboxes?: Record<string, string> | null;
 }
 
 const RUN_USAGE = [
@@ -255,8 +256,52 @@ export function buildTeammateAdapter(
     planCommand: parseCommand(planRaw, "plan command"),
     executeCommand: parseCommand(executeRaw, "execute command"),
     timeoutSeconds: Math.max(1, Math.trunc(args.commandTimeout)),
+    executionSandboxByTeammateId: normalizeExecutionSandboxMap(
+      args.personaExecutionSandboxes,
+    ),
   };
   return new SubprocessCodexAdapter(options);
+}
+
+function normalizeExecutionSandboxMap(
+  rawMap: Record<string, string> | null | undefined,
+): Record<string, string> | undefined {
+  if (rawMap === null || rawMap === undefined) {
+    return undefined;
+  }
+  const normalized: Record<string, string> = {};
+  for (const [teammateId, sandboxRaw] of Object.entries(rawMap)) {
+    const id = teammateId.trim();
+    const sandbox = String(sandboxRaw).trim();
+    if (!id || !sandbox) {
+      continue;
+    }
+    normalized[id] = sandbox;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function collectPersonaExecutionSandboxes(
+  personas: PersonaDefinition[] | null,
+): Record<string, string> {
+  if (!personas) {
+    return {};
+  }
+  const sandboxes: Record<string, string> = {};
+  for (const persona of personas) {
+    if (!persona.enabled || persona.execution === null) {
+      continue;
+    }
+    if (!persona.execution.enabled) {
+      continue;
+    }
+    const sandbox = persona.execution.sandbox.trim();
+    if (!sandbox) {
+      continue;
+    }
+    sandboxes[persona.id] = sandbox;
+  }
+  return sandboxes;
 }
 
 export function defaultTeammateCommand(executablePath?: string): string {
@@ -1120,6 +1165,9 @@ function runCommand(argv: string[], io: CliIO): number {
     planCommand: args.planCommand,
     executeCommand: args.executeCommand,
     commandTimeout: args.commandTimeout,
+    personaExecutionSandboxes: collectPersonaExecutionSandboxes(
+      loaded.personas,
+    ),
   });
 
   const orchestrator = new AgentTeamsLikeOrchestrator({
@@ -1265,6 +1313,16 @@ function loadTasksPayload(
         knownPersonaIds,
       }),
       current_phase_index: asOptionalNumber(taskRaw.current_phase_index),
+      revision_count: asOptionalNonNegativeInteger(
+        taskRaw.revision_count,
+        `tasks[${index}].revision_count`,
+        sourceLabel,
+      ),
+      max_revision_cycles: asOptionalNonNegativeInteger(
+        taskRaw.max_revision_cycles,
+        `tasks[${index}].max_revision_cycles`,
+        sourceLabel,
+      ),
     });
 
     tasks.push(task);
@@ -1449,6 +1507,25 @@ function asOptionalNumber(raw: unknown): number | undefined {
   }
   if (!Number.isFinite(raw)) {
     return undefined;
+  }
+  return raw;
+}
+
+function asOptionalNonNegativeInteger(
+  raw: unknown,
+  fieldName: string,
+  sourceLabel: string,
+): number | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (
+    typeof raw !== "number" || !Number.isFinite(raw) || !Number.isInteger(raw) ||
+    raw < 0
+  ) {
+    throw new Error(
+      `${fieldName} must be a non-negative integer (${sourceLabel})`,
+    );
   }
   return raw;
 }

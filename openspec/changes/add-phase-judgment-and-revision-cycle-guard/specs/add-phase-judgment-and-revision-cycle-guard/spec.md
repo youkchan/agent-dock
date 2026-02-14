@@ -1,7 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: implement フェーズのみ編集実行を担うこと
-システムは persona 実行モードにおいて、編集実行フェーズを implement のみに限定しなければならない（SHALL）。
+システムは persona 実行モードにおいて、編集実行フェーズを implement のみに限定しなければならない（SHALL）。implement 以外のフェーズで編集を実行してはならない（SHALL NOT）。
+
+#### Scenario: implement フェーズは編集実行を担う
+- **WHEN** task が implement フェーズで実行される
+- **THEN** システムは implement を編集実行フェーズとして扱う
 
 #### Scenario: review フェーズは判定のみを返す
 - **WHEN** task が review フェーズで実行される

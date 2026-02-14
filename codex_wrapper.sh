@@ -319,7 +319,7 @@ run_codex_with_filtered_view() {
 }
 
 extract_result_block() {
-  STREAM_PATH="$TMP_STREAM_LOG" OUTPUT_PATH="$TMP_OUTPUT" run_wrapper_helper extract-result
+  RESULT_PHASE="${RESULT_PHASE:-}" STREAM_PATH="$TMP_STREAM_LOG" OUTPUT_PATH="$TMP_OUTPUT" run_wrapper_helper extract-result
 }
 
 codex_exit_code=0

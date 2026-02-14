@@ -27,3 +27,10 @@
 - **WHEN** runtime が `personas/default/*.yaml` を読み込む
 - **THEN** 読込は既存パーサで成功する
 - **AND** 各 persona は既存キー（`id`, `role`, `focus`, `can_block`, `enabled`, optional `execution`）のみを持つ
+
+#### Scenario: 単純 YAML 表現制約を満たす
+- **WHEN** default persona の YAML を更新する
+- **THEN** トップレベル値はスカラーのみである
+- **AND** `execution` は1段ネストのスカラー項目のみである
+- **AND** `focus` は1行スカラーで記述される
+- **AND** 複数行ブロックスカラー（`|`/`>`）、配列、2段以上のネストを含まない

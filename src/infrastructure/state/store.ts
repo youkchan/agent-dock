@@ -249,33 +249,25 @@ export class StateStore {
     teammateId: string,
     nextPhaseIndex: number,
   ): Task {
-    if (nextPhaseIndex < 0) {
-      throw new Error("next_phase_index must be non-negative");
-    }
+    return this.requeueInProgressTaskToPhase(
+      taskId,
+      teammateId,
+      nextPhaseIndex,
+    );
+  }
 
-    return this.withLockedState((state) => {
-      const raw = state.tasks[taskId];
-      if (!raw) {
-        throw new Error(`task not found: ${taskId}`);
-      }
-      const task = taskFromRecord(raw);
-      if (task.owner !== teammateId) {
-        throw new Error("owner mismatch");
-      }
-      if (task.status !== "in_progress") {
-        throw new Error("task not in progress");
-      }
-
-      task.status = "pending";
-      task.owner = null;
-      task.block_reason = null;
-      task.current_phase_index = nextPhaseIndex;
-      task.updated_at = nowSeconds();
-
-      state.tasks[taskId] = taskToRecord(task);
-      StateStore.touchProgress(state);
-      return task;
-    });
+  sendBackTaskToPhase(
+    taskId: string,
+    teammateId: string,
+    phaseIndex: number,
+    incrementRevisionCount: boolean = false,
+  ): Task {
+    return this.requeueInProgressTaskToPhase(
+      taskId,
+      teammateId,
+      phaseIndex,
+      incrementRevisionCount,
+    );
   }
 
   detectCollisions(): Array<
@@ -440,6 +432,59 @@ export class StateStore {
       state.tasks[taskId] = taskToRecord(task);
       StateStore.touchProgress(state);
       return task;
+    });
+  }
+
+  persistSendbackAuditTrail(
+    taskId: string,
+    progressSource: string,
+    messageText: string,
+    sender: string,
+    receiver: string,
+    maxProgressEntries: number = DEFAULT_TASK_PROGRESS_LOG_LIMIT,
+  ): { task: Task; message: MailMessage } {
+    const normalizedSource = progressSource.trim() || "unknown";
+    const normalizedText = messageText.trim();
+    if (!normalizedText) {
+      throw new Error("sendback message text is empty");
+    }
+    const limit = Math.max(1, maxProgressEntries);
+
+    return this.withLockedState((state) => {
+      const raw = state.tasks[taskId];
+      if (!raw) {
+        throw new Error(`task not found: ${taskId}`);
+      }
+
+      const now = nowSeconds();
+      const task = taskFromRecord(raw);
+      task.progress_log.push({
+        timestamp: now,
+        source: normalizedSource,
+        text: normalizedText,
+      });
+      if (task.progress_log.length > limit) {
+        task.progress_log = task.progress_log.slice(-limit);
+      }
+      task.updated_at = now;
+      state.tasks[taskId] = taskToRecord(task);
+
+      state.meta.sequence += 1;
+      const message: MailMessage = {
+        seq: state.meta.sequence,
+        sender,
+        receiver,
+        content: normalizedText,
+        task_id: taskId,
+        created_at: now,
+      };
+      state.messages.push(message);
+
+      StateStore.touchProgress(state);
+      return {
+        task,
+        message: { ...message },
+      };
     });
   }
 
@@ -672,6 +717,44 @@ export class StateStore {
   private static touchProgress(state: StatePayload): void {
     state.meta.progress_counter += 1;
     state.meta.last_progress_at = nowSeconds();
+  }
+
+  private requeueInProgressTaskToPhase(
+    taskId: string,
+    teammateId: string,
+    phaseIndex: number,
+    incrementRevisionCount: boolean = false,
+  ): Task {
+    if (phaseIndex < 0) {
+      throw new Error("next_phase_index must be non-negative");
+    }
+
+    return this.withLockedState((state) => {
+      const raw = state.tasks[taskId];
+      if (!raw) {
+        throw new Error(`task not found: ${taskId}`);
+      }
+      const task = taskFromRecord(raw);
+      if (task.owner !== teammateId) {
+        throw new Error("owner mismatch");
+      }
+      if (task.status !== "in_progress") {
+        throw new Error("task not in progress");
+      }
+
+      task.status = "pending";
+      task.owner = null;
+      task.block_reason = null;
+      task.current_phase_index = phaseIndex;
+      if (incrementRevisionCount) {
+        task.revision_count += 1;
+      }
+      task.updated_at = nowSeconds();
+
+      state.tasks[taskId] = taskToRecord(task);
+      StateStore.touchProgress(state);
+      return task;
+    });
   }
 
   private static areDependenciesCompleted(

@@ -198,6 +198,7 @@ Deno.test("compileChangeToConfig applies override yaml", () => {
         "  T-002:",
         "    target_paths:",
         "      - src/b-override.ts",
+        "    max_revision_cycles: 7",
       ].join("\n"),
     );
 
@@ -211,6 +212,43 @@ Deno.test("compileChangeToConfig applies override yaml", () => {
     const byId = new Map(tasks.map((task) => [String(task.id), task]));
     assertDeepEqual(byId.get("T-002")?.requires_plan, true);
     assertDeepEqual(byId.get("T-002")?.target_paths, ["src/b-override.ts"]);
+    assertDeepEqual(byId.get("T-002")?.max_revision_cycles, 7);
+  });
+});
+
+Deno.test("compileChangeToConfig rejects invalid max_revision_cycles override", () => {
+  withTempDir((root) => {
+    writeChange(
+      root,
+      "add-invalid-max-revision-cycles-override",
+      [
+        "## 1. 実装タスク",
+        "- [ ] T-001 A",
+        "  - 依存: なし",
+        "  - 対象: src/a.ts",
+        "  - フェーズ担当: implement=implementer",
+      ].join("\n"),
+    );
+
+    const overrideDir = `${root}/task_configs/overrides`;
+    Deno.mkdirSync(overrideDir, { recursive: true });
+    Deno.writeTextFileSync(
+      `${overrideDir}/add-invalid-max-revision-cycles-override.yaml`,
+      [
+        "tasks:",
+        "  T-001:",
+        "    max_revision_cycles: -1",
+      ].join("\n"),
+    );
+
+    assertThrowsMessage(
+      () =>
+        compileChangeToConfig("add-invalid-max-revision-cycles-override", {
+          openspecRoot: `${root}/openspec`,
+          overridesRoot: overrideDir,
+        }),
+      "max_revision_cycles override must be a non-negative integer: T-001",
+    );
   });
 });
 
@@ -238,6 +276,58 @@ Deno.test("compileChangeToConfig validates missing task phase assignments", () =
           overridesRoot: `${root}/task_configs/overrides`,
         }),
       "task 1.2 must define phase assignments via persona_policy.phase_overrides",
+    );
+  });
+});
+
+Deno.test("compileChangeToConfig rejects phase_order without implement in persona_defaults", () => {
+  withTempDir((root) => {
+    writeChange(
+      root,
+      "add-missing-implement-in-default-phase-order",
+      [
+        "## 1. 実装タスク",
+        '- persona_defaults: {"phase_order":["review","test"],"phase_policies":{"review":{"executor_personas":["implementer"]},"test":{"executor_personas":["implementer"]}}}',
+        "- [ ] 1.1 判定する",
+        "  - 依存: なし",
+        "  - 対象: src/a.ts",
+        "  - フェーズ担当: review=implementer,test=implementer",
+      ].join("\n"),
+    );
+
+    assertThrowsMessage(
+      () =>
+        compileChangeToConfig("add-missing-implement-in-default-phase-order", {
+          openspecRoot: `${root}/openspec`,
+          overridesRoot: `${root}/task_configs/overrides`,
+        }),
+      "persona_defaults.phase_order must include implement",
+    );
+  });
+});
+
+Deno.test("compileChangeToConfig rejects phase_order without implement in task persona_policy", () => {
+  withTempDir((root) => {
+    writeChange(
+      root,
+      "add-missing-implement-in-task-phase-order",
+      [
+        "## 1. 実装タスク",
+        '- persona_defaults: {"phase_order":["implement","review","test"],"phase_policies":{"implement":{"executor_personas":["implementer"]},"review":{"executor_personas":["implementer"]},"test":{"executor_personas":["implementer"]}}}',
+        "- [ ] 1.1 判定する",
+        "  - 依存: なし",
+        "  - 対象: src/a.ts",
+        '  - persona_policy: {"phase_order":["review","test"],"phase_overrides":{"review":{"executor_personas":["implementer"]},"test":{"executor_personas":["implementer"]}}}',
+      ].join("\n"),
+    );
+
+    assertThrowsMessage(
+      () =>
+        compileChangeToConfig("add-missing-implement-in-task-phase-order", {
+          openspecRoot: `${root}/openspec`,
+          overridesRoot: `${root}/task_configs/overrides`,
+        }),
+      "task 1.1 persona_policy.phase_order must include implement",
     );
   });
 });

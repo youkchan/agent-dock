@@ -26,6 +26,24 @@ review/spec_check が修正実行と判定を同時に担うため、`changes_re
 - persona の `execution.sandbox` は実行時に強制反映し、implement=`workspace-write`、review/spec_check/test=`read-only` が実行コマンドへ適用される。
 - persona 実行モードにのみ上記挙動を適用し、既存 teammate 実行モードの挙動は変更しない。
 
+## 正規化要件（MUST/SHALL）
+- MUST: implement 以外のフェーズは判定のみを行い、編集実行を行わない。
+- MUST: 判定フェーズは `JUDGMENT: pass|changes_required|blocked` を必須とし、欠落・未知値・矛盾は fail-closed で `blocked` とする。
+- MUST: 判定フェーズで `CHANGED_FILES` が非空の場合は編集違反として `blocked` に遷移し、空表現は `(none)` を正規値として扱う。
+- MUST: `changes_required` は implement へ差し戻し、`status=pending`、`owner=null`、`current_phase_index=implement` を適用する。
+- MUST: `revision_count` は `changes_required` 差し戻し時のみ加算し、`revision_count > max_revision_cycles` で `needs_approval` に遷移する。
+- SHALL NOT: persona でない teammate 実行モードには本変更の新遷移を適用しない。
+
+## 受け入れシナリオ（固定）
+- Scenario: review/spec_check/test の `JUDGMENT` 欠落時は `blocked` へ fail-closed 遷移する。
+- Scenario: review/spec_check/test で `CHANGED_FILES` 非空を検知した場合は編集違反として `blocked` へ遷移する。
+- Scenario: `changes_required` 判定時は implement へ差し戻し、理由を progress log と mailbox に記録する。
+- Scenario: `revision_count` が `max_revision_cycles` を超過した場合は `needs_approval` に遷移して停止する。
+
+## 最小スコープ（固定）
+- 含む: TypeScript runtime（`src/**`）の persona 実行経路、wrapper 判定契約、state の revision cycle guard。
+- 含まない: Python runtime（`team_orchestrator/**`）、Lead decision JSON 形式、provider 切替ロジック、task config 全面改定。
+
 ## 非目標
 - Lead の意思決定 JSON 形式の変更
 - 既存 task config フォーマットの全面変更

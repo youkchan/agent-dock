@@ -1,13 +1,18 @@
 import type {
   OrchestratorDecision,
+  PhaseJudgment,
   TaskUpdateDecision,
 } from "../../domain/decision.ts";
-import { validateDecisionJson } from "../../domain/decision.ts";
+import {
+  normalizeChangedFiles,
+  normalizePhaseJudgment,
+  validateDecisionJson,
+} from "../../domain/decision.ts";
 import type {
   PersonaDefinition,
   PersonaExecutionConfig,
 } from "../../domain/persona.ts";
-import type { Task } from "../../domain/task.ts";
+import { isDecisionTaskPhase, type Task } from "../../domain/task.ts";
 import { defaultPersonas } from "../../infrastructure/persona/catalog.ts";
 import {
   DEFAULT_TASK_PROGRESS_LOG_LIMIT,
@@ -413,6 +418,17 @@ export class AgentTeamsLikeOrchestrator {
         break;
       }
 
+      const revisionGuardTask = this.findRevisionGuardTask();
+      if (revisionGuardTask !== null) {
+        stopReason = "revision_cycle_guard";
+        this.log(
+          `[lead] revision cycle guard task=${revisionGuardTask.id} ` +
+            `revision_count=${revisionGuardTask.revision_count} ` +
+            `max_revision_cycles=${revisionGuardTask.max_revision_cycles}`,
+        );
+        break;
+      }
+
       if (roundEvents.length > 0) {
         const personaComments = this.evaluatePersonaComments(
           roundIndex,
@@ -670,6 +686,22 @@ export class AgentTeamsLikeOrchestrator {
       return null;
     }
     return [nextIndex, phaseOrder[nextIndex]];
+  }
+
+  private taskImplementPhaseIndex(task: Task): number {
+    if (this.executionSubjectMode !== "persona") {
+      return 0;
+    }
+
+    const phaseOrder = this.taskPhaseOrder(task);
+    if (phaseOrder.length === 0) {
+      return 0;
+    }
+
+    const implementIndex = phaseOrder.findIndex((phase) =>
+      phase === "implement"
+    );
+    return implementIndex >= 0 ? implementIndex : 0;
   }
 
   private phasePolicyForTask(
@@ -1074,6 +1106,8 @@ export class AgentTeamsLikeOrchestrator {
       plan_status: task.plan_status,
       current_phase_index: task.current_phase_index,
       current_phase: this.taskCurrentPhase(task),
+      revision_count: task.revision_count,
+      max_revision_cycles: task.max_revision_cycles,
       plan_excerpt: this.short(task.plan_text ?? "", 240),
       block_reason: this.short(task.block_reason ?? "", 180),
     }));
@@ -1223,6 +1257,14 @@ export class AgentTeamsLikeOrchestrator {
         continue;
       }
       if (task.requires_plan && task.plan_status === "submitted") {
+        continue;
+      }
+      if (this.isRevisionGuardExceeded(task)) {
+        this.log(
+          `[lead] skip fallback approval release task=${task.id} ` +
+            `reason=revision_cycle_guard revision_count=${task.revision_count} ` +
+            `max_revision_cycles=${task.max_revision_cycles}`,
+        );
         continue;
       }
 
@@ -1443,6 +1485,161 @@ export class AgentTeamsLikeOrchestrator {
       };
     }
 
+    if (isDecisionTaskPhase(phase)) {
+      if (
+        executionResult.judgment_raw !== null &&
+        executionResult.changed_files.length > 0
+      ) {
+        const blocked = this.store.markTaskBlocked(
+          task.id,
+          teammateId,
+          this.short(
+            `non-implement phase edited files: ${
+              executionResult.changed_files.join(", ")
+            }`,
+            180,
+          ),
+        );
+        this.appendTaskProgressLog(
+          blocked.id,
+          "system",
+          `execution blocked: ${this.short(result, 160)}`,
+        );
+        this.store.sendMessage(
+          teammateId,
+          this.config.leadId,
+          `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+          blocked.id,
+        );
+        this.log(
+          `[${teammateId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        );
+        return {
+          changed: true,
+          events: [
+            this.makeEvent(
+              "Blocked",
+              blocked.id,
+              teammateId,
+              blocked.block_reason ?? "blocked",
+            ),
+          ],
+        };
+      }
+
+      const blockReason = this.resolveDecisionPhaseBlockReason(executionResult);
+      if (blockReason !== null) {
+        const blocked = this.store.markTaskBlocked(
+          task.id,
+          teammateId,
+          this.short(blockReason, 180),
+        );
+        this.appendTaskProgressLog(
+          blocked.id,
+          "system",
+          `execution blocked: ${this.short(result, 160)}`,
+        );
+        this.store.sendMessage(
+          teammateId,
+          this.config.leadId,
+          `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+          blocked.id,
+        );
+        this.log(
+          `[${teammateId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        );
+        return {
+          changed: true,
+          events: [
+            this.makeEvent(
+              "Blocked",
+              blocked.id,
+              teammateId,
+              blocked.block_reason ?? "blocked",
+            ),
+          ],
+        };
+      }
+
+      if (executionResult.judgment === "changes_required") {
+        const implementPhaseIndex = this.taskImplementPhaseIndex(
+          taskForExecution,
+        );
+        const sendBack = this.store.sendBackTaskToPhase(
+          task.id,
+          teammateId,
+          implementPhaseIndex,
+          true,
+        );
+        const detail =
+          `judgment=changes_required phase=implement index=${implementPhaseIndex} ` +
+          `revision_count=${sendBack.revision_count} ` +
+          `max_revision_cycles=${sendBack.max_revision_cycles}`;
+        const sendbackReason = executionResult.summary ??
+          this.short(result, 160);
+        const sendbackMessage = this.composeSendbackMessage(
+          sendBack.id,
+          phase ?? "unknown",
+          sendbackReason,
+          sendBack.revision_count,
+        );
+
+        if (this.isRevisionGuardExceeded(sendBack)) {
+          const paused = this.store.applyTaskUpdate(
+            sendBack.id,
+            "needs_approval",
+          );
+          this.appendTaskProgressLog(
+            paused.id,
+            "system",
+            `revision cycle guard triggered: ${this.short(result, 160)}`,
+          );
+          this.store.sendMessage(
+            teammateId,
+            this.config.leadId,
+            `task needs_approval task=${paused.id} reason=revision_cycle_guard ${detail}`,
+            paused.id,
+          );
+          this.log(
+            `[${teammateId}] needs_approval task=${paused.id} ` +
+              `reason=revision_cycle_guard ${detail}`,
+          );
+          return {
+            changed: true,
+            events: [
+              this.makeEvent(
+                "RevisionGuardStop",
+                paused.id,
+                teammateId,
+                detail,
+              ),
+            ],
+          };
+        }
+
+        this.store.persistSendbackAuditTrail(
+          sendBack.id,
+          "system",
+          sendbackMessage,
+          teammateId,
+          this.config.leadId,
+          this.config.taskProgressLogLimit,
+        );
+        this.log(`[${teammateId}] sendback task=${sendBack.id} ${detail}`);
+        return {
+          changed: true,
+          events: [
+            this.makeEvent(
+              "ChangesRequired",
+              sendBack.id,
+              teammateId,
+              detail,
+            ),
+          ],
+        };
+      }
+    }
+
     const nextPhase = this.taskNextPhase(taskForExecution);
     if (nextPhase !== null) {
       const [nextPhaseIndex, nextPhaseName] = nextPhase;
@@ -1519,12 +1716,45 @@ export class AgentTeamsLikeOrchestrator {
     return detectReviewerStopRule(result);
   }
 
+  private resolveDecisionPhaseBlockReason(
+    executionResult: ParsedExecutionResult,
+  ): string | null {
+    if (executionResult.judgment_raw === null) {
+      return "missing JUDGMENT in decision phase";
+    }
+    if (executionResult.judgment === null) {
+      return `invalid JUDGMENT: ${executionResult.judgment_raw}`;
+    }
+    if (executionResult.judgment === "blocked") {
+      return `execution judgment is blocked${
+        executionResult.summary ? `: ${executionResult.summary}` : ""
+      }`;
+    }
+    return null;
+  }
+
   private isReviewerExecutionSubject(executionSubjectId: string): boolean {
     const persona = this.personaById.get(executionSubjectId);
     if (persona !== undefined && persona.role === "reviewer") {
       return true;
     }
     return /reviewer/iu.test(executionSubjectId);
+  }
+
+  private isRevisionGuardExceeded(task: Task): boolean {
+    return task.revision_count > task.max_revision_cycles;
+  }
+
+  private findRevisionGuardTask(): Task | null {
+    for (const task of this.store.listTasks()) {
+      if (task.status !== "needs_approval") {
+        continue;
+      }
+      if (this.isRevisionGuardExceeded(task)) {
+        return task;
+      }
+    }
+    return null;
   }
 
   private collectCollisionEvents(): EventPayload[] {
@@ -1567,6 +1797,24 @@ export class AgentTeamsLikeOrchestrator {
 
   private log(message: string): void {
     this.eventLogger(`${nowSeconds().toFixed(3)} ${message}`);
+  }
+
+  private composeSendbackMessage(
+    taskId: string,
+    phase: string,
+    reason: string,
+    revisionCount: number,
+  ): string {
+    const normalizedPhase = phase.trim() || "unknown";
+    const normalizedReason = this.short(
+      (reason.trim() || "changes requested").replace(/\s+/gu, " "),
+      160,
+    );
+    return (
+      `task sendback task=${taskId} ` +
+      `phase=${normalizedPhase} reason=${normalizedReason} ` +
+      `revision_count=${revisionCount}`
+    );
   }
 
   private short(text: string, maxChars: number = 180): string {
@@ -1649,41 +1897,120 @@ function normalizeReviewerStopRule(rawRule: string): string {
   return REVIEWER_STOP_RULE_ALIASES[normalizedKey] ?? normalizedKey;
 }
 
+interface ParsedExecutionResult {
+  status: "completed" | "blocked" | null;
+  summary: string | null;
+  changed_files: string[];
+  judgment: PhaseJudgment | null;
+  judgment_raw: string | null;
+}
+
 function parseExecutionResultBlock(
   text: string,
-): { status: "completed" | "blocked" | null; summary: string | null } {
+): ParsedExecutionResult {
   const lines = text
     .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+    .map((line) => line.trim());
+  const patterns = {
+    RESULT: /^RESULT:\s*(.+)$/iu,
+    SUMMARY: /^SUMMARY:\s*(.+)$/iu,
+    CHANGED_FILES: /^CHANGED_FILES:\s*(.*)$/iu,
+    CHECKS: /^CHECKS:\s*(.+)$/iu,
+    JUDGMENT: /^JUDGMENT:\s*(.*)$/iu,
+  } as const;
   let status: "completed" | "blocked" | null = null;
   let summary: string | null = null;
+  let changedFilesRaw: string | null = null;
+  let judgmentRaw: string | null = null;
+  let judgment: PhaseJudgment | null = null;
+  let seenResult = false;
+  let seenSummary = false;
+  let seenChangedFiles = false;
+  let seenChecks = false;
+  let seenJudgment = false;
 
+  let blockStart = -1;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index];
-    if (status === null) {
-      const resultMatch = /^RESULT:\s*(.+)$/iu.exec(line);
-      if (resultMatch) {
-        const normalized = resultMatch[1].trim().toLowerCase();
-        if (normalized === "completed" || normalized === "blocked") {
-          status = normalized;
-        } else {
-          status = null;
-        }
-      }
-    }
-    if (summary === null) {
-      const summaryMatch = /^SUMMARY:\s*(.+)$/iu.exec(line);
-      if (summaryMatch) {
-        summary = summaryMatch[1].trim();
-      }
-    }
-    if (status !== null && summary !== null) {
+    if (patterns.RESULT.test(lines[index])) {
+      blockStart = index;
       break;
     }
   }
+  if (blockStart < 0) {
+    return {
+      status,
+      summary,
+      changed_files: [],
+      judgment,
+      judgment_raw: judgmentRaw,
+    };
+  }
 
-  return { status, summary };
+  for (let index = blockStart; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.length === 0) {
+      break;
+    }
+    const resultMatch = patterns.RESULT.exec(line);
+    if (resultMatch) {
+      if (seenResult) {
+        break;
+      }
+      seenResult = true;
+      const normalized = resultMatch[1].trim().toLowerCase();
+      if (normalized === "completed" || normalized === "blocked") {
+        status = normalized;
+      } else {
+        status = null;
+      }
+      continue;
+    }
+    const summaryMatch = patterns.SUMMARY.exec(line);
+    if (summaryMatch) {
+      if (seenSummary) {
+        break;
+      }
+      seenSummary = true;
+      summary = summaryMatch[1].trim();
+      continue;
+    }
+    const changedFilesMatch = patterns.CHANGED_FILES.exec(line);
+    if (changedFilesMatch) {
+      if (seenChangedFiles) {
+        break;
+      }
+      seenChangedFiles = true;
+      changedFilesRaw = changedFilesMatch[1].trim();
+      continue;
+    }
+    const checksMatch = patterns.CHECKS.exec(line);
+    if (checksMatch) {
+      if (seenChecks) {
+        break;
+      }
+      seenChecks = true;
+      continue;
+    }
+    const judgmentMatch = patterns.JUDGMENT.exec(line);
+    if (judgmentMatch) {
+      if (seenJudgment) {
+        break;
+      }
+      seenJudgment = true;
+      judgmentRaw = judgmentMatch[1].trim();
+      judgment = normalizePhaseJudgment(judgmentRaw);
+      continue;
+    }
+    break;
+  }
+
+  return {
+    status,
+    summary,
+    changed_files: normalizeChangedFiles(changedFilesRaw ?? ""),
+    judgment,
+    judgment_raw: judgmentRaw,
+  };
 }
 
 function getEnv(name: string, fallback: string): string {
