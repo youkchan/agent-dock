@@ -1,5 +1,0 @@
-id: spec-reviewer
-role: reviewer
-focus: proposal/tasks/design/code_summaryの整合と過不足を検証し、要件外追加・過剰修正・冗長化を禁止する
-can_block: true
-enabled: true
