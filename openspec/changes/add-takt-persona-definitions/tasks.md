@@ -43,15 +43,18 @@
 - [ ] 1.8 既存スキーマ（`id`, `role`, `focus`, `can_block`, `enabled`, optional `execution`）以外のキーを追加しない
   - 依存: 1.3, 1.4, 1.5, 1.6, 1.7
   - 対象: personas/default/implementer.yaml, personas/default/code-reviewer.yaml, personas/default/spec-checker.yaml, personas/default/test-owner.yaml, npm/personas/default/implementer.yaml, npm/personas/default/code-reviewer.yaml, npm/personas/default/spec-checker.yaml, npm/personas/default/test-owner.yaml
-  - フェーズ担当: review=code-reviewer; spec_check=spec-checker
+  - フェーズ担当: implement=implementer; review=code-reviewer; spec_check=spec-checker
+  - persona_policy: {"phase_order":["review","spec_check","implement"]}
   - 成果物: persona loader 互換を壊す未知キーを追加していないことを確認する。あわせて YAML 表現は単純形式（`focus` は1行スカラー、`execution` のみ1段ネスト）を維持し、`|`/`>`、配列、2段以上ネストを導入しないことを確認する。
 - [ ] 1.9 default persona の読込テストを実行し、未知キーエラーや型エラーが発生しないことを確認する
   - 依存: 1.8
   - 対象: src/infrastructure/persona/catalog_test.ts, npm/src/infrastructure/persona/catalog_test.ts
-  - フェーズ担当: spec_check=spec-checker; test=test-owner
+  - フェーズ担当: implement=implementer; spec_check=spec-checker; test=test-owner
+  - persona_policy: {"phase_order":["review","spec_check","implement"]}
   - 成果物: TypeScript runtime と npm 配布物の双方で default persona 読込が成功し、スキーマ整合が保たれる。単純 YAML 制約を破る記述が混入した場合は読込失敗として検知できる。
 - [ ] 1.10 `openspec validate add-takt-persona-definitions --strict` を実行し成功させる
   - 依存: 1.9
   - 対象: openspec/changes/add-takt-persona-definitions/proposal.md, openspec/changes/add-takt-persona-definitions/tasks.md, openspec/changes/add-takt-persona-definitions/specs/persona-catalog/spec.md
-  - フェーズ担当: spec_check=spec-checker; test=test-owner
+  - フェーズ担当: implement=implementer; spec_check=spec-checker; test=test-owner
+  - persona_policy: {"phase_order":["review","spec_check","implement"]}
   - 成果物: OpenSpec change 一式が strict validation を通過し、コンパイラ入力として受理可能になる。
