@@ -261,6 +261,20 @@ Deno.test("extractResultBlock keeps normalized JUDGMENT for decision phase", () 
   );
 });
 
+Deno.test("extractResultBlock fail-closes when CHECKS includes forbidden openspec command forms", () => {
+  const raw = [
+    "RESULT: completed",
+    "SUMMARY: done",
+    "CHANGED_FILES: (none)",
+    "CHECKS: deno task check; ./node_modules/.bin/openspec validate add-foo --strict",
+  ].join("\n");
+  const extracted = extractResultBlock(raw);
+  assert(
+    extracted === null,
+    "expected null when CHECKS includes forbidden openspec command",
+  );
+});
+
 Deno.test("extractResultToFile fail-closes when RESULT_PHASE is missing", () => {
   withTempDir((root) => {
     const streamPath = `${root}/stream.log`;
