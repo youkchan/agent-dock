@@ -323,6 +323,13 @@ Keep total output within 12 lines.`;
     const changedFilesConstraint = taskPhase !== null && taskPhase !== "implement"
       ? "- In non-implement phases, CHANGED_FILES must be (none)"
       : "";
+    const decisionReviewConstraint = requiresJudgment
+      ? [
+        "- In decision phases, review the full relevant scope before judgment",
+        "- Do not stop at the first issue; aggregate required fixes in one pass",
+        "- If JUDGMENT is changes_required, include all required fixes found in this pass",
+      ].join("\n")
+      : "";
     const outputContractText = requiresJudgment
       ? `Final output must be exactly these 5 lines:
 RESULT: completed|blocked
@@ -356,6 +363,7 @@ Constraints:
 - For \`deno test\`, use \`--allow-read --allow-write --allow-env --allow-run\` by default
 - If failed, provide a short root cause
 ${changedFilesConstraint ? `${changedFilesConstraint}\n` : ""}
+${decisionReviewConstraint ? `${decisionReviewConstraint}\n` : ""}
 
 ${outputContractText}`;
 
