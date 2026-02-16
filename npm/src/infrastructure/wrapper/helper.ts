@@ -25,6 +25,11 @@ const OPTIONAL_RESULT_KEYS = [
   "JUDGMENT",
 ] as const;
 
+const FORBIDDEN_OPENSPEC_CHECK_COMMAND_PATTERNS = [
+  /\bagent-dock\s+openspec\b/iu,
+  /(?:^|[\s`"'=])(?:\.\/)?node_modules\/\.bin\/openspec\b/iu,
+] as const;
+
 type ResultKey = (typeof RESULT_KEYS)[number];
 type OptionalResultKey = (typeof OPTIONAL_RESULT_KEYS)[number];
 type EnvReader = (name: string, fallback: string) => string;
@@ -360,6 +365,8 @@ Constraints:
 - Do not edit outside target_paths
 - Do not read/reference/edit .env or .env.*
 - Run required local checks
+- For OpenSpec validation, use \`openspec validate <change-id> --strict\` only
+- Do not use \`agent-dock openspec ...\` or \`./node_modules/.bin/openspec ...\`
 - For \`deno test\`, use \`--allow-read --allow-write --allow-env --allow-run\` by default
 - If failed, provide a short root cause
 ${changedFilesConstraint ? `${changedFilesConstraint}\n` : ""}
@@ -580,6 +587,9 @@ export function extractResultBlock(
       return null;
     }
   }
+  if (containsForbiddenOpenSpecCheckCommand(found.CHECKS ?? "")) {
+    return null;
+  }
 
   const judgment = optionalFound.JUDGMENT === undefined
     ? null
@@ -600,6 +610,15 @@ export function extractResultBlock(
     output.push(`JUDGMENT: ${judgment}`);
   }
   return output.join("\n");
+}
+
+function containsForbiddenOpenSpecCheckCommand(checksRaw: string): boolean {
+  for (const pattern of FORBIDDEN_OPENSPEC_CHECK_COMMAND_PATTERNS) {
+    if (pattern.test(checksRaw)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function extractResultToFile(
