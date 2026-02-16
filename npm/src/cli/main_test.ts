@@ -303,6 +303,30 @@ Deno.test("buildTeammateAdapter forwards normalized persona sandbox mapping", ()
   }
 });
 
+Deno.test("buildTeammateAdapter forwards openspec change id to subprocess env", () => {
+  const adapter = buildTeammateAdapter({
+    teammateAdapter: "subprocess",
+    teammateCommand: "echo codex",
+    planCommand: "",
+    executeCommand: "",
+    commandTimeout: 120,
+    openspecChangeId: " add-persona-dir-and-ordered-multi-judgment-phases ",
+  });
+
+  if (!(adapter instanceof SubprocessCodexAdapter)) {
+    throw new Error("expected SubprocessCodexAdapter");
+  }
+  if (
+    JSON.stringify(adapter.extraEnv) !== JSON.stringify({
+      OPENSPEC_CHANGE_ID: "add-persona-dir-and-ordered-multi-judgment-phases",
+    })
+  ) {
+    throw new Error(
+      `openspec env mismatch: ${JSON.stringify(adapter.extraEnv)}`,
+    );
+  }
+});
+
 Deno.test("main print-openspec-template outputs ja template", () => {
   const buffer = createIoBuffer();
   const exitCode = main(["print-openspec-template", "--lang", "ja"], buffer.io);
@@ -788,6 +812,250 @@ Deno.test("main run includes openspec_change_id when config meta has source_chan
       throw new Error(
         "stdout should not include synced_tasks_md when running with --config",
       );
+    }
+  });
+});
+
+Deno.test("main run loads personas from --persona-dir", () => {
+  withTempDir((root) => {
+    const configPath = `${root}/tasks.json`;
+    const stateDir = `${root}/state`;
+    const personaDir = `${root}/personas`;
+
+    Deno.mkdirSync(personaDir, { recursive: true });
+    Deno.writeTextFileSync(
+      `${personaDir}/personas.json`,
+      JSON.stringify(
+        [
+          {
+            id: "custom-reviewer",
+            role: "reviewer",
+            focus: "review",
+            can_block: true,
+            enabled: true,
+          },
+        ],
+        null,
+        2,
+      ),
+    );
+    Deno.writeTextFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          teammates: ["tm-1"],
+          tasks: [
+            {
+              id: "T1",
+              title: "sample",
+              target_paths: ["src/a.ts"],
+              requires_plan: true,
+              persona_policy: {
+                phase_overrides: {
+                  review: {
+                    executor_personas: ["custom-reviewer"],
+                  },
+                },
+              },
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const bufferWithout = createIoBuffer();
+    const exitWithout = main([
+      "run",
+      "--config",
+      configPath,
+      "--state-dir",
+      stateDir,
+      "--teammate-adapter",
+      "template",
+      "--max-rounds",
+      "20",
+    ], bufferWithout.io);
+    if (exitWithout !== 1) {
+      throw new Error("run should fail without --persona-dir");
+    }
+
+    const bufferWith = createIoBuffer();
+    withEnv("ORCHESTRATOR_PROVIDER", "mock", () => {
+      const exitWith = main([
+        "run",
+        "--config",
+        configPath,
+        "--state-dir",
+        stateDir,
+        "--persona-dir",
+        personaDir,
+        "--teammate-adapter",
+        "template",
+        "--max-rounds",
+        "20",
+      ], bufferWith.io);
+      if (exitWith !== 0) {
+        throw new Error(`run should return 0 with persona-dir: ${bufferWith.state.stderr}`);
+      }
+    });
+
+    if (!bufferWith.state.stdout.includes('"stop_reason": "all_tasks_completed"')) {
+      throw new Error("stdout should include successful stop reason");
+    }
+  });
+});
+
+Deno.test("main run merges payload.personas with --persona-dir personas", () => {
+  withTempDir((root) => {
+    const configPath = `${root}/tasks.json`;
+    const stateDir = `${root}/state`;
+    const personaDir = `${root}/personas`;
+
+    Deno.mkdirSync(personaDir, { recursive: true });
+    Deno.writeTextFileSync(
+      `${personaDir}/personas.json`,
+      JSON.stringify(
+        [
+          {
+            id: "dir-reviewer",
+            role: "reviewer",
+            focus: "dir review",
+            can_block: true,
+            enabled: true,
+          },
+        ],
+        null,
+        2,
+      ),
+    );
+    Deno.writeTextFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          teammates: ["tm-1"],
+          personas: [
+            {
+              id: "payload-reviewer",
+              role: "reviewer",
+              focus: "payload review",
+              can_block: false,
+              enabled: true,
+            },
+          ],
+          tasks: [
+            {
+              id: "T1",
+              title: "sample",
+              target_paths: ["src/a.ts"],
+              requires_plan: true,
+              persona_policy: {
+                phase_overrides: {
+                  review: {
+                    executor_personas: ["payload-reviewer", "dir-reviewer"],
+                  },
+                },
+              },
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const buffer = createIoBuffer();
+    withEnv("ORCHESTRATOR_PROVIDER", "mock", () => {
+      const exitCode = main([
+        "run",
+        "--config",
+        configPath,
+        "--state-dir",
+        stateDir,
+        "--persona-dir",
+        personaDir,
+        "--teammate-adapter",
+        "template",
+        "--max-rounds",
+        "20",
+      ], buffer.io);
+      if (exitCode !== 0) {
+        throw new Error(
+          `run should merge payload and persona-dir personas: ${buffer.state.stderr}`,
+        );
+      }
+    });
+
+    if (!buffer.state.stdout.includes('"stop_reason": "all_tasks_completed"')) {
+      throw new Error("stdout should include successful stop reason");
+    }
+  });
+});
+
+Deno.test("main run rejects duplicate --persona-dir", () => {
+  withTempDir((root) => {
+    const configPath = `${root}/tasks.json`;
+    const stateDir = `${root}/state`;
+    const buffer = createIoBuffer();
+
+    Deno.writeTextFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          teammates: ["tm-1"],
+          tasks: [
+            {
+              id: "T1",
+              title: "sample",
+              target_paths: ["src/a.ts"],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const exitCode = main([
+      "run",
+      "--config",
+      configPath,
+      "--state-dir",
+      stateDir,
+      "--persona-dir",
+      `${root}/personas`,
+      "--persona-dir",
+      `${root}/personas2`,
+    ], buffer.io);
+
+    if (exitCode !== 1) {
+      throw new Error("run should reject duplicate --persona-dir");
+    }
+    if (!buffer.state.stderr.includes("can only be used once")) {
+      throw new Error(`stderr should include duplication error: ${buffer.state.stderr}`);
+    }
+  });
+});
+
+Deno.test("main spec-creator rejects duplicate --persona-dir", () => {
+  withTempDir((root) => {
+    const buffer = createIoBuffer();
+    const exitCode = main([
+      "spec-creator",
+      "--change-id",
+      "sample-change",
+      "--persona-dir",
+      `${root}/personas`,
+      "--persona-dir",
+      `${root}/personas2`,
+    ], buffer.io);
+
+    if (exitCode !== 1) {
+      throw new Error("spec-creator should reject duplicate --persona-dir");
+    }
+    if (!buffer.state.stderr.includes("can only be used once")) {
+      throw new Error(`stderr should include duplication error: ${buffer.state.stderr}`);
     }
   });
 });

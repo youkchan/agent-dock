@@ -57,7 +57,9 @@ import {
   getOpenSpecTasksTemplate,
   SUPPORTED_TEMPLATE_LANGS,
 } from "../infrastructure/openspec/template.ts";
-import { loadPersonasFromPayload } from "../infrastructure/persona/catalog.ts";
+import {
+  loadPersonasFromPayload,
+} from "../infrastructure/persona/catalog.ts";
 import { buildProviderFromEnv } from "../infrastructure/provider/mod.ts";
 import { StateStore } from "../infrastructure/state/store.ts";
 import { createInfrastructureModule } from "../infrastructure/mod.ts";
@@ -105,6 +107,7 @@ interface SpecCreatorArgs {
   noRun: boolean;
   stateDir: string | null;
   resume: boolean;
+  personaDir: string | null;
 }
 
 interface RunArgs {
@@ -131,6 +134,7 @@ interface RunArgs {
   executeCommand: string;
   commandTimeout: number;
   resumeRequeueInProgress: boolean;
+  personaDir: string | null;
 }
 
 interface LoadedTasks {
@@ -148,6 +152,7 @@ export interface TeammateAdapterArgs {
   executeCommand: string;
   commandTimeout: number;
   personaExecutionSandboxes?: Record<string, string> | null;
+  openspecChangeId?: string | null;
 }
 
 const RUN_USAGE = [
@@ -161,6 +166,7 @@ const RUN_USAGE = [
   "           [--teammate-adapter subprocess|template]",
   "           [--teammate-command CMD] [--plan-command CMD] [--execute-command CMD]",
   "           [--command-timeout N]",
+  "           [--persona-dir DIR]",
   "           [--resume-requeue-in-progress|--no-resume-requeue-in-progress]",
 ].join("\n");
 
@@ -178,7 +184,7 @@ const SPEC_CREATOR_PREPROCESS_USAGE = [
 ].join("\n");
 
 const SPEC_CREATOR_USAGE = [
-  "usage: spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--resume] [--no-run]",
+  "usage: spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--persona-dir DIR]",
 ].join("\n");
 
 const GLOBAL_USAGE = [
@@ -264,8 +270,19 @@ export function buildTeammateAdapter(
     executionSandboxByTeammateId: normalizeExecutionSandboxMap(
       args.personaExecutionSandboxes,
     ),
+    extraEnv: resolveOpenSpecChangeEnv(args.openspecChangeId),
   };
   return new SubprocessCodexAdapter(options);
+}
+
+function resolveOpenSpecChangeEnv(
+  openspecChangeIdRaw: string | null | undefined,
+): Record<string, string> | undefined {
+  const openspecChangeId = String(openspecChangeIdRaw ?? "").trim();
+  if (!openspecChangeId) {
+    return undefined;
+  }
+  return { OPENSPEC_CHANGE_ID: openspecChangeId };
 }
 
 function normalizeExecutionSandboxMap(
@@ -507,6 +524,7 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
     noRun: false,
     stateDir: null,
     resume: false,
+    personaDir: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -525,6 +543,15 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
     }
     if (arg === "--state-dir") {
       parsed.stateDir = requireOptionValue(arg, next);
+      index += 1;
+      continue;
+    }
+    if (arg === "--persona-dir") {
+      parsed.personaDir = parseSingleArgValue(
+        "--persona-dir",
+        parsed.personaDir,
+        next,
+      );
       index += 1;
       continue;
     }
@@ -574,6 +601,7 @@ function parseRunArgs(argv: string[]): RunArgs {
     executeCommand: getEnv("TEAMMATE_EXECUTE_COMMAND", ""),
     commandTimeout: safeIntEnv("TEAMMATE_COMMAND_TIMEOUT", 120),
     resumeRequeueInProgress: safeBoolEnv("RESUME_REQUEUE_IN_PROGRESS", true),
+    personaDir: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -689,6 +717,15 @@ function parseRunArgs(argv: string[]): RunArgs {
       index += 1;
       continue;
     }
+    if (arg === "--persona-dir") {
+      parsed.personaDir = parseSingleArgValue(
+        "--persona-dir",
+        parsed.personaDir,
+        next,
+      );
+      index += 1;
+      continue;
+    }
     if (arg === "--resume-requeue-in-progress") {
       parsed.resumeRequeueInProgress = true;
       continue;
@@ -709,6 +746,17 @@ function requireOptionValue(option: string, value: string | undefined): string {
     throw new Error(`argument ${option}: expected one argument`);
   }
   return value;
+}
+
+function parseSingleArgValue(
+  option: string,
+  existingValue: string | null,
+  value: string | undefined,
+): string {
+  if (existingValue !== null) {
+    throw new Error(`${option} can only be used once`);
+  }
+  return requireOptionValue(option, value);
 }
 
 function parseIntOption(option: string, rawValue: string | undefined): number {
@@ -853,14 +901,22 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
       Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
     }
 
-    io.stdout(`[spec-creator] run --config ${outputPath}\n`);
-    const runExitCode = runCommand([
+    const runArgs = [
       "--config",
       outputPath,
       "--state-dir",
       stateDir,
       ...(args.resume ? ["--resume"] : []),
-    ], io);
+      ...(args.personaDir ? ["--persona-dir", args.personaDir] : []),
+    ];
+    const runArgsForLog = [
+      `--config ${outputPath}`,
+      `--state-dir ${stateDir}`,
+      ...(args.resume ? ["--resume"] : []),
+      ...(args.personaDir ? [`--persona-dir ${args.personaDir}`] : []),
+    ];
+    io.stdout(`[spec-creator] run ${runArgsForLog.join(" ")}\n`);
+    const runExitCode = runCommand(runArgs, io);
     Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
     if (runExitCode !== 0) {
       return runExitCode;
@@ -1307,6 +1363,7 @@ function runCommand(argv: string[], io: CliIO): number {
     personaExecutionSandboxes: collectPersonaExecutionSandboxes(
       loaded.personas,
     ),
+    openspecChangeId: loaded.sourceChangeId ?? args.openspecChange,
   });
 
   const orchestrator = new AgentTeamsLikeOrchestrator({
@@ -1369,7 +1426,7 @@ function resolveTasksForRun(args: RunArgs, io: CliIO): LoadedTasks {
       io.stdout(`[compile] wrote ${writtenPath}\n`);
     }
     try {
-      const loaded = loadTasksFromConfigPath(writtenPath);
+      const loaded = loadTasksFromConfigPath(writtenPath, args.personaDir);
       return {
         ...loaded,
         sourceChangeId: loaded.sourceChangeId ?? args.openspecChange,
@@ -1381,22 +1438,29 @@ function resolveTasksForRun(args: RunArgs, io: CliIO): LoadedTasks {
     }
   }
 
-  return loadTasksFromConfigPath(args.config ?? "examples/sample_tasks.json");
+  return loadTasksFromConfigPath(
+    args.config ?? "examples/sample_tasks.json",
+    args.personaDir,
+  );
 }
 
-function loadTasksFromConfigPath(configPath: string): LoadedTasks {
+function loadTasksFromConfigPath(
+  configPath: string,
+  personaDir: string | null,
+): LoadedTasks {
   const loaded = JSON.parse(Deno.readTextFileSync(configPath)) as unknown;
   if (!isRecord(loaded)) {
     throw new Error(`task config must be an object (${configPath})`);
   }
-  return loadTasksPayload(loaded, configPath);
+  return loadTasksPayload(loaded, configPath, personaDir);
 }
 
 function loadTasksPayload(
   raw: Record<string, unknown>,
   sourceLabel: string,
+  personaDir: string | null,
 ): LoadedTasks {
-  const personas = loadPersonasFromPayload(raw, sourceLabel);
+  const personas = resolveRunPersonas(raw, sourceLabel, personaDir);
   const knownPersonaIds = new Set(personas.map((persona) => persona.id));
   const personaDefaults = normalizePersonaDefaults(raw.persona_defaults, {
     sourceLabel,
@@ -1480,7 +1544,9 @@ function loadTasksPayload(
     ? teammatesRaw.map((teammate) => String(teammate))
     : [];
   const personasForRuntime =
-    Object.prototype.hasOwnProperty.call(raw, "personas") ? personas : null;
+    Object.prototype.hasOwnProperty.call(raw, "personas") || personaDir !== null
+      ? personas
+      : null;
 
   return {
     tasks,
@@ -1489,6 +1555,24 @@ function loadTasksPayload(
     personaDefaults,
     sourceChangeId: readSourceChangeId(raw),
   };
+}
+
+function resolveRunPersonas(
+  raw: Record<string, unknown>,
+  sourceLabel: string,
+  personaDir: string | null,
+): PersonaDefinition[] {
+  try {
+    return loadPersonasFromPayload(raw, sourceLabel, personaDir);
+  } catch (error) {
+    if (personaDir === null) {
+      throw error;
+    }
+    if (error instanceof Error) {
+      throw new Error(`argument --persona-dir: ${error.message}`);
+    }
+    throw error;
+  }
 }
 
 function readSourceChangeId(raw: Record<string, unknown>): string | null {

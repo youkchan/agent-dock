@@ -21,8 +21,14 @@
 - 対象プロジェクトの実運用実行経路での受け入れ実行を必須とする。
 - `not implemented` 等の未実装エラーは未完了として扱う（fail-closed）。
 
+### 0.3 OpenSpec validate 実行ガード（固定）
+- `openspec validate` は task `1.7` でのみ実行する。
+- task `1.1`〜`1.6` のローカルチェックでは `openspec validate` を実行しない。
+- `openspec validate` の対象は task_id ではなく change-id を使う（例: `openspec validate add-persona-dir-and-ordered-multi-judgment-phases --strict`）。
+- task `1.1`〜`1.6` で `openspec validate` を実行した結果を完了根拠として扱わない（fail-closed）。
+
 ## 1. 実装タスク
-- [ ] 1.1 `--persona-dir` を run/spec-creator 引数として追加し、複数指定をエラー扱いにする
+- [x] 1.1 `--persona-dir` を run/spec-creator 引数として追加し、複数指定をエラー扱いにする
   - 依存: なし
   - 対象: src/cli/main.ts, src/cli/main_test.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
@@ -31,7 +37,7 @@
   - fail-closed: `--persona-dir` が2回以上指定されると起動前に拒否する。`spec-creator` でも同条件で拒否する。
   - 経路テスト: `agent-dock run --config ... --persona-dir /tmp/personas` が起動引数として受理される
   - 拒否テスト: `run/spec-creator` ともに `--persona-dir A --persona-dir B` で起動エラーとなる
-- [ ] 1.2 外部ディレクトリ由来 `personas` を `payload.personas` とマージし、同一ID上書き・異なるID追加を実装する
+- [x] 1.2 外部ディレクトリ由来 `personas` を `payload.personas` とマージし、同一ID上書き・異なるID追加を実装する
   - 依存: 1.1
   - 対象: src/infrastructure/persona/catalog.ts, src/infrastructure/persona/catalog_test.ts
   - フェーズ担当: implement=implementer; spec_check=spec-checker
@@ -40,7 +46,7 @@
   - fail-closed: `<dir>` 不在、`personas.json` 不在、JSON パース失敗、スキーマ不一致時は runtime validation error で reject/block する。
   - 経路テスト: 同一ID上書きと新規ID追加の結果をユニットテストで確認し、`custom-reviewer` が `persona_policy.phase_overrides.review.executor_personas` で参照可能になることを確認
   - 拒否テスト: `personas.json` 以外を前提とした読込（例: `*.yaml` 走査）を行わず、`--persona-dir` の読み込み失敗で不正終了
-- [ ] 1.3 implement フェーズの担当者数を 1 固定とし、compile 時と run 開始時の両方で fail-closed する
+- [x] 1.3 implement フェーズの担当者数を 1 固定とし、compile 時と run 開始時の両方で fail-closed する
   - 依存: 1.2
   - 対象: src/infrastructure/openspec/compiler.ts, src/infrastructure/openspec/compiler_test.ts, src/application/orchestrator/orchestrator.ts, src/application/orchestrator/orchestrator_test.ts
   - フェーズ担当: implement=implementer; review=code-reviewer; spec_check=spec-checker
@@ -49,7 +55,7 @@
   - fail-closed: implement 重複指定を compile/run いずれの経路でも pass させない。
   - 経路テスト: `run --openspec-change` で implement 重複を compile error で拒否し、`run --config` でも起動直後に runtime validation error で拒否することを確認
   - 拒否テスト: review のみ複数指定は許容しつつ implement 複数を両経路で拒否するケース
-- [ ] 1.4 レビュー/仕様検証/テストフェーズで担当者を `フェーズ担当` の順序どおり実行し、blocked / changes_required をフェーズ内集約する
+- [x] 1.4 レビュー/仕様検証/テストフェーズで担当者を `フェーズ担当` の順序どおり実行し、blocked / changes_required をフェーズ内集約する
   - 依存: 1.3
   - 対象: src/application/orchestrator/orchestrator.ts, src/application/orchestrator/orchestrator_test.ts
   - フェーズ担当: implement=implementer; review=code-reviewer; test=test-owner
@@ -58,7 +64,7 @@
   - fail-closed: blocked 判定を無視して pass に進めない。
   - 経路テスト: review に 3 人設定し、2人目で blocked を返した時点で 3 人目は実行されず blocked 確定になることを確認する。
   - 拒否テスト: changes_required が1人だけでも複数回 implement へ戻る実装を検知する
-- [ ] 1.5 changes_required 集約時は implement へ 1 回のみ送戻し、revision_count を 1 増分する
+- [x] 1.5 changes_required 集約時は implement へ 1 回のみ送戻し、revision_count を 1 増分する
   - 依存: 1.4
   - 対象: src/application/orchestrator/orchestrator.ts, src/infrastructure/state/store.ts, src/application/orchestrator/orchestrator_test.ts
   - フェーズ担当: implement=implementer; review=code-reviewer
@@ -67,7 +73,7 @@
   - fail-closed: `blocked=true` のときに sendback しない。changes_required が複数検知時でも増分は1回固定。
   - 経路テスト: changes_required 複数で revision_count が +1 のみであることを検証
   - 拒否テスト: `blocked=true` でも implement へ送戻ししてしまう実装、および implement への再送が複数回生じる実装を検知する
-- [ ] 1.6 blocked/nextフェーズ遷移条件と `revision_count > max_revision_cycles` ガードを維持し、回帰テストを拡張する
+- [x] 1.6 blocked/nextフェーズ遷移条件と `revision_count > max_revision_cycles` ガードを維持し、回帰テストを拡張する
   - 依存: 1.5
   - 対象: src/application/orchestrator/orchestrator.ts, src/infrastructure/state/store.ts, src/infrastructure/state/store_test.ts, src/application/orchestrator/orchestrator_test.ts
   - フェーズ担当: implement=implementer; test=test-owner
@@ -76,7 +82,7 @@
   - fail-closed: `revision_count > max_revision_cycles` が `>=` で扱われる実装を拒否する。
   - 経路テスト: `max_revision_cycles` 達した直後の 1 回目の changes_required を needs_approval へ進める。
   - 拒否テスト: guard 不一致時に test が赤字するケース
-- [ ] 1.7 変更成果物の整合として `openspec validate ... --strict` を実行する
+- [x] 1.7 変更成果物の整合として `openspec validate ... --strict` を実行する
   - 依存: 1.2, 1.3, 1.4, 1.5, 1.6
   - 対象: openspec/changes/add-persona-dir-and-ordered-multi-judgment-phases/{proposal.md,tasks.md,design.md,code_summary.md,specs/add-persona-dir-and-ordered-multi-judgment-phases/spec.md}
   - フェーズ担当: implement=code-reviewer

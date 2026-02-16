@@ -29,6 +29,21 @@ function assertEqual(
   }
 }
 
+function assertThrowsMessage(fn: () => void, text: string): void {
+  let thrown: unknown = null;
+  try {
+    fn();
+  } catch (error) {
+    thrown = error;
+  }
+  if (!(thrown instanceof Error)) {
+    throw new Error(`expected function to throw Error with message including ${text}`);
+  }
+  if (!thrown.message.includes(text)) {
+    throw new Error(`expected '${thrown.message}' to include '${text}'`);
+  }
+}
+
 function withTempDir(run: (dir: string) => void): void {
   const dir = Deno.makeTempDirSync();
   try {
@@ -74,6 +89,33 @@ class FixedResultAdapter implements TeammateAdapter {
 
   executeTask(_teammateId: string, _task: Task): string {
     return this.resultText;
+  }
+}
+
+class OrderedResultAdapter implements TeammateAdapter {
+  readonly seenExecutionIds: string[] = [];
+  readonly resultByPersona: Record<string, string>;
+  readonly defaultResult: string;
+
+  constructor(
+    resultByPersona: Record<string, string>,
+    defaultResult: string = decisionPhaseResult({
+      status: "completed",
+      judgment: "pass",
+      summary: "ok",
+    }),
+  ) {
+    this.resultByPersona = resultByPersona;
+    this.defaultResult = defaultResult;
+  }
+
+  buildPlan(_teammateId: string, _task: Task): string {
+    return "plan";
+  }
+
+  executeTask(teammateId: string, _task: Task): string {
+    this.seenExecutionIds.push(teammateId);
+    return this.resultByPersona[teammateId] ?? this.defaultResult;
   }
 }
 
@@ -144,6 +186,105 @@ Deno.test("orchestrator human approval stops before provider call", () => {
     const result = orchestrator.run();
     assertEqual(result.stop_reason, "human_approval_required", "stop reason");
     assertEqual(result.provider_calls, 0, "provider call count");
+  });
+});
+
+Deno.test("orchestrator run fails with runtime validation when implement has multiple executors", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "task1",
+        target_paths: ["src/a.ts"],
+      }),
+    ]);
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter: new TemplateAdapter(),
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        teammateIds: ["tm-1"],
+        personas: [
+          createPersona("impl-a", { enabled: true }),
+          createPersona("impl-b", { enabled: true }),
+          createPersona("reviewer", { enabled: true, role: "reviewer" }),
+        ],
+        personaDefaults: {
+          phase_order: ["implement", "review", "test"],
+          phase_policies: {
+            implement: { executor_personas: ["impl-a", "impl-b"] },
+            review: {
+              executor_personas: ["reviewer"],
+              state_transition_personas: ["lead"],
+            },
+            test: { executor_personas: ["reviewer"] },
+          },
+        },
+        maxRounds: 3,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+      }),
+    });
+
+    assertThrowsMessage(
+      () => orchestrator.run(),
+      "runtime validation error",
+    );
+  });
+});
+
+Deno.test("orchestrator run fails with runtime validation when task implement has multiple executors", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "task1",
+        target_paths: ["src/a.ts"],
+        persona_policy: {
+          phase_overrides: {
+            implement: {
+              executor_personas: ["impl-a", "impl-b"],
+            },
+          },
+        },
+      }),
+    ]);
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter: new TemplateAdapter(),
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        teammateIds: ["tm-1"],
+        maxRounds: 3,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+        personas: [
+          createPersona("impl-a", { enabled: true }),
+          createPersona("impl-b", { enabled: true }),
+          createPersona("reviewer", { enabled: true, role: "reviewer" }),
+        ],
+        personaDefaults: {
+          phase_order: ["implement", "review", "test"],
+          phase_policies: {
+            implement: { executor_personas: ["impl-a"] },
+            review: {
+              executor_personas: ["reviewer"],
+              state_transition_personas: ["lead"],
+            },
+            test: { executor_personas: ["reviewer"] },
+          },
+        },
+      }),
+    });
+
+    assertThrowsMessage(
+      () => orchestrator.run(),
+      "runtime validation error",
+    );
   });
 });
 
@@ -253,6 +394,238 @@ Deno.test("orchestrator phase order handoff switches execution persona", () => {
         String(entry.text ?? "").includes("phase handoff to review")
       ),
       "progress log should include handoff",
+    );
+  });
+});
+
+Deno.test("orchestrator executes review phase in configured persona order and aggregates changes_required", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "review task",
+        target_paths: ["src/a.ts"],
+        current_phase_index: 1,
+      }),
+    ]);
+
+    const adapter = new OrderedResultAdapter({
+      "review-right": decisionPhaseResult({
+        status: "completed",
+        judgment: "changes_required",
+        summary: "right requires fix",
+      }),
+      "review-left": decisionPhaseResult({
+        status: "completed",
+        judgment: "changes_required",
+        summary: "left requires fix",
+      }),
+    });
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter,
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        maxRounds: 4,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+        teammateIds: ["review-left", "review-right"],
+        personas: [
+          createPersona("review-left", { enabled: true }),
+          createPersona("review-right", { enabled: true }),
+        ],
+        personaDefaults: {
+          phase_order: ["implement", "review"],
+          phase_policies: {
+            implement: { executor_personas: ["implementer"] },
+            review: {
+              executor_personas: ["review-right", "review-left"],
+              state_transition_personas: ["lead"],
+            },
+          },
+        },
+      }),
+    });
+
+    const result = orchestrator.run();
+    assertEqual(
+      result.stop_reason,
+      "idle_rounds_limit",
+      "stop reason",
+    );
+    assertEqual(
+      adapter.seenExecutionIds,
+      ["review-right", "review-left"],
+      "execution order",
+    );
+
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "pending", "task status");
+    assertEqual(task.current_phase_index, 0, "task returned to implement");
+    assertEqual(task.revision_count, 1, "revision count");
+    assertEqual(
+      store.listRecentMessages(20).filter((message) =>
+        String(message.content).includes("task sendback task=T1")
+      ).length,
+      1,
+      "single sendback message should be emitted",
+    );
+    assert(
+      task.progress_log.some((entry) =>
+        String(entry.text ?? "").includes("task sendback task=T1")
+      ),
+      "progress log should include sendback marker",
+    );
+  });
+});
+
+Deno.test("orchestrator blocks when later reviewer blocks in ordered execution", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "review task",
+        target_paths: ["src/a.ts"],
+        current_phase_index: 1,
+      }),
+    ]);
+
+    const adapter = new OrderedResultAdapter({
+      "review-right": decisionPhaseResult({
+        status: "completed",
+        judgment: "changes_required",
+        summary: "right requires fix",
+      }),
+      "review-left": decisionPhaseResult({
+        status: "blocked",
+        summary: "left blocked",
+      }),
+    });
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter,
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        maxRounds: 4,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+        teammateIds: ["review-left", "review-right"],
+        personas: [
+          createPersona("review-left", { enabled: true }),
+          createPersona("review-right", { enabled: true }),
+        ],
+        personaDefaults: {
+          phase_order: ["implement", "review"],
+          phase_policies: {
+            implement: { executor_personas: ["implementer"] },
+            review: {
+              executor_personas: ["review-right", "review-left"],
+              state_transition_personas: ["lead"],
+            },
+          },
+        },
+      }),
+    });
+
+    const result = orchestrator.run();
+    assertEqual(
+      result.stop_reason,
+      "idle_rounds_limit",
+      "stop reason",
+    );
+    assertEqual(
+      adapter.seenExecutionIds,
+      ["review-right", "review-left"],
+      "ordered execution before block",
+    );
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "blocked", "task status");
+    assert(
+      String(task.block_reason).includes("execution result is blocked"),
+      "block reason should indicate blocked execution result",
+    );
+    assert(
+      !task.progress_log.some((entry) =>
+        String(entry.text ?? "").includes("task sendback task=T1")
+      ),
+      "blocked should skip sendback",
+    );
+  });
+});
+
+Deno.test("orchestrator blocks immediately when any reviewer blocks in ordered execution", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "review task",
+        target_paths: ["src/a.ts"],
+        current_phase_index: 1,
+      }),
+    ]);
+
+    const adapter = new OrderedResultAdapter({
+      "review-right": decisionPhaseResult({
+        status: "blocked",
+        summary: "blocked by right reviewer",
+      }),
+      "review-left": decisionPhaseResult({
+        status: "completed",
+        judgment: "pass",
+        summary: "left passed",
+      }),
+    });
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter,
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        maxRounds: 3,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+        teammateIds: ["review-left", "review-right"],
+        personas: [
+          createPersona("review-left", { enabled: true }),
+          createPersona("review-right", { enabled: true }),
+        ],
+        personaDefaults: {
+          phase_order: ["implement", "review"],
+          phase_policies: {
+            implement: { executor_personas: ["implementer"] },
+            review: {
+              executor_personas: ["review-right", "review-left"],
+              state_transition_personas: ["lead"],
+            },
+          },
+        },
+      }),
+    });
+
+    const result = orchestrator.run();
+    assertEqual(
+      result.stop_reason,
+      "idle_rounds_limit",
+      "stop reason",
+    );
+    assertEqual(
+      adapter.seenExecutionIds,
+      ["review-right"],
+      "blocked immediately by first reviewer",
+    );
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "blocked", "task status");
+    assert(
+      String(task.block_reason).includes("execution result is blocked"),
+      "block reason should indicate blocked execution result",
     );
   });
 });
@@ -1150,6 +1523,63 @@ Deno.test("orchestrator review phase blocks when CHANGED_FILES is non-empty", ()
   });
 });
 
+Deno.test("orchestrator review phase blocks when CHANGED_FILES is non-empty even if JUDGMENT is changes_required", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "review task",
+        target_paths: ["src/a.ts"],
+        current_phase_index: 1,
+      }),
+    ]);
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter: new FixedResultAdapter(
+        decisionPhaseResult({
+          summary: "needs more edits",
+          changedFiles: "src/a.ts",
+          judgment: "changes_required",
+        }),
+      ),
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        maxRounds: 3,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+        personas: [
+          createPersona("reviewer", {
+            enabled: true,
+            role: "reviewer",
+          }),
+        ],
+        personaDefaults: {
+          phase_order: ["implement", "review"],
+          phase_policies: {
+            implement: { executor_personas: ["implementer"] },
+            review: {
+              executor_personas: ["reviewer"],
+              state_transition_personas: ["lead"],
+            },
+          },
+        },
+      }),
+    });
+
+    orchestrator.run();
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "blocked", "task status");
+    assertEqual(task.revision_count, 0, "revision count should not increase");
+    assert(
+      String(task.block_reason).includes("non-implement phase edited files"),
+      "block reason should include changed files violation",
+    );
+  });
+});
+
 Deno.test("orchestrator transitions to revision cycle guard when max is exceeded", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
@@ -1206,5 +1636,46 @@ Deno.test("orchestrator transitions to revision cycle guard when max is exceeded
       ),
       "progress log should include revision guard marker",
     );
+  });
+});
+
+Deno.test("orchestrator does not trigger revision guard when count equals max at release", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "A",
+        title: "ready task",
+        target_paths: ["src/a.ts"],
+        status: "needs_approval",
+        revision_count: 1,
+        max_revision_cycles: 1,
+      }),
+      createTask({
+        id: "B",
+        title: "normal task",
+        target_paths: ["src/b.ts"],
+      }),
+    ]);
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter: new TemplateAdapter(),
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        maxRounds: 6,
+        maxIdleRounds: 4,
+        maxIdleSeconds: 60,
+        teammateIds: ["tm-1"],
+      }),
+    });
+
+    const result = orchestrator.run();
+    assertEqual(result.stop_reason, "all_tasks_completed", "stop reason");
+
+    const stalled = store.getTask("A");
+    assert(stalled !== null, "task should exist");
+    assertEqual(stalled.status, "completed", "task status");
+    assertEqual(stalled.revision_count, 1, "revision count should remain equal");
   });
 });

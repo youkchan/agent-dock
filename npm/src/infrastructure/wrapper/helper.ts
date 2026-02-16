@@ -347,6 +347,19 @@ Keep total output within 12 lines.`;
         qualityIssues,
       ].join("\n")
       : "";
+    const openSpecChangeId = sanitizePromptText(
+      readEnv("OPENSPEC_CHANGE_ID", ""),
+    );
+    const openSpecValidationConstraint = openSpecChangeId
+      ? [
+        `- OpenSpec change_id: ${openSpecChangeId}`,
+        `- For OpenSpec validation, use \`openspec validate ${openSpecChangeId} --strict\` only`,
+        "- Never use task_id as openspec validate target",
+      ].join("\n")
+      : [
+        "- For OpenSpec validation, use `openspec validate <change-id> --strict` only when change_id is explicitly provided",
+        "- Never use task_id as openspec validate target",
+      ].join("\n");
     const outputContractText = requiresJudgment
       ? `Final output must be exactly these 5 lines:
 RESULT: completed|blocked
@@ -377,7 +390,7 @@ Constraints:
 - Do not edit outside target_paths
 - Do not read/reference/edit .env or .env.*
 - Run required local checks
-- For OpenSpec validation, use \`openspec validate <change-id> --strict\` only
+${openSpecValidationConstraint}
 - Do not use \`agent-dock openspec ...\` or \`./node_modules/.bin/openspec ...\`
 - For \`deno test\`, use \`--allow-read --allow-write --allow-env --allow-run\` by default
 - If failed, provide a short root cause

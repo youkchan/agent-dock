@@ -214,6 +214,7 @@ export function validateCompiledConfig(
   const normalizedPayload = deepClone(payload);
   validateCompiledPayload(normalizedPayload, options.changeId);
   validatePersonaPayload(normalizedPayload, options.changeId);
+  validateImplementationExecutorPersonaCount(normalizedPayload);
 
   const tasks = asRecordArray(normalizedPayload.tasks);
   tasks.sort((left, right) => {
@@ -224,6 +225,53 @@ export function validateCompiledConfig(
   normalizedPayload.tasks = tasks;
 
   return normalizedPayload;
+}
+
+function validateImplementationExecutorPersonaCount(payload: Record<string, unknown>): void {
+  const violations: string[] = [];
+
+  const personaDefaults = asRecordOrNull(payload.persona_defaults);
+  const defaultPhasePolicies = personaDefaults === null
+    ? null
+    : asRecordOrNull(personaDefaults.phase_policies);
+  const defaultImplementPolicy = defaultPhasePolicies === null
+    ? null
+    : asRecordOrNull(defaultPhasePolicies.implement);
+  const defaultImplementExecutors = defaultImplementPolicy === null
+    ? null
+    : asRecordOrNull(defaultImplementPolicy)?.executor_personas;
+  if (Array.isArray(defaultImplementExecutors) && defaultImplementExecutors.length > 1) {
+    violations.push(
+      "persona_defaults.phase_policies.implement.executor_personas must contain exactly one value",
+    );
+  }
+
+  for (const task of asRecordArray(payload.tasks)) {
+    const taskId = String(task.id ?? "<unknown>");
+    const personaPolicy = task.persona_policy;
+    const phaseOverrides = isRecord(personaPolicy)
+      ? asRecordOrNull(personaPolicy.phase_overrides)
+      : null;
+    const taskImplementPolicy = phaseOverrides === null
+      ? null
+      : asRecordOrNull(phaseOverrides.implement);
+    const taskImplementExecutors = taskImplementPolicy === null
+      ? null
+      : asRecordOrNull(taskImplementPolicy)?.executor_personas;
+    if (Array.isArray(taskImplementExecutors) && taskImplementExecutors.length > 1) {
+      violations.push(
+        `task ${taskId} persona_policy.phase_overrides.implement.executor_personas must contain exactly one value`,
+      );
+    }
+  }
+
+  if (violations.length > 0) {
+    throw new OpenSpecCompileError(
+      `implementation phase executor_personas must be exactly one: ${
+        violations.join("; ")
+      }`,
+    );
+  }
 }
 
 export function parseTasksMarkdown(tasksPath: string): ParseTasksResult {

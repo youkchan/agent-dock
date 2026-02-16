@@ -30,6 +30,7 @@ const DEFAULT_PERSONAS_DIR = new URL(
   "../../../personas/default/",
   import.meta.url,
 );
+const PERSONAS_JSON_BASENAME = "personas.json";
 
 let defaultPersonasDir: URL = DEFAULT_PERSONAS_DIR;
 let defaultPersonasCache: PersonaDefinition[] | null = null;
@@ -53,22 +54,61 @@ export function defaultPersonas(): PersonaDefinition[] {
 export function loadPersonas(
   raw: unknown,
   sourceLabel: string,
+  overridePersonasRaw?: unknown,
 ): PersonaDefinition[] {
-  if (raw === null || raw === undefined) {
-    return defaultPersonas();
-  }
-  const projectPersonas = parsePersonaList(raw, sourceLabel);
-  return mergePersonas(defaultPersonas(), projectPersonas);
+  const payloadPersonas = raw === null || raw === undefined
+    ? []
+    : parsePersonaList(raw, sourceLabel);
+  const overridePersonas = loadOverridePersonas(overridePersonasRaw, sourceLabel);
+  return mergePersonas(defaultPersonas(), payloadPersonas, overridePersonas);
 }
 
 export function loadPersonasFromPayload(
   raw: Record<string, unknown>,
   sourceLabel: string,
+  overridePersonasRaw?: unknown,
 ): PersonaDefinition[] {
   if (!isRecord(raw)) {
     throw new Error(`payload must be an object (${sourceLabel})`);
   }
-  return loadPersonas(raw.personas, sourceLabel);
+  return loadPersonas(raw.personas, sourceLabel, overridePersonasRaw);
+}
+
+function loadOverridePersonas(
+  raw: unknown,
+  sourceLabel: string,
+): PersonaDefinition[] {
+  if (raw === null || raw === undefined) {
+    return [];
+  }
+
+  if (typeof raw === "string") {
+    return loadPersonasFromDirectory(raw, sourceLabel);
+  }
+
+  return parsePersonaList(raw, sourceLabel);
+}
+
+function loadPersonasFromDirectory(
+  personaDirPath: string,
+  sourceLabel: string,
+): PersonaDefinition[] {
+  const personasPath = normalizePersonasPath(personaDirPath);
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(Deno.readTextFileSync(personasPath));
+  } catch (_error) {
+    throw new Error(`failed to read personas from directory: ${personasPath}`);
+  }
+
+  return parsePersonaList(raw, `personas file: ${personasPath}`);
+}
+
+function normalizePersonasPath(personaDirPath: string): string {
+  const trimmedDirPath = personaDirPath.trim();
+  const normalizedDirPath = trimmedDirPath.replace(/[\\/]+$/, "");
+  return `${normalizedDirPath}/${PERSONAS_JSON_BASENAME}`;
 }
 
 export function resetDefaultPersonasCacheForTest(): void {
@@ -190,16 +230,27 @@ function parsePersonaList(
 function mergePersonas(
   defaults: PersonaDefinition[],
   project: PersonaDefinition[],
+  override: PersonaDefinition[] = [],
 ): PersonaDefinition[] {
-  const projectById = new Map<string, PersonaDefinition>();
-  for (const persona of project) {
-    projectById.set(persona.id, persona);
+  const primaryMerge = mergePersonasList(defaults, project);
+  if (override.length === 0) {
+    return primaryMerge;
   }
-  const defaultIds = new Set(defaults.map((persona) => persona.id));
-  const merged = defaults.map((persona) =>
-    projectById.get(persona.id) ?? persona
-  );
-  merged.push(...project.filter((persona) => !defaultIds.has(persona.id)));
+  return mergePersonasList(primaryMerge, override);
+}
+
+function mergePersonasList(
+  base: PersonaDefinition[],
+  overrides: PersonaDefinition[],
+): PersonaDefinition[] {
+  const overrideById = new Map<string, PersonaDefinition>();
+  for (const persona of overrides) {
+    overrideById.set(persona.id, persona);
+  }
+
+  const baseIds = new Set(base.map((persona) => persona.id));
+  const merged = base.map((persona) => overrideById.get(persona.id) ?? persona);
+  merged.push(...overrides.filter((persona) => !baseIds.has(persona.id)));
   return merged.map(clonePersonaDefinition);
 }
 

@@ -36,7 +36,7 @@
 ### code_unit_2
 - file: src/infrastructure/persona/catalog.ts
 - service: persona-catalog
-- function: loadPersonaDirectory
+- function: loadPersonasFromDirectory
 - purpose: 外部ディレクトリの `<dir>/personas.json`（PersonaDefinition JSON配列）を読み込み・検証し、他形式の走査を行わない。
 - input: `--persona-dir`（`<dir>`）
 - output: ペルソナ定義配列
@@ -47,7 +47,7 @@
 ### code_unit_1
 - file: src/infrastructure/openspec/compiler.ts
 - service: openspec-compiler
-- function: validateExecutorPersonas
+- function: validateImplementationExecutorPersonaCount
 - purpose: implement フェーズの実行担当を1名に制限し、それ以外のフェーズは複数可とする compile 側検証を追加する。
 - input: tasks.md phase assignments
 - output: compile error / pass
@@ -56,7 +56,7 @@
 ### code_unit_2
 - file: src/application/orchestrator/orchestrator.ts
 - service: orchestrator
-- function: validateImplementAssigneesAtRuntime
+- function: validateImplementationExecutorPersonas
 - purpose: `run --config` 経路で compile を通らない設定に対して、実行開始時に implement 複数指定を fail-closed する。
 - input: loaded task_config
 - output: runtime validation error / pass
@@ -67,7 +67,7 @@
 ### code_unit_1
 - file: src/application/orchestrator/orchestrator.ts
 - service: orchestrator
-- function: executePhaseJudgments
+- function: processOrderedDecisionPhaseExecution
 - purpose: review/spec_check/test の担当者を記載順で実行し、blocked/changes_required をフェーズ内で集約する。
 - input: executor_personas and phase metadata
 - output: phase judgment aggregate state
@@ -76,7 +76,7 @@
 ### code_unit_2
 - file: src/application/orchestrator/orchestrator.ts
 - service: orchestrator
-- function: aggregateChangesRequired
+- function: executeDecisionPersonaResult
 - purpose: フェーズ内の複数結果を OR 集約し、blocked を最優先で即時確定する。
 - input: judgment results
 - output: aggregate status
@@ -87,7 +87,7 @@
 ### code_unit_1
 - file: src/application/orchestrator/orchestrator.ts
 - service: orchestrator
-- function: sendBackTaskToImplementOnce
+- function: processOrderedDecisionPhaseExecution
 - purpose: `blocked=false` かつ `changes_required=true` の場合のみ implement へ1回だけ差し戻す。
 - input: aggregated judgment (`blocked`, `changes_required`)
 - output: 単一 sendback 実行
@@ -96,7 +96,7 @@
 ### code_unit_2
 - file: src/infrastructure/state/store.ts
 - service: state-store
-- function: updateRevisionCountOnSendback
+- function: sendBackTaskToPhase
 - purpose: 差し戻し1回につき `revision_count` を1だけ加算する。
 - input: sendback transition event
 - output: 更新済み task state
@@ -107,20 +107,20 @@
 ### code_unit_1
 - file: src/application/orchestrator/orchestrator.ts
 - service: orchestrator
-- function: evaluateBlockedAndNextPhase
+- function: processOrderedDecisionPhaseExecution
 - purpose: blocked 即時確定、changes_required 無し時のみ next phase を進める。
 - input: phase aggregate status
 - output: status transition / needs_approval
 - test: `deno test --allow-read --allow-write --allow-env src/application/orchestrator/orchestrator_test.ts`
 
 ### code_unit_2
-- file: src/infrastructure/state/store.ts
-- service: state-store
-- function: enforceRevisionGuard
+- file: src/application/orchestrator/orchestrator.ts
+- service: orchestrator
+- function: isRevisionGuardExceeded
 - purpose: `revision_count > max_revision_cycles` 判定を維持し、加算タイミングを `changes_required` sendback 1回に統一。
 - input: revision_count, max_revision_cycles
 - output: guard violation transition
-- test: `deno test --allow-read --allow-write --allow-env src/infrastructure/state/store_test.ts`
+- test: `deno test --allow-read --allow-write --allow-env src/application/orchestrator/orchestrator_test.ts`
 
 ## task_id: 1.7
 

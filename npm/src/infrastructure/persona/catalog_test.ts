@@ -85,6 +85,315 @@ Deno.test("loadPersonas fully overrides defaults for same id", () => {
   });
 });
 
+Deno.test("loadPersonas merges payload and --persona-dir with overriding by id and append for new ids", () => {
+  withDefaultPersonaDir(REAL_DEFAULT_DIR, () => {
+    const personas = loadPersonas(
+      [
+        {
+          id: "implementer",
+          role: "custom",
+          focus: "payload override",
+          can_block: true,
+          enabled: false,
+        },
+        {
+          id: "custom-a",
+          role: "custom",
+          focus: "payload add",
+          can_block: false,
+          enabled: true,
+        },
+      ],
+      "payload",
+      [
+        {
+          id: "implementer",
+          role: "implementer",
+          focus: "dir override",
+          can_block: false,
+          enabled: true,
+        },
+        {
+          id: "custom-b",
+          role: "custom",
+          focus: "dir add",
+          can_block: true,
+          enabled: false,
+        },
+      ],
+    );
+
+    const byId = new Map(personas.map((persona) => [persona.id, persona]));
+    const implementer = byId.get("implementer");
+    if (!implementer) {
+      throw new Error("implementer should exist");
+    }
+    if (implementer.focus !== "dir override") {
+      throw new Error("implementer.focus should use --persona-dir value");
+    }
+
+    if (!byId.has("custom-a")) {
+      throw new Error("custom-a should be preserved from payload");
+    }
+    if (!byId.has("custom-b")) {
+      throw new Error("custom-b should be added from --persona-dir");
+    }
+    if (personas[0]?.id !== "implementer") {
+      throw new Error("implementer should remain first default position");
+    }
+    if (personas[4]?.id !== "custom-a") {
+      throw new Error("payload custom-a should come before dir custom-b");
+    }
+    if (personas[5]?.id !== "custom-b") {
+      throw new Error("dir custom-b should be appended after payload additions");
+    }
+  });
+});
+
+Deno.test("loadPersonasFromPayload merges payload.personas and --persona-dir", () => {
+  withDefaultPersonaDir(REAL_DEFAULT_DIR, () => {
+    const payload = {
+      personas: [
+        {
+          id: "implementer",
+          role: "custom",
+          focus: "payload override",
+          can_block: true,
+          enabled: false,
+        },
+        {
+          id: "custom-a",
+          role: "custom",
+          focus: "payload add",
+          can_block: false,
+          enabled: true,
+        },
+      ],
+    };
+    const personas = loadPersonasFromPayload(
+      payload,
+      "payload",
+      [
+        {
+          id: "implementer",
+          role: "implementer",
+          focus: "dir override",
+          can_block: false,
+          enabled: true,
+        },
+        {
+          id: "custom-b",
+          role: "custom",
+          focus: "dir add",
+          can_block: true,
+          enabled: false,
+        },
+      ],
+    );
+
+    const byId = new Map(personas.map((persona) => [persona.id, persona]));
+    const implementer = byId.get("implementer");
+    if (!implementer) {
+      throw new Error("implementer should exist");
+    }
+    if (implementer.focus !== "dir override") {
+      throw new Error("implementer.focus should use --persona-dir value");
+    }
+    if (!byId.has("custom-a")) {
+      throw new Error("custom-a should be preserved from payload");
+    }
+    if (!byId.has("custom-b")) {
+      throw new Error("custom-b should be added from --persona-dir");
+    }
+    if (personas[0]?.id !== "implementer") {
+      throw new Error("implementer should remain first default position");
+    }
+    if (personas[4]?.id !== "custom-a") {
+      throw new Error("payload custom-a should come before dir custom-b");
+    }
+    if (personas[5]?.id !== "custom-b") {
+      throw new Error("dir custom-b should be appended after payload additions");
+    }
+  });
+});
+
+Deno.test(
+  "loadPersonasFromPayload merges payload.personas and --persona-dir directory",
+  () => {
+    withDefaultPersonaDir(REAL_DEFAULT_DIR, () => {
+      const personaDir = Deno.makeTempDirSync();
+      try {
+        Deno.mkdirSync(personaDir, { recursive: true });
+        Deno.writeTextFileSync(
+          `${personaDir}/personas.json`,
+          JSON.stringify(
+            [
+              {
+                id: "implementer",
+                role: "implementer",
+                focus: "dir override",
+                can_block: false,
+                enabled: true,
+              },
+              {
+                id: "custom-b",
+                role: "custom",
+                focus: "dir add",
+                can_block: true,
+                enabled: false,
+              },
+            ],
+            null,
+            2,
+          ),
+        );
+
+        const personas = loadPersonasFromPayload(
+          {
+            personas: [
+              {
+                id: "implementer",
+                role: "custom",
+                focus: "payload override",
+                can_block: true,
+                enabled: false,
+              },
+              {
+                id: "custom-a",
+                role: "custom",
+                focus: "payload add",
+                can_block: false,
+                enabled: true,
+              },
+            ],
+          },
+          "payload",
+          personaDir,
+        );
+
+        const byId = new Map(personas.map((persona) => [persona.id, persona]));
+        const implementer = byId.get("implementer");
+        if (!implementer) {
+          throw new Error("implementer should exist");
+        }
+        if (implementer.focus !== "dir override") {
+          throw new Error("implementer.focus should use persona-dir value");
+        }
+
+        if (!byId.has("custom-a")) {
+          throw new Error("custom-a should be preserved from payload");
+        }
+        if (!byId.has("custom-b")) {
+          throw new Error("custom-b should be added from persona-dir");
+        }
+        if (personas[0]?.id !== "implementer") {
+          throw new Error("implementer should remain first default position");
+        }
+        if (personas[4]?.id !== "custom-a") {
+          throw new Error("payload custom-a should come before persona-dir custom-b");
+        }
+        if (personas[5]?.id !== "custom-b") {
+          throw new Error("persona-dir custom-b should be appended after payload additions");
+        }
+      } finally {
+        Deno.removeSync(personaDir, { recursive: true });
+      }
+    });
+  },
+);
+
+Deno.test(
+  "loadPersonasFromPayload reads --persona-dir when path has trailing separator",
+  () => {
+    withDefaultPersonaDir(REAL_DEFAULT_DIR, () => {
+      const payloadDir = Deno.makeTempDirSync();
+      const personaDir = `${payloadDir}/`;
+      try {
+        Deno.mkdirSync(personaDir, { recursive: true });
+        Deno.writeTextFileSync(
+          `${personaDir}personas.json`,
+          JSON.stringify(
+            [
+              {
+                id: "implementer",
+                role: "implementer",
+                focus: "dir override",
+                can_block: false,
+                enabled: true,
+              },
+            ],
+            null,
+            2,
+          ),
+        );
+
+        const personas = loadPersonasFromPayload(
+          {
+            personas: [
+              {
+                id: "implementer",
+                role: "custom",
+                focus: "payload override",
+                can_block: true,
+                enabled: false,
+              },
+            ],
+          },
+          "payload",
+          personaDir,
+        );
+
+        const byId = new Map(personas.map((persona) => [persona.id, persona]));
+        const implementer = byId.get("implementer");
+        if (!implementer) {
+          throw new Error("implementer should exist");
+        }
+        if (implementer.focus !== "dir override") {
+          throw new Error("implementer.focus should use persona-dir value");
+        }
+      } finally {
+        Deno.removeSync(payloadDir, { recursive: true });
+      }
+    });
+  },
+);
+
+Deno.test(
+  "loadPersonasFromPayload rejects non-array persona-dir file",
+  () => {
+    const personaDir = Deno.makeTempDirSync();
+    try {
+      Deno.mkdirSync(personaDir, { recursive: true });
+      Deno.writeTextFileSync(
+        `${personaDir}/personas.json`,
+        JSON.stringify({ id: "implementer" }, null, 2),
+      );
+
+      assertThrowsMessage(
+        () =>
+          loadPersonasFromPayload(
+            {
+              personas: [
+                {
+                  id: "implementer",
+                  role: "custom",
+                  focus: "payload override",
+                  can_block: true,
+                  enabled: false,
+                },
+              ],
+            },
+            "payload",
+            personaDir,
+          ),
+        "personas must be a list",
+      );
+    } finally {
+      Deno.removeSync(personaDir, { recursive: true });
+    }
+  },
+);
+
 Deno.test("loadPersonas rejects duplicate persona ids", () => {
   assertThrowsMessage(
     () =>

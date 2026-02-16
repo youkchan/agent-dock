@@ -280,6 +280,58 @@ Deno.test("compileChangeToConfig validates missing task phase assignments", () =
   });
 });
 
+Deno.test("compileChangeToConfig rejects implement phase with multiple executor_personas", () => {
+  withTempDir((root) => {
+    writeChange(
+      root,
+      "add-implement-multi-executor-personas",
+      [
+        "## 1. 実装タスク",
+        '- personas: [{"id":"impl-a","role":"custom","focus":"Impl A","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}},{"id":"impl-b","role":"custom","focus":"Impl B","can_block":false,"enabled":true,"execution":{"enabled":true,"command_ref":"default","sandbox":"workspace-write","timeout_sec":900}}]',
+        "- [ ] 1.1 実装する",
+        "  - 依存: なし",
+        "  - 対象: src/a.ts",
+        '  - persona_policy: {"phase_overrides":{"implement":{"executor_personas":["impl-a","impl-b"]}}}',
+      ].join("\n"),
+    );
+
+    assertThrowsMessage(
+      () =>
+        compileChangeToConfig("add-implement-multi-executor-personas", {
+          openspecRoot: `${root}/openspec`,
+          overridesRoot: `${root}/task_configs/overrides`,
+        }),
+      "implementation phase executor_personas must be exactly one",
+    );
+  });
+});
+
+Deno.test("compileChangeToConfig rejects implement phase defaults with multiple executor_personas", () => {
+  withTempDir((root) => {
+    writeChange(
+      root,
+      "add-implement-defaults-multi-executor-personas",
+      [
+        "## 1. 実装タスク",
+        '- persona_defaults: {"phase_order":["implement","review","test"],"phase_policies":{"implement":{"executor_personas":["implementer","code-reviewer"]},"review":{"executor_personas":["code-reviewer"]},"test":{"executor_personas":["code-reviewer"]}}}',
+        "- [ ] 1.1 実装する",
+        "  - 依存: なし",
+        "  - 対象: src/a.ts",
+        "  - フェーズ担当: implement=implementer",
+      ].join("\n"),
+    );
+
+    assertThrowsMessage(
+      () =>
+        compileChangeToConfig("add-implement-defaults-multi-executor-personas", {
+          openspecRoot: `${root}/openspec`,
+          overridesRoot: `${root}/task_configs/overrides`,
+        }),
+      "implementation phase executor_personas must be exactly one",
+    );
+  });
+});
+
 Deno.test("compileChangeToConfig rejects phase_order without implement in persona_defaults", () => {
   withTempDir((root) => {
     writeChange(

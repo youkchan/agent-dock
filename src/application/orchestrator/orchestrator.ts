@@ -76,6 +76,12 @@ interface PersonaActionResult {
   nextRoundEvents: EventPayload[];
 }
 
+interface DecisionPhaseExecutionOutcome {
+  kind: "pass" | "changes_required" | "blocked" | "reviewer_stop";
+  summary: string;
+  event: EventPayload | null;
+}
+
 interface NormalizedTaskPersonaPolicy {
   disable_personas?: string[];
   phase_order?: string[];
@@ -351,6 +357,7 @@ export class AgentTeamsLikeOrchestrator {
     const executionSubjects = [...this.executionSubjectIds];
     const humanApproval = this.config.resolvedHumanApproval();
     const autoApproveFallback = this.config.resolvedAutoApproveFallback();
+    this.validateImplementationExecutorPersonas();
 
     if (executionSubjects.length === 0) {
       throw new Error("at least one execution subject is required");
@@ -564,6 +571,26 @@ export class AgentTeamsLikeOrchestrator {
       return ["teammate", teammateIds];
     }
     throw new Error("at least one execution subject is required");
+  }
+
+  private validateImplementationExecutorPersonas(): void {
+    const globalImplementExecutors = this.phasePolicies.implement?.executor_personas;
+    if (Array.isArray(globalImplementExecutors) &&
+      globalImplementExecutors.length > 1) {
+      throw new Error(
+        "runtime validation error: implementation phase executor_personas must be exactly one",
+      );
+    }
+
+    for (const task of this.store.listTasks()) {
+      const policy = this.phasePolicyForTask(task, "implement");
+      const taskExecutors = policy.executor_personas;
+      if (Array.isArray(taskExecutors) && taskExecutors.length > 1) {
+        throw new Error(
+          `runtime validation error: implementation phase executor_personas must be exactly one for task ${String(task.id ?? "<unknown>")}`,
+        );
+      }
+    }
   }
 
   private resolvePhaseControls(): PhaseControls {
@@ -1332,6 +1359,10 @@ export class AgentTeamsLikeOrchestrator {
     teammateId: string,
   ): { changed: boolean; events: EventPayload[] } {
     const allowedTaskIds = this.allowedExecutionTaskIds(teammateId);
+    const filteredAllowedTaskIds = this.filterDecisionCoordinatorTasks(
+      teammateId,
+      allowedTaskIds,
+    );
     if (allowedTaskIds !== null && allowedTaskIds.size === 0) {
       return {
         changed: false,
@@ -1339,7 +1370,10 @@ export class AgentTeamsLikeOrchestrator {
       };
     }
 
-    const task = this.store.claimExecutionTask(teammateId, allowedTaskIds);
+    const task = this.store.claimExecutionTask(
+      teammateId,
+      filteredAllowedTaskIds,
+    );
     if (!task) {
       return {
         changed: false,
@@ -1355,15 +1389,7 @@ export class AgentTeamsLikeOrchestrator {
     }
 
     const phase = this.taskCurrentPhase(task);
-    let startDetail =
-      `execution started ${this.executionSubjectMode}=${teammateId}`;
-    if (phase) {
-      startDetail = `${startDetail} phase=${phase}`;
-    }
-    this.appendTaskProgressLog(task.id, "system", startDetail);
-
     const taskForExecution = this.store.getTask(task.id) ?? task;
-
     const onProgress: ProgressCallback = (
       source: string,
       text: string,
@@ -1371,11 +1397,37 @@ export class AgentTeamsLikeOrchestrator {
       this.appendTaskProgressLog(task.id, source, text);
     };
 
+    if (this.executionSubjectMode === "persona" && isDecisionTaskPhase(phase)) {
+      const decisionExecutors = this.decisionExecutorsInOrder(task);
+      if (decisionExecutors.length === 0) {
+        return {
+          changed: false,
+          events: [],
+        };
+      }
+
+      return this.processOrderedDecisionPhaseExecution(
+        task,
+        taskForExecution,
+        teammateId,
+        decisionExecutors,
+        onProgress,
+        phase,
+      );
+    }
+
+    let startDetail =
+      `execution started ${this.executionSubjectMode}=${teammateId}`;
+    if (phase) {
+      startDetail = `${startDetail} phase=${phase}`;
+    }
+    this.appendTaskProgressLog(task.id, "system", startDetail);
+
     let result: string;
     try {
       result = this.adapter.executeTask(
         teammateId,
-        taskForExecution,
+        this.store.getTask(task.id) ?? taskForExecution,
         onProgress,
       );
     } catch (error) {
@@ -1701,6 +1753,458 @@ export class AgentTeamsLikeOrchestrator {
         ),
       ],
     };
+  }
+
+  private filterDecisionCoordinatorTasks(
+    teammateId: string,
+    allowedTaskIds: ReadonlySet<string> | null,
+  ): ReadonlySet<string> | null {
+    if (this.executionSubjectMode !== "persona" || allowedTaskIds === null) {
+      return allowedTaskIds;
+    }
+
+    const filtered = new Set<string>();
+    for (const taskId of allowedTaskIds) {
+      const task = this.store.getTask(taskId);
+      if (task === null) {
+        continue;
+      }
+
+      const phase = this.taskCurrentPhase(task);
+      if (phase === null) {
+        filtered.add(taskId);
+        continue;
+      }
+      if (!isDecisionTaskPhase(phase)) {
+        filtered.add(taskId);
+        continue;
+      }
+
+      const executors = this.decisionExecutorsInOrder(task);
+      if (executors.length <= 1 || executors[0] === teammateId) {
+        filtered.add(taskId);
+      }
+    }
+
+    return filtered;
+  }
+
+  private decisionExecutorsInOrder(task: Task): string[] {
+    const phase = this.taskCurrentPhase(task);
+    if (phase === null || !isDecisionTaskPhase(phase)) {
+      return [];
+    }
+    if (this.executionSubjectMode !== "persona") {
+      return [];
+    }
+
+    const executors = this.policyPersonasForTask(task, "executor_personas");
+    if (executors === null) {
+      return [];
+    }
+    return executors.filter((executorId) =>
+      this.executionSubjectIds.includes(executorId)
+    );
+  }
+
+  private processOrderedDecisionPhaseExecution(
+    task: Task,
+    taskForExecution: Task,
+    teammateId: string,
+    executionOrder: string[],
+    onProgress: ProgressCallback,
+    phase: string,
+  ): { changed: boolean; events: EventPayload[] } {
+    if (executionOrder.length === 0) {
+      return { changed: false, events: [] };
+    }
+    if (executionOrder[0] !== teammateId) {
+      return { changed: false, events: [] };
+    }
+
+    const changeRequestSummaries: string[] = [];
+    let lastSummary = "completed";
+    const runTarget = taskForExecution;
+
+    for (const executorId of executionOrder) {
+      const startDetail =
+        `execution started ${this.executionSubjectMode}=${executorId}` +
+        ` phase=${phase}`;
+      this.appendTaskProgressLog(runTarget.id, "system", startDetail);
+
+      const latestTask = this.store.getTask(runTarget.id) ?? runTarget;
+      const outcome = this.executeDecisionPersonaResult(
+        latestTask,
+        executorId,
+        onProgress,
+      );
+      if (outcome.kind === "blocked" || outcome.kind === "reviewer_stop") {
+        return {
+          changed: true,
+          events: [outcome.event as EventPayload],
+        };
+      }
+
+      if (outcome.kind === "changes_required") {
+        changeRequestSummaries.push(outcome.summary);
+      } else {
+        lastSummary = outcome.summary;
+      }
+    }
+
+    if (changeRequestSummaries.length > 0) {
+      const implementPhaseIndex = this.taskImplementPhaseIndex(task);
+      const sendBack = this.store.sendBackTaskToPhase(
+        task.id,
+        teammateId,
+        implementPhaseIndex,
+        true,
+      );
+
+      const reason = this.short(
+        this.composeSendbackReason(changeRequestSummaries),
+        180,
+      );
+      const sendbackMessage = this.composeSendbackMessage(
+        sendBack.id,
+        phase,
+        reason,
+        sendBack.revision_count,
+      );
+
+      if (this.isRevisionGuardExceeded(sendBack)) {
+        const paused = this.store.applyTaskUpdate(
+          sendBack.id,
+          "needs_approval",
+        );
+        this.appendTaskProgressLog(
+          paused.id,
+          "system",
+          `revision cycle guard triggered: ${reason}`,
+        );
+        this.store.sendMessage(
+          teammateId,
+          this.config.leadId,
+          `task needs_approval task=${paused.id} reason=revision_cycle_guard revision_count=${
+            sendBack.revision_count
+          }`,
+          paused.id,
+        );
+        this.log(
+          `[${teammateId}] needs_approval task=${paused.id} ` +
+            `reason=revision_cycle_guard revision_count=${sendBack.revision_count}`,
+        );
+        return {
+          changed: true,
+          events: [
+            this.makeEvent(
+              "RevisionGuardStop",
+              paused.id,
+              teammateId,
+              `revision_count=${sendBack.revision_count}`,
+            ),
+          ],
+        };
+      }
+
+      this.store.persistSendbackAuditTrail(
+        sendBack.id,
+        "system",
+        sendbackMessage,
+        teammateId,
+        this.config.leadId,
+        this.config.taskProgressLogLimit,
+      );
+      this.log(`[${teammateId}] sendback task=${sendBack.id}`);
+      return {
+        changed: true,
+        events: [
+          this.makeEvent(
+            "ChangesRequired",
+            sendBack.id,
+            teammateId,
+            `detail=${this.short(reason, 120)} revision_count=${
+              sendBack.revision_count
+            }`,
+          ),
+        ],
+      };
+    }
+
+    const nextPhase = this.taskNextPhase(task);
+    if (nextPhase !== null) {
+      const [nextPhaseIndex, nextPhaseName] = nextPhase;
+      const handedOff = this.store.handoffTaskPhase(
+        task.id,
+        teammateId,
+        nextPhaseIndex,
+      );
+      this.appendTaskProgressLog(
+        handedOff.id,
+        "system",
+        `phase handoff to ${nextPhaseName}: ${this.short(lastSummary, 120)}`,
+      );
+      this.store.sendMessage(
+        teammateId,
+        this.config.leadId,
+        `task handed off task=${handedOff.id} next_phase=${nextPhaseName}`,
+        handedOff.id,
+      );
+      this.log(
+        `[${teammateId}] handed off task=${handedOff.id} next_phase=${nextPhaseName}`,
+      );
+      return {
+        changed: true,
+        events: [
+          this.makeEvent(
+            "TaskHandoff",
+            handedOff.id,
+            teammateId,
+            `next_phase=${nextPhaseName}`,
+          ),
+        ],
+      };
+    }
+
+    const completed = this.store.completeTask(task.id, teammateId, lastSummary);
+    this.appendTaskProgressLog(
+      completed.id,
+      "system",
+      `execution completed: ${this.short(lastSummary, 160)}`,
+    );
+    this.store.sendMessage(
+      teammateId,
+      this.config.leadId,
+      `task completed task=${completed.id}`,
+      completed.id,
+    );
+    this.log(`[${teammateId}] completed task=${completed.id}`);
+
+    return {
+      changed: true,
+      events: [
+        this.makeEvent(
+          "TaskCompleted",
+          completed.id,
+          teammateId,
+          this.short(lastSummary, 160),
+        ),
+      ],
+    };
+  }
+
+  private executeDecisionPersonaResult(
+    task: Task,
+    executionSubjectId: string,
+    onProgress: ProgressCallback,
+  ): DecisionPhaseExecutionOutcome {
+    let result: string;
+    const taskOwnerId = task.owner ?? executionSubjectId;
+    try {
+      result = this.adapter.executeTask(
+        executionSubjectId,
+        task,
+        onProgress,
+      );
+    } catch (error) {
+      const blocked = this.store.markTaskBlocked(
+        task.id,
+        taskOwnerId,
+        this.short(String(error), 180),
+      );
+      this.appendTaskProgressLog(
+        blocked.id,
+        "system",
+        `execution blocked: ${blocked.block_reason ?? "blocked"}`,
+      );
+      this.store.sendMessage(
+        executionSubjectId,
+        this.config.leadId,
+        `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        blocked.id,
+      );
+      this.log(
+        `[${executionSubjectId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+      );
+      return {
+        kind: "blocked",
+        summary: "execution failed",
+        event: this.makeEvent(
+          "Blocked",
+          blocked.id,
+          executionSubjectId,
+          blocked.block_reason ?? "blocked",
+        ),
+      };
+    }
+
+    const reviewerStopRule = this.detectReviewerStopRule(
+      executionSubjectId,
+      result,
+    );
+    if (reviewerStopRule !== null) {
+      const flagged = this.store.applyTaskUpdate(task.id, "needs_approval");
+      this.appendTaskProgressLog(
+        flagged.id,
+        "system",
+        `reviewer stop candidate rule=${reviewerStopRule}: ${
+          this.short(result, 160)
+        }`,
+      );
+      this.store.sendMessage(
+        executionSubjectId,
+        this.config.leadId,
+        `reviewer stop candidate task=${flagged.id} rule=${reviewerStopRule}`,
+        flagged.id,
+      );
+      this.log(
+        `[${executionSubjectId}] reviewer stop candidate task=${flagged.id} ` +
+          `rule=${reviewerStopRule}`,
+      );
+      return {
+        kind: "reviewer_stop",
+        summary: this.short(result, 120),
+        event: this.makeEvent(
+          "ReviewerViolation",
+          flagged.id,
+          executionSubjectId,
+          `rule=${reviewerStopRule}`,
+        ),
+      };
+    }
+
+    const executionResult = parseExecutionResultBlock(result);
+    const summary = executionResult.summary ?? this.short(result, 120);
+    const status = executionResult.status;
+    if (status !== "completed") {
+      const blockReason = status === "blocked"
+        ? `execution result is blocked${
+          executionResult.summary ? `: ${executionResult.summary}` : ""
+        }`
+        : "execution result must include RESULT: completed|blocked";
+      const blocked = this.store.markTaskBlocked(
+        task.id,
+        taskOwnerId,
+        this.short(blockReason, 180),
+      );
+      this.appendTaskProgressLog(
+        blocked.id,
+        "system",
+        `execution blocked: ${this.short(result, 160)}`,
+      );
+      this.store.sendMessage(
+        executionSubjectId,
+        this.config.leadId,
+        `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        blocked.id,
+      );
+      this.log(
+        `[${executionSubjectId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+      );
+      return {
+        kind: "blocked",
+        summary,
+        event: this.makeEvent(
+          "Blocked",
+          blocked.id,
+          executionSubjectId,
+          blocked.block_reason ?? "blocked",
+        ),
+      };
+    }
+
+    if (executionResult.judgment_raw !== null &&
+      executionResult.changed_files.length > 0
+    ) {
+      const blocked = this.store.markTaskBlocked(
+        task.id,
+        taskOwnerId,
+        this.short(
+          `non-implement phase edited files: ${
+            executionResult.changed_files.join(", ")
+          }`,
+          180,
+        ),
+      );
+      this.appendTaskProgressLog(
+        blocked.id,
+        "system",
+        `execution blocked: ${this.short(result, 160)}`,
+      );
+      this.store.sendMessage(
+        executionSubjectId,
+        this.config.leadId,
+        `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        blocked.id,
+      );
+      this.log(
+        `[${executionSubjectId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+      );
+      return {
+        kind: "blocked",
+        summary,
+        event: this.makeEvent(
+          "Blocked",
+          blocked.id,
+          executionSubjectId,
+          blocked.block_reason ?? "blocked",
+        ),
+      };
+    }
+
+    const blockReason = this.resolveDecisionPhaseBlockReason(executionResult);
+    if (blockReason !== null) {
+      const blocked = this.store.markTaskBlocked(
+        task.id,
+        taskOwnerId,
+        this.short(blockReason, 180),
+      );
+      this.appendTaskProgressLog(
+        blocked.id,
+        "system",
+        `execution blocked: ${this.short(result, 160)}`,
+      );
+      this.store.sendMessage(
+        executionSubjectId,
+        this.config.leadId,
+        `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        blocked.id,
+      );
+      this.log(
+        `[${executionSubjectId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+      );
+      return {
+        kind: "blocked",
+        summary,
+        event: this.makeEvent(
+          "Blocked",
+          blocked.id,
+          executionSubjectId,
+          blocked.block_reason ?? "blocked",
+        ),
+      };
+    }
+
+    if (executionResult.judgment === "changes_required") {
+      return {
+        kind: "changes_required",
+        summary,
+        event: null,
+      };
+    }
+
+    return {
+      kind: "pass",
+      summary,
+      event: null,
+    };
+  }
+
+  private composeSendbackReason(reasons: string[]): string {
+    return reasons
+      .map((reason) => reason.trim())
+      .filter((reason) => reason.length > 0)
+      .join(" / ");
   }
 
   private detectReviewerStopRule(

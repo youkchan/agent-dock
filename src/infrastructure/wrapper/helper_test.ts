@@ -125,6 +125,45 @@ Deno.test("buildPrompt keeps prompt bool text for requires_plan", () => {
   );
 });
 
+Deno.test("buildPrompt injects concrete openspec validate command when change id is provided", () => {
+  const payload = {
+    mode: "execute",
+    teammate_id: "tm-1",
+    task: {
+      id: "1.2",
+      title: "title",
+      description: "desc",
+      target_paths: ["src/a.ts"],
+      depends_on: [],
+      requires_plan: false,
+      progress_log: [],
+    },
+  };
+  const prompt = buildPrompt(
+    payload,
+    makeEnv({
+      CODEX_DENY_DOTENV: "1",
+      OPENSPEC_CHANGE_ID: " add-persona-dir-and-ordered-multi-judgment-phases ",
+    }),
+  );
+  assert(
+    prompt.includes(
+      "OpenSpec change_id: add-persona-dir-and-ordered-multi-judgment-phases",
+    ),
+    "prompt should include concrete openspec change_id",
+  );
+  assert(
+    prompt.includes(
+      "`openspec validate add-persona-dir-and-ordered-multi-judgment-phases --strict`",
+    ),
+    "prompt should include concrete openspec validate command",
+  );
+  assert(
+    prompt.includes("Never use task_id as openspec validate target"),
+    "prompt should forbid task_id-based openspec validate",
+  );
+});
+
 Deno.test("buildPrompt includes quality issues when provided", () => {
   const payload = {
     mode: "execute",
