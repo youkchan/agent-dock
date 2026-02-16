@@ -793,9 +793,17 @@ const SPEC_CREATOR_FORBIDDEN_COMMAND_PATTERNS = [
     pattern: /\bagent-dock\s+openspec\b/iu,
   },
   {
-    label: "./node_modules/.bin/openspec",
-    pattern: /\.\/node_modules\/\.bin\/openspec\b/iu,
+    label: "node_modules/.bin/openspec",
+    pattern: /(?:\.\/)?node_modules\/\.bin\/openspec\b/iu,
   },
+] as const;
+
+const SPEC_CREATOR_FORBIDDEN_COMMAND_EXEMPT_CONTEXT_PATTERNS = [
+  /使用禁止/u,
+  /実行指示として記載しない/u,
+  /forbidden/iu,
+  /do not use/iu,
+  /must not use/iu,
 ] as const;
 
 function specCreatorCommand(argv: string[], io: CliIO): number {
@@ -953,6 +961,9 @@ function assertNoForbiddenSpecCreatorCommands(
         if (!rule.pattern.test(line)) {
           continue;
         }
+        if (isForbiddenCommandExemptContext(line)) {
+          continue;
+        }
         const relativePath = path.relative(Deno.cwd(), artifactPath);
         const labelPath = relativePath.length > 0 ? relativePath : artifactPath;
         violations.push(`${labelPath}:${index + 1}:${rule.label}`);
@@ -965,6 +976,15 @@ function assertNoForbiddenSpecCreatorCommands(
       `spec-creator ${phase} guard failed: forbidden OpenSpec command detected (${violations.join("; ")})`,
     );
   }
+}
+
+function isForbiddenCommandExemptContext(line: string): boolean {
+  for (const pattern of SPEC_CREATOR_FORBIDDEN_COMMAND_EXEMPT_CONTEXT_PATTERNS) {
+    if (pattern.test(line)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function writeTaskConfigFile(
