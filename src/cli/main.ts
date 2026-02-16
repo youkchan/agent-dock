@@ -1144,18 +1144,22 @@ function buildImplementationMarkdownForSpecCreator(
       ? task.target_paths.join(", ")
       : "*";
     const description = compactTaskDescription(task.description);
-    const phaseAssignments = formatPhaseAssignments(task.persona_policy, lang);
+    const phasePlan = resolvePhasePlanForTemplate(task.persona_policy);
+    const phaseAssignments = formatPhaseAssignments(phasePlan);
+    const personaPolicy = JSON.stringify({ phase_order: phasePlan.phaseOrder });
 
     lines.push(`- [ ] ${task.id} ${task.title}`);
     if (lang === "ja") {
       lines.push(`  - 依存: ${dependsOn}`);
       lines.push(`  - 対象: ${targetPaths}`);
       lines.push(`  - フェーズ担当: ${phaseAssignments}`);
+      lines.push(`  - persona_policy: ${personaPolicy}`);
       lines.push(`  - 成果物: ${description}`);
     } else {
       lines.push(`  - Depends on: ${dependsOn}`);
       lines.push(`  - Target paths: ${targetPaths}`);
       lines.push(`  - phase assignments: ${phaseAssignments}`);
+      lines.push(`  - persona_policy: ${personaPolicy}`);
       lines.push(`  - Description: ${description}`);
     }
   }
@@ -1175,40 +1179,80 @@ function compactTaskDescription(raw: string): string {
 }
 
 function formatPhaseAssignments(
-  policyRaw: TaskPersonaPolicy | null,
-  lang: "ja" | "en",
+  phasePlan: {
+    assignments: Array<{ phase: string; executor: string }>;
+  },
 ): string {
-  if (!policyRaw) {
-    return lang === "ja"
-      ? "implement=implementer; review=code-reviewer"
-      : "implement=implementer; review=code-reviewer";
+  if (phasePlan.assignments.length === 0) {
+    return "implement=implementer; review=code-reviewer";
   }
+  return phasePlan.assignments
+    .map((assignment) => `${assignment.phase}=${assignment.executor}`)
+    .join("; ");
+}
 
-  const phaseOverridesRaw = policyRaw.phase_overrides;
-  if (phaseOverridesRaw === undefined) {
-    return lang === "ja"
-      ? "implement=implementer; review=code-reviewer"
-      : "implement=implementer; review=code-reviewer";
-  }
+function resolvePhasePlanForTemplate(
+  policyRaw: TaskPersonaPolicy | null,
+): {
+  phaseOrder: string[];
+  assignments: Array<{ phase: string; executor: string }>;
+} {
+  const phaseOverridesRaw = policyRaw?.phase_overrides ?? {};
+  const phaseOrder = collectPhaseOrderForTemplate(policyRaw, phaseOverridesRaw);
+  const assignments = phaseOrder.map((phase) => {
+    const phasePolicyRaw = phaseOverridesRaw[phase];
+    const executor = normalizePhaseExecutorForTemplate(
+      phase,
+      firstPersonaIdFromPhasePolicy(phasePolicyRaw ?? {}) ?? "",
+    );
+    return { phase, executor };
+  });
+  return { phaseOrder, assignments };
+}
 
-  const assignments: string[] = [];
-  for (const [phase, phasePolicyRaw] of Object.entries(phaseOverridesRaw)) {
-    if (phasePolicyRaw === undefined || phasePolicyRaw === null) {
-      continue;
+function collectPhaseOrderForTemplate(
+  policyRaw: TaskPersonaPolicy | null,
+  phaseOverridesRaw: Record<string, {
+    active_personas?: string[];
+    executor_personas?: string[];
+    state_transition_personas?: string[];
+  }>,
+): string[] {
+  const order: string[] = [];
+  const seen = new Set<string>();
+
+  const push = (rawPhase: unknown) => {
+    const phase = String(rawPhase ?? "").trim();
+    if (!phase || seen.has(phase)) {
+      return;
     }
-    const executor = firstPersonaIdFromPhasePolicy(phasePolicyRaw);
-    if (!executor) {
-      continue;
+    seen.add(phase);
+    order.push(phase);
+  };
+
+  if (Array.isArray(policyRaw?.phase_order)) {
+    for (const phase of policyRaw.phase_order) {
+      push(phase);
     }
-    assignments.push(`${phase}=${normalizePhaseExecutorForTemplate(phase, executor)}`);
+  }
+  for (const phase of Object.keys(phaseOverridesRaw)) {
+    push(phase);
+  }
+  if (order.length === 0) {
+    push("implement");
+    push("review");
+  }
+  if (!seen.has("implement")) {
+    push("implement");
   }
 
-  if (assignments.length === 0) {
-    return lang === "ja"
-      ? "implement=implementer; review=code-reviewer"
-      : "implement=implementer; review=code-reviewer";
+  const firstPhase = order[0] ?? "";
+  if (firstPhase !== "implement") {
+    const withoutImplement = order.filter((phase) => phase !== "implement");
+    withoutImplement.push("implement");
+    return withoutImplement;
   }
-  return assignments.join("; ");
+  return order;
 }
 
 function firstPersonaIdFromPhasePolicy(

@@ -60,7 +60,8 @@
 - [ ] 1.8 `openspec validate add-codex-wrapper-step1-contract-first-golden-compat --strict` を通過させる
   - 依存: 1.1,1.2,1.3,1.4,1.5,1.6,1.7
   - 対象: openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat
-  - フェーズ担当: spec_check=spec-checker; test=test-owner
+  - フェーズ担当: spec_check=spec-checker; test=test-owner; implement=code-reviewer
+  - persona_policy: {"phase_order":["spec_check","test","implement"]}
   - 成果物: strict validation 成功
 
 ## 2. 人間向けメモ（コンパイラ非対象）
