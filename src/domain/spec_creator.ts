@@ -184,7 +184,7 @@ export function createSpecCreatorTaskConfigTemplate(
         id: "1.6",
         title: "生成成果物の整合性をレビューする",
         description:
-          "proposal/tasks/design/code_summary の整合、要件逸脱、過剰修正、冗長化を検証する。",
+          "proposal/tasks/design/code_summary の整合、要件逸脱、過剰修正、冗長化を検証し、`agent-dock openspec` と `./node_modules/.bin/openspec` の混入を禁止する。",
         target_paths: [...allOutputPaths],
         depends_on: ["1.2", "1.3", "1.4", "1.5"],
         requires_plan: false,
@@ -196,7 +196,7 @@ export function createSpecCreatorTaskConfigTemplate(
         id: "1.7",
         title: "OpenSpec strict validate を実行する",
         description:
-          "openspec validate <change_id> --strict を実行し、失敗時は修正後に再実行する。",
+          "`openspec validate <change_id> --strict` のみを実行し、失敗時は修正後に再実行する（`agent-dock openspec` と `./node_modules/.bin/openspec` は使用禁止）。",
         target_paths: [...allOutputPaths],
         depends_on: ["1.6"],
         requires_plan: false,

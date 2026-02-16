@@ -787,6 +787,17 @@ function defaultSpecCreatorStateDir(changeId: string): string {
   return path.join(".team_state", "spec_creator", changeId);
 }
 
+const SPEC_CREATOR_FORBIDDEN_COMMAND_PATTERNS = [
+  {
+    label: "agent-dock openspec",
+    pattern: /\bagent-dock\s+openspec\b/iu,
+  },
+  {
+    label: "./node_modules/.bin/openspec",
+    pattern: /\.\/node_modules\/\.bin\/openspec\b/iu,
+  },
+] as const;
+
 function specCreatorCommand(argv: string[], io: CliIO): number {
   const args = parseSpecCreatorArgs(argv);
   const context = collectSpecContextInteractive({
@@ -797,6 +808,7 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
     args.output ?? defaultSpecCreatorOutputPath(context.change_id),
   );
   writeSpecCreatorArtifacts({ context, paths, outputPath });
+  assertNoForbiddenSpecCreatorCommands(paths, "post-generate");
   io.stdout(`[spec-creator] wrote ${paths.proposalPath}\n`);
   io.stdout(`[spec-creator] wrote ${paths.tasksPath}\n`);
   io.stdout(`[spec-creator] wrote ${paths.designPath}\n`);
@@ -812,13 +824,17 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
     ? path.resolve(args.stateDir)
     : path.resolve(defaultSpecCreatorStateDir(context.change_id));
   io.stdout(`[spec-creator] run --config ${outputPath}\n`);
-  return runCommand([
+  const runExitCode = runCommand([
     "--config",
     outputPath,
     "--state-dir",
     stateDir,
     ...(args.resume ? ["--resume"] : []),
   ], io);
+  if (runExitCode === 0) {
+    assertNoForbiddenSpecCreatorCommands(paths, "post-run");
+  }
+  return runExitCode;
 }
 
 interface SpecCreatorArtifactPaths {
@@ -906,6 +922,49 @@ function writeSpecCreatorArtifacts(
   });
 
   writeTaskConfigFile(context.task_config, outputPath);
+}
+
+function assertNoForbiddenSpecCreatorCommands(
+  paths: SpecCreatorArtifactPaths,
+  phase: "post-generate" | "post-run",
+): void {
+  const artifactPaths = [
+    paths.proposalPath,
+    paths.tasksPath,
+    paths.designPath,
+    paths.codeSummaryPath,
+    paths.deltaSpecPath,
+  ];
+  const violations: string[] = [];
+
+  for (const artifactPath of artifactPaths) {
+    let content = "";
+    try {
+      content = Deno.readTextFileSync(artifactPath);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `spec-creator ${phase} guard failed: could not read ${artifactPath}: ${reason}`,
+      );
+    }
+    const lines = content.split(/\r?\n/u);
+    for (const [index, line] of lines.entries()) {
+      for (const rule of SPEC_CREATOR_FORBIDDEN_COMMAND_PATTERNS) {
+        if (!rule.pattern.test(line)) {
+          continue;
+        }
+        const relativePath = path.relative(Deno.cwd(), artifactPath);
+        const labelPath = relativePath.length > 0 ? relativePath : artifactPath;
+        violations.push(`${labelPath}:${index + 1}:${rule.label}`);
+      }
+    }
+  }
+
+  if (violations.length > 0) {
+    throw new Error(
+      `spec-creator ${phase} guard failed: forbidden OpenSpec command detected (${violations.join("; ")})`,
+    );
+  }
 }
 
 function writeTaskConfigFile(
