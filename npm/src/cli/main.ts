@@ -8,7 +8,6 @@ import {
   type TeammateAdapter,
 } from "../application/orchestrator/orchestrator.ts";
 import {
-  buildSpecCreatorTaskConfig,
   collectSpecContextInteractive,
   type SpecContext,
   type SpecCreatorTaskConfig,
@@ -77,12 +76,6 @@ const DEFAULT_IO: CliIO = {
     Deno.stderr.writeSync(new TextEncoder().encode(text));
   },
 };
-
-const SPEC_CREATOR_ACTIVE_PERSONAS = [
-  "spec-planner",
-  "spec-reviewer",
-  "spec-code-creator",
-];
 
 interface CompileOpenSpecArgs {
   changeId: string;
@@ -186,6 +179,8 @@ const SPEC_CREATOR_PREPROCESS_USAGE = [
 const SPEC_CREATOR_USAGE = [
   "usage: spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--persona-dir DIR]",
 ].join("\n");
+
+const DEFAULT_WRAPPER_RUNTIME = "ts";
 
 const GLOBAL_USAGE = [
   "usage: agent-dock <command> [options]",
@@ -327,24 +322,33 @@ function collectPersonaExecutionSandboxes(
 }
 
 export function defaultTeammateCommand(executablePath?: string): string {
-  const wrapperPath = resolveDefaultWrapperPath(executablePath);
-  return `bash ${shellQuote(wrapperPath)}`;
+  resolveWrapperRuntime();
+  const runtimePath = resolveDefaultRuntimePath(executablePath);
+  return `deno run --no-prompt --allow-read --allow-write --allow-env --allow-run ${
+    shellQuote(runtimePath)
+  }`;
 }
 
-export function resolveDefaultWrapperPath(executablePath?: string): string {
+function resolveDefaultRuntimePath(executablePath?: string): string {
   const resolvedEntry = resolveExecutablePath(executablePath);
-  const wrapperPath = findWrapperFrom(path.dirname(resolvedEntry));
-  if (wrapperPath === null) {
+  const runtimePath = findRuntimeFrom(path.dirname(resolvedEntry));
+  if (runtimePath === null) {
     throw new Error(
       "subprocess adapter requires command settings. " +
         "Set TEAMMATE_COMMAND or both TEAMMATE_PLAN_COMMAND and TEAMMATE_EXECUTE_COMMAND, " +
         "or pass --teammate-command / --plan-command / --execute-command. " +
-        `Default wrapper was not found: ${
-          path.resolve(path.dirname(resolvedEntry), "codex_wrapper.sh")
+        `Default ts wrapper was not found: ${
+          path.resolve(
+            path.dirname(resolvedEntry),
+            "src",
+            "infrastructure",
+            "wrapper",
+            "runtime.ts",
+          )
         }`,
     );
   }
-  return wrapperPath;
+  return runtimePath;
 }
 
 export function shouldBootstrapRunState(
@@ -1144,18 +1148,22 @@ function buildImplementationMarkdownForSpecCreator(
       ? task.target_paths.join(", ")
       : "*";
     const description = compactTaskDescription(task.description);
-    const phaseAssignments = formatPhaseAssignments(task.persona_policy, lang);
+    const phasePlan = resolvePhasePlanForTemplate(task.persona_policy);
+    const phaseAssignments = formatPhaseAssignments(phasePlan);
+    const personaPolicy = JSON.stringify({ phase_order: phasePlan.phaseOrder });
 
     lines.push(`- [ ] ${task.id} ${task.title}`);
     if (lang === "ja") {
       lines.push(`  - 依存: ${dependsOn}`);
       lines.push(`  - 対象: ${targetPaths}`);
       lines.push(`  - フェーズ担当: ${phaseAssignments}`);
+      lines.push(`  - persona_policy: ${personaPolicy}`);
       lines.push(`  - 成果物: ${description}`);
     } else {
       lines.push(`  - Depends on: ${dependsOn}`);
       lines.push(`  - Target paths: ${targetPaths}`);
       lines.push(`  - phase assignments: ${phaseAssignments}`);
+      lines.push(`  - persona_policy: ${personaPolicy}`);
       lines.push(`  - Description: ${description}`);
     }
   }
@@ -1175,40 +1183,80 @@ function compactTaskDescription(raw: string): string {
 }
 
 function formatPhaseAssignments(
-  policyRaw: TaskPersonaPolicy | null,
-  lang: "ja" | "en",
+  phasePlan: {
+    assignments: Array<{ phase: string; executor: string }>;
+  },
 ): string {
-  if (!policyRaw) {
-    return lang === "ja"
-      ? "implement=implementer; review=code-reviewer"
-      : "implement=implementer; review=code-reviewer";
+  if (phasePlan.assignments.length === 0) {
+    return "implement=implementer; review=code-reviewer";
   }
+  return phasePlan.assignments
+    .map((assignment) => `${assignment.phase}=${assignment.executor}`)
+    .join("; ");
+}
 
-  const phaseOverridesRaw = policyRaw.phase_overrides;
-  if (phaseOverridesRaw === undefined) {
-    return lang === "ja"
-      ? "implement=implementer; review=code-reviewer"
-      : "implement=implementer; review=code-reviewer";
-  }
+function resolvePhasePlanForTemplate(
+  policyRaw: TaskPersonaPolicy | null,
+): {
+  phaseOrder: string[];
+  assignments: Array<{ phase: string; executor: string }>;
+} {
+  const phaseOverridesRaw = policyRaw?.phase_overrides ?? {};
+  const phaseOrder = collectPhaseOrderForTemplate(policyRaw, phaseOverridesRaw);
+  const assignments = phaseOrder.map((phase) => {
+    const phasePolicyRaw = phaseOverridesRaw[phase];
+    const executor = normalizePhaseExecutorForTemplate(
+      phase,
+      firstPersonaIdFromPhasePolicy(phasePolicyRaw ?? {}) ?? "",
+    );
+    return { phase, executor };
+  });
+  return { phaseOrder, assignments };
+}
 
-  const assignments: string[] = [];
-  for (const [phase, phasePolicyRaw] of Object.entries(phaseOverridesRaw)) {
-    if (phasePolicyRaw === undefined || phasePolicyRaw === null) {
-      continue;
+function collectPhaseOrderForTemplate(
+  policyRaw: TaskPersonaPolicy | null,
+  phaseOverridesRaw: Record<string, {
+    active_personas?: string[];
+    executor_personas?: string[];
+    state_transition_personas?: string[];
+  }>,
+): string[] {
+  const order: string[] = [];
+  const seen = new Set<string>();
+
+  const push = (rawPhase: unknown) => {
+    const phase = String(rawPhase ?? "").trim();
+    if (!phase || seen.has(phase)) {
+      return;
     }
-    const executor = firstPersonaIdFromPhasePolicy(phasePolicyRaw);
-    if (!executor) {
-      continue;
+    seen.add(phase);
+    order.push(phase);
+  };
+
+  if (Array.isArray(policyRaw?.phase_order)) {
+    for (const phase of policyRaw.phase_order) {
+      push(phase);
     }
-    assignments.push(`${phase}=${normalizePhaseExecutorForTemplate(phase, executor)}`);
+  }
+  for (const phase of Object.keys(phaseOverridesRaw)) {
+    push(phase);
+  }
+  if (order.length === 0) {
+    push("implement");
+    push("review");
+  }
+  if (!seen.has("implement")) {
+    push("implement");
   }
 
-  if (assignments.length === 0) {
-    return lang === "ja"
-      ? "implement=implementer; review=code-reviewer"
-      : "implement=implementer; review=code-reviewer";
+  const firstPhase = order[0] ?? "";
+  if (firstPhase !== "implement") {
+    const withoutImplement = order.filter((phase) => phase !== "implement");
+    withoutImplement.push("implement");
+    return withoutImplement;
   }
-  return assignments.join("; ");
+  return order;
 }
 
 function firstPersonaIdFromPhasePolicy(
@@ -1678,10 +1726,16 @@ function shellQuote(raw: string): string {
   return `'${raw.replace(/'/gu, `'"'"'`)}'`;
 }
 
-function findWrapperFrom(startDir: string): string | null {
+function findRuntimeFrom(startDir: string): string | null {
   let current = path.resolve(startDir);
   while (true) {
-    const candidate = path.join(current, "codex_wrapper.sh");
+    const candidate = path.join(
+      current,
+      "src",
+      "infrastructure",
+      "wrapper",
+      "runtime.ts",
+    );
     if (isFile(candidate)) {
       return candidate;
     }
@@ -1696,14 +1750,6 @@ function findWrapperFrom(startDir: string): string | null {
 function isFile(filePath: string): boolean {
   try {
     return Deno.statSync(filePath).isFile;
-  } catch (_error) {
-    return false;
-  }
-}
-
-function isDirectory(dirPath: string): boolean {
-  try {
-    return Deno.statSync(dirPath).isDirectory;
   } catch (_error) {
     return false;
   }
@@ -1827,6 +1873,18 @@ function getEnv(name: string, fallback: string): string {
   } catch (_error) {
     return fallback;
   }
+}
+
+function resolveWrapperRuntime(
+  rawRuntime: string = getEnv("CODEX_WRAPPER_RUNTIME", DEFAULT_WRAPPER_RUNTIME),
+): "ts" {
+  const normalized = String(rawRuntime).trim().toLowerCase();
+  if (!normalized || normalized === "ts") {
+    return "ts";
+  }
+  throw new Error(
+    `unsupported CODEX_WRAPPER_RUNTIME=${rawRuntime}. supported values: ts`,
+  );
 }
 
 function isRecord(raw: unknown): raw is Record<string, unknown> {

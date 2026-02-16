@@ -221,10 +221,6 @@ function normalizeTasksHeadings(
   const implementationIndex = normalized.findIndex((line) =>
     /^\s*##\s*1\./u.test(line)
   );
-  const humanNotesIndex = normalized.findIndex((line) =>
-    /^\s*##\s*2\./u.test(line)
-  );
-
   if (implementationIndex >= 0) {
     const current = normalized[implementationIndex].trim();
     if (current !== sections.implementationHeading) {

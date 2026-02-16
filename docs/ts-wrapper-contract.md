@@ -1,18 +1,18 @@
 # TypeScript wrapper 契約
 
 ## 目的
-`codex_wrapper.sh` の外部契約を固定し、実行経路・I/O・既定コマンド解決順を壊さないための基準を定義する。
+TypeScript runtime の外部契約を固定し、実行経路・I/O・既定コマンド解決順を壊さないための基準を定義する。
 
 ## 適用範囲
 - `src/cli/main.ts`
 - `src/infrastructure/adapter/subprocess.ts`
-- `codex_wrapper.sh`
+- `src/infrastructure/wrapper/runtime.ts`
 - `src/infrastructure/wrapper/helper.ts`
 
 ## 1. 実行経路契約
-- 実行経路は `subprocess adapter -> codex_wrapper.sh -> codex exec` を維持（MUST）。
+- 実行経路は `subprocess adapter -> runtime.ts -> codex exec` を維持（MUST）。
 - `--teammate-adapter template` 以外では plan/execute の両方で subprocess adapter を使用（MUST）。
-- wrapper エントリポイントは `codex_wrapper.sh` を維持し、呼び出し方式は `bash <wrapper-path>` を維持（MUST）。
+- runtime エントリポイントは `src/infrastructure/wrapper/runtime.ts` とし、呼び出し方式は `deno run --no-prompt --allow-read --allow-write --allow-env --allow-run <runtime-path>` を維持（MUST）。
 - wrapper 内部実装を変更しても、stdin 入力・stdout 結果・stderr 進捗の意味を変更しない（MUST NOT）。
 
 ## 2. 既定コマンド解決順
@@ -31,7 +31,7 @@
 ### 2.3 共有コマンド（plan/execute 共通）
 1. `--teammate-command`
 2. `TEAMMATE_COMMAND`
-3. `bash <agent-dock-executable-dir>/codex_wrapper.sh`
+3. `deno run --no-prompt --allow-read --allow-write --allow-env --allow-run <discovered-runtime-path>`
 
 ## 3. wrapper I/O 契約
 
@@ -64,11 +64,36 @@
 - `codex exec` が非 0 の場合、wrapper はエラーを stderr へ出し非 0 で終了。
 - `.env/.env.*` 参照禁止または改変検知違反時は fail-closed で終了。
 
-## 4. Deno helper 呼び出し契約
+## 4. Runtime/Helper 契約
 - helper 実体は `src/infrastructure/wrapper/helper.ts`。
-- wrapper は helper を `deno run --no-prompt --allow-read --allow-write --allow-env <helper>` で起動する。
-- helper サブコマンド:
-  - `build-prompt`: `PAYLOAD` を解釈して prompt を stdout へ出力。
-  - `snapshot-dotenv`: `TARGET_PROJECT_DIR` を走査し、`SNAPSHOT_PATH` へハッシュ JSON を保存。
-  - `verify-dotenv`: `SNAPSHOT_PATH` と現行スナップショットを比較し、差分時は fail-closed で終了。
-  - `extract-result`: `STREAM_PATH` から phase に応じて 4 行（implement）または 5 行（review/spec_check/test）結果を抽出して `OUTPUT_PATH` へ保存。`RESULT_PHASE` が `review|spec_check|test` の場合は `JUDGMENT` を必須として fail-closed で抽出失敗とする。`CHANGED_FILES` の空表現は `(none)` を正規値として出力し、互換空表現は内部で正規化する。
+- runtime は helper API を直接 import して利用する（subprocess 起動は行わない）。
+- 利用 API:
+  - `buildPrompt`
+  - `writeDotenvSnapshot`
+  - `verifyDotenvSnapshotUnchanged`
+  - `extractResultToFile`
+
+## 5. 実運用スモーク比較記録（legacy / ts）
+
+- 確認日: 2026-02-16
+- 条件: fake codex を使って legacy/ts を同一 payload で比較
+- 比較ケース:
+  - timeout
+  - stream 表示
+  - fail-closed
+  - dotenv 保護
+
+- 結果（raw diff）
+
+| ケース | legacy | ts | 差分 |
+| --- | --- | --- | --- |
+| timeout | `timeout: command timed out` (`code=124`) | `timeout: command timed out` (`code=124`) | `0` |
+| stream 表示 (`CODEX_STREAM_LOGS=1`) | stdout/stderr 一致 | stdout/stderr 一致 | `0` |
+| fail-closed (`SKIP_RESULT=1`) | `codex returned empty output` | `codex returned empty output` | `0` |
+| dotenv 保護 (`CODEX_DENY_DOTENV=1`, mutate `.env`) | `code=4`, `deny rule violation: .env/.env.* files were modified by codex` | `code=4`, `deny rule violation: .env/.env.* files were modified by codex` | `0` |
+
+### 判定
+
+- raw diff 合計: `0`
+- `timeout` / `stream 表示` / `dotenv 保護`: diff `0`
+- `fail-closed`: diff `0`（`codex returned empty output` 一致）

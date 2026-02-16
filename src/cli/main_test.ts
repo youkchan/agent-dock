@@ -54,13 +54,17 @@ function withEnv(name: string, value: string, run: () => void): void {
   }
 }
 
-function withCwd(nextCwd: string, run: () => void): void {
-  const original = Deno.cwd();
-  Deno.chdir(nextCwd);
+function withEnvValue<T>(name: string, value: string, run: () => T): T {
+  const original = Deno.env.get(name);
+  Deno.env.set(name, value);
   try {
-    run();
+    return run();
   } finally {
-    Deno.chdir(original);
+    if (original === undefined) {
+      Deno.env.delete(name);
+    } else {
+      Deno.env.set(name, original);
+    }
   }
 }
 
@@ -138,7 +142,7 @@ Deno.test("buildTeammateAdapter builds subprocess adapter from shared command", 
   }
 });
 
-Deno.test("buildTeammateAdapter requires default wrapper when commands are missing", () => {
+Deno.test("buildTeammateAdapter requires default ts runtime when commands are missing", () => {
   withTempDir((root) => {
     const fakeExec = `${root}/bin/agent-dock`;
     Deno.mkdirSync(`${root}/bin`, { recursive: true });
@@ -156,37 +160,53 @@ Deno.test("buildTeammateAdapter requires default wrapper when commands are missi
           },
           fakeExec,
         ),
-      "Default wrapper was not found",
+      "Default ts wrapper was not found",
     );
   });
 });
 
-Deno.test("buildTeammateAdapter uses wrapper next to executable by default", () => {
+Deno.test("buildTeammateAdapter uses runtime next to executable by default", () => {
   withTempDir((root) => {
     const fakeBin = `${root}/bin`;
     Deno.mkdirSync(fakeBin, { recursive: true });
     const fakeExec = `${fakeBin}/agent-dock`;
-    const wrapperPath = `${fakeBin}/codex_wrapper.sh`;
+    const runtimePath = `${fakeBin}/src/infrastructure/wrapper/runtime.ts`;
 
     Deno.writeTextFileSync(fakeExec, "#!/usr/bin/env bash\n");
-    Deno.writeTextFileSync(wrapperPath, "#!/usr/bin/env bash\n");
+    Deno.mkdirSync(`${fakeBin}/src/infrastructure/wrapper`, { recursive: true });
+    Deno.writeTextFileSync(runtimePath, "export {};\n");
 
-    const adapter = buildTeammateAdapter(
-      {
-        teammateAdapter: "subprocess",
-        teammateCommand: "",
-        planCommand: "",
-        executeCommand: "",
-        commandTimeout: 120,
-      },
-      fakeExec,
-    );
+    const adapter = withEnvValue("CODEX_WRAPPER_RUNTIME", "ts", () => {
+      const adapter = buildTeammateAdapter(
+        {
+          teammateAdapter: "subprocess",
+          teammateCommand: "",
+          planCommand: "",
+          executeCommand: "",
+          commandTimeout: 120,
+        },
+        fakeExec,
+      );
+      if (!(adapter instanceof SubprocessCodexAdapter)) {
+        throw new Error("expected SubprocessCodexAdapter");
+      }
+      return adapter;
+    });
 
-    if (!(adapter instanceof SubprocessCodexAdapter)) {
-      throw new Error("expected SubprocessCodexAdapter");
-    }
-    const defaultCommand = defaultTeammateCommand(fakeExec);
-    const expected = ["bash", wrapperPath];
+    let defaultCommand = "";
+    withEnv("CODEX_WRAPPER_RUNTIME", "ts", () => {
+      defaultCommand = defaultTeammateCommand(fakeExec);
+    });
+    const expected = [
+      "deno",
+      "run",
+      "--no-prompt",
+      "--allow-read",
+      "--allow-write",
+      "--allow-env",
+      "--allow-run",
+      runtimePath,
+    ];
 
     if (JSON.stringify(adapter.planCommand) !== JSON.stringify(expected)) {
       throw new Error(
@@ -198,36 +218,52 @@ Deno.test("buildTeammateAdapter uses wrapper next to executable by default", () 
         `execute command mismatch: ${JSON.stringify(adapter.executeCommand)}`,
       );
     }
-    if (defaultCommand !== `bash ${wrapperPath}`) {
+    if (
+      defaultCommand !==
+        `deno run --no-prompt --allow-read --allow-write --allow-env --allow-run ${runtimePath}`
+    ) {
       throw new Error(`unexpected default command: ${defaultCommand}`);
     }
   });
 });
 
-Deno.test("buildTeammateAdapter falls back to parent directory wrapper", () => {
+Deno.test("buildTeammateAdapter falls back to parent directory runtime", () => {
   withTempDir((root) => {
     const fakeExec = `${root}/dist/cli/agent-dock`;
-    const wrapperPath = `${root}/codex_wrapper.sh`;
+    const runtimePath = `${root}/src/infrastructure/wrapper/runtime.ts`;
 
     Deno.mkdirSync(`${root}/dist/cli`, { recursive: true });
+    Deno.mkdirSync(`${root}/src/infrastructure/wrapper`, { recursive: true });
     Deno.writeTextFileSync(fakeExec, "#!/usr/bin/env bash\n");
-    Deno.writeTextFileSync(wrapperPath, "#!/usr/bin/env bash\n");
+    Deno.writeTextFileSync(runtimePath, "export {};\n");
 
-    const adapter = buildTeammateAdapter(
-      {
-        teammateAdapter: "subprocess",
-        teammateCommand: "",
-        planCommand: "",
-        executeCommand: "",
-        commandTimeout: 120,
-      },
-      fakeExec,
-    );
+    const adapter = withEnvValue("CODEX_WRAPPER_RUNTIME", "ts", () => {
+      const adapter = buildTeammateAdapter(
+        {
+          teammateAdapter: "subprocess",
+          teammateCommand: "",
+          planCommand: "",
+          executeCommand: "",
+          commandTimeout: 120,
+        },
+        fakeExec,
+      );
+      if (!(adapter instanceof SubprocessCodexAdapter)) {
+        throw new Error("expected SubprocessCodexAdapter");
+      }
+      return adapter;
+    });
 
-    if (!(adapter instanceof SubprocessCodexAdapter)) {
-      throw new Error("expected SubprocessCodexAdapter");
-    }
-    const expected = ["bash", wrapperPath];
+    const expected = [
+      "deno",
+      "run",
+      "--no-prompt",
+      "--allow-read",
+      "--allow-write",
+      "--allow-env",
+      "--allow-run",
+      runtimePath,
+    ];
     if (JSON.stringify(adapter.planCommand) !== JSON.stringify(expected)) {
       throw new Error("plan command should use parent wrapper");
     }
@@ -268,6 +304,84 @@ Deno.test("buildTeammateAdapter with explicit plan and execute does not require 
     ) {
       throw new Error("execute command mismatch");
     }
+  });
+});
+
+Deno.test("buildTeammateAdapter keeps explicit teammate command above wrapper runtime", () => {
+  withEnv("CODEX_WRAPPER_RUNTIME", "invalid", () => {
+    const adapter = buildTeammateAdapter({
+      teammateAdapter: "subprocess",
+      teammateCommand: "echo explicit",
+      planCommand: "",
+      executeCommand: "",
+      commandTimeout: 120,
+    });
+
+    if (!(adapter instanceof SubprocessCodexAdapter)) {
+      throw new Error("expected SubprocessCodexAdapter");
+    }
+    if (
+      JSON.stringify(adapter.planCommand) !== JSON.stringify(["echo", "explicit"])
+    ) {
+      throw new Error("plan command should use explicit teammate command");
+    }
+    if (
+      JSON.stringify(adapter.executeCommand) !== JSON.stringify(["echo", "explicit"])
+    ) {
+      throw new Error("execute command should use explicit teammate command");
+    }
+  });
+});
+
+Deno.test("buildTeammateAdapter default teammate command uses ts runtime", () => {
+  withTempDir((root) => {
+    const fakeExec = `${root}/bin/agent-dock`;
+    const runtimePath = `${root}/src/infrastructure/wrapper/runtime.ts`;
+
+    Deno.mkdirSync(`${root}/bin`, { recursive: true });
+    Deno.mkdirSync(`${root}/src/infrastructure/wrapper`, { recursive: true });
+    Deno.writeTextFileSync(fakeExec, "#!/usr/bin/env bash\n");
+    Deno.writeTextFileSync(runtimePath, "export {};\n");
+
+    withEnv("CODEX_WRAPPER_RUNTIME", "ts", () => {
+      const command = defaultTeammateCommand(fakeExec);
+      const expected = `deno run --no-prompt --allow-read --allow-write --allow-env --allow-run ${runtimePath}`;
+      if (command !== expected) {
+        throw new Error(`unexpected default command: ${command}`);
+      }
+    });
+  });
+});
+
+Deno.test("buildTeammateAdapter default teammate command rejects legacy runtime", () => {
+  withTempDir((root) => {
+    const fakeExec = `${root}/bin/agent-dock`;
+
+    Deno.mkdirSync(`${root}/bin`, { recursive: true });
+    Deno.writeTextFileSync(fakeExec, "#!/usr/bin/env bash\n");
+
+    withEnv("CODEX_WRAPPER_RUNTIME", "legacy", () => {
+      assertThrowsMessage(
+        () => defaultTeammateCommand(fakeExec),
+        "unsupported CODEX_WRAPPER_RUNTIME=legacy. supported values: ts",
+      );
+    });
+  });
+});
+
+Deno.test("buildTeammateAdapter default teammate command rejects invalid runtime", () => {
+  withTempDir((root) => {
+    const fakeExec = `${root}/bin/agent-dock`;
+
+    Deno.mkdirSync(`${root}/bin`, { recursive: true });
+    Deno.writeTextFileSync(fakeExec, "#!/usr/bin/env bash\n");
+
+    withEnv("CODEX_WRAPPER_RUNTIME", "unknown", () => {
+      assertThrowsMessage(
+        () => defaultTeammateCommand(fakeExec),
+        "unsupported CODEX_WRAPPER_RUNTIME=unknown. supported values: ts",
+      );
+    });
   });
 });
 

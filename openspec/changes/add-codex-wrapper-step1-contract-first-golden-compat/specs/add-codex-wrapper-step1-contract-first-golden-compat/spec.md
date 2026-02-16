@@ -23,3 +23,16 @@ The system SHALL create a change artifact set that enables future golden regress
 - **WHEN** validating the change definition
 - **THEN** `openspec validate add-codex-wrapper-step1-contract-first-golden-compat --strict` SHALL be the mandatory gate
 - **AND** task artifacts SHALL align with the same requirements and scope.
+
+### Requirement: Default and Runtime Compatibility Switch
+The system SHALL expose a `CODEX_WRAPPER_RUNTIME` selector and preserve legacy behavior unless explicitly switched.
+
+#### Scenario: Legacy remains default
+- **WHEN** `CODEX_WRAPPER_RUNTIME` is unset
+- **THEN** `codex_wrapper.sh` SHALL default to `legacy`
+- **AND** the existing wrapper flow SHALL remain unchanged.
+
+#### Scenario: TS runtime is explicitly rejected
+- **WHEN** `CODEX_WRAPPER_RUNTIME` is set to `ts`
+- **THEN** `codex_wrapper.sh` SHALL fail fast with a non-zero exit code
+- **AND** output SHALL include an explicit unsupported/TS runtime message.

@@ -7,7 +7,7 @@
 ### code_unit_1
 - file: codex_wrapper.sh
 - service: compat runtime entry
-- function: runtime switch default path
+- function: emit_stderr_category / CODEX_WRAPPER_RUNTIME runtime selector branch
 - purpose: `CODEX_WRAPPER_RUNTIME` を `legacy` として既定ルートを維持し、`ts` 指定時を明示 fail 扱いにするための基点を追加。
 - input: runtime environment flags
 - output: 既定ランタイム維持と将来拡張口の明示化
@@ -19,7 +19,7 @@
 ### code_unit_1
 - file: codex_wrapper.sh
 - service: contract documentation
-- function: top-of-file contract comments
+- function: top-of-file contract comment block
 - purpose: RESULT/JUDGMENT/CHANGED_FILES/CHECKS/RESULT_PHASE/CODEX_STREAM_VIEW の判定契約を明文化。
 - input: requirements と仕様
 - output: 実装差分比較可能な規約表現
@@ -31,7 +31,7 @@
 ### code_unit_1
 - file: codex_wrapper.sh
 - service: stderr classification support
-- function: error-category comment labels
+- function: emit_stderr_category
 - purpose: 既存文言を維持しつつ stderr の失敗分類を追跡しやすく整備。
 - input: error handling branches
 - output: カテゴリ付きエラーパスの可観測化
@@ -82,14 +82,14 @@
 - input: fixture response text
 - output: 契約崩れを検知するユニットテスト
 - error: 回帰ケース不足
-- test: `deno test --allow-read --allow-write --allow-env src/infrastructure/wrapper/helper_test.ts`
+- test: `deno test --allow-read --allow-write --allow-env --allow-run src/infrastructure/wrapper/helper_test.ts`
 
 ## task_id: 1.7
 
 ### code_unit_1
 - file: src/infrastructure/wrapper/helper_test.ts
 - service: golden compatibility tests
-- function: payload/prompt/stream/result block parity
+- function: golden contract parity test (prompt/result block/exit code/stderr)
 - purpose: shell 期待値と比較する golden 回帰観点のテスト整備。
 - input: 固定入力（payload/prompt/stream/result block）
 - output: 差分ゼロ条件の固定化

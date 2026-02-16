@@ -15,15 +15,19 @@ const DOTENV_DENY_MESSAGE =
 const DOTENV_CHANGED_MESSAGE =
   "deny rule violation: .env/.env.* files were modified by codex";
 
-const RESULT_KEYS = [
+export const RESULT_KEYS = [
   "RESULT",
   "SUMMARY",
   "CHANGED_FILES",
   "CHECKS",
 ] as const;
-const OPTIONAL_RESULT_KEYS = [
+export const OPTIONAL_RESULT_KEYS = [
   "JUDGMENT",
 ] as const;
+export const EXIT_CODE_INVALID_INPUT = 2 as const;
+export const EXIT_CODE_RESULT_BLOCK_EMPTY = 3 as const;
+export const EXIT_CODE_ENV_DENY = 3 as const;
+export const EXIT_CODE_ENV_MODIFIED = 4 as const;
 
 const FORBIDDEN_OPENSPEC_CHECK_COMMAND_PATTERNS = [
   /\bagent-dock\s+openspec\b/iu,
@@ -215,7 +219,7 @@ function buildProgressLogSummary(
   return { count, recent };
 }
 
-function resolveTaskPhase(
+export function resolveTaskPhase(
   task: Record<string, unknown>,
   progressLog: unknown[],
 ): TaskPhase | null {
@@ -259,6 +263,13 @@ function resolveTaskPhase(
   return null;
 }
 
+export function shouldRequireJudgmentResultBlock(
+  task: Record<string, unknown>,
+  progressLog: unknown[],
+): boolean {
+  return isDecisionTaskPhase(resolveTaskPhase(task, progressLog));
+}
+
 export function buildPrompt(
   payload: Record<string, unknown>,
   readEnv: EnvReader = defaultEnv,
@@ -286,7 +297,7 @@ export function buildPrompt(
       const preview = violations.slice(0, 5).join(", ");
       throw new WrapperHelperError(
         `${DOTENV_DENY_MESSAGE} (task_id=${taskId || "unknown"}; ${preview})`,
-        3,
+        EXIT_CODE_ENV_DENY,
       );
     }
   }
@@ -415,7 +426,10 @@ ${outputContractText}`;
     return prompt;
   }
 
-  throw new WrapperHelperError(`unknown mode: ${String(mode)}`, 2);
+  throw new WrapperHelperError(
+    `unknown mode: ${String(mode)}`,
+    EXIT_CODE_INVALID_INPUT,
+  );
 }
 
 function toPosixPath(value: string): string {
@@ -538,7 +552,10 @@ export function verifyDotenvSnapshotUnchanged(
     details.push(`changed=${changed.join(",")}`);
   }
   const suffix = details.length > 0 ? ` (${details.join("; ")})` : "";
-  throw new WrapperHelperError(`${DOTENV_CHANGED_MESSAGE}${suffix}`, 4);
+  throw new WrapperHelperError(
+    `${DOTENV_CHANGED_MESSAGE}${suffix}`,
+    EXIT_CODE_ENV_MODIFIED,
+  );
 }
 
 interface ExtractResultOptions {
@@ -655,13 +672,16 @@ export function extractResultToFile(
   const phaseRaw = Deno.env.get("RESULT_PHASE");
   const phase = normalizeTaskPhase(phaseRaw);
   if (phase === null) {
-    throw new WrapperHelperError("missing or invalid RESULT_PHASE", 2);
+    throw new WrapperHelperError(
+      "missing or invalid RESULT_PHASE",
+      EXIT_CODE_INVALID_INPUT,
+    );
   }
   const extracted = extractResultBlock(raw, {
     requiresJudgment: isDecisionTaskPhase(phase),
   });
   if (extracted === null) {
-    throw new WrapperHelperError("result block not found", 2);
+    throw new WrapperHelperError("result block not found", EXIT_CODE_INVALID_INPUT);
   }
   Deno.writeTextFileSync(outputPath, extracted);
 }
@@ -669,58 +689,70 @@ export function extractResultToFile(
 function requiredEnv(name: string): string {
   const value = Deno.env.get(name);
   if (value === undefined) {
-    throw new WrapperHelperError(`missing required env: ${name}`, 2);
+  throw new WrapperHelperError(`missing required env: ${name}`, EXIT_CODE_INVALID_INPUT);
   }
   return value;
+}
+
+function runBuildPrompt(): number {
+  const payloadRaw = requiredEnv("PAYLOAD");
+  let payload: unknown;
+  try {
+    payload = JSON.parse(payloadRaw);
+  } catch (error) {
+    throw new WrapperHelperError(
+      `invalid input payload: ${formatError(error)}`,
+      EXIT_CODE_INVALID_INPUT,
+    );
+  }
+  if (!isRecord(payload)) {
+    throw new WrapperHelperError(
+      "invalid input payload: root must be JSON object",
+      EXIT_CODE_INVALID_INPUT,
+    );
+  }
+  const prompt = buildPrompt(payload, defaultEnv);
+  console.log(prompt);
+  return 0;
+}
+
+function runSnapshotDotenv(): number {
+  const rootPath = requiredEnv("TARGET_PROJECT_DIR");
+  const snapshotPath = requiredEnv("SNAPSHOT_PATH");
+  writeDotenvSnapshot(rootPath, snapshotPath);
+  return 0;
+}
+
+function runVerifyDotenv(): number {
+  const rootPath = requiredEnv("TARGET_PROJECT_DIR");
+  const snapshotPath = requiredEnv("SNAPSHOT_PATH");
+  verifyDotenvSnapshotUnchanged(rootPath, snapshotPath);
+  return 0;
+}
+
+function runExtractResult(): number {
+  const streamPath = requiredEnv("STREAM_PATH");
+  const outputPath = requiredEnv("OUTPUT_PATH");
+  extractResultToFile(streamPath, outputPath);
+  return 0;
 }
 
 export function runCli(args: string[]): number {
   const command = args[0] ?? "";
   try {
     if (command === "build-prompt") {
-      const payloadRaw = requiredEnv("PAYLOAD");
-      let payload: unknown;
-      try {
-        payload = JSON.parse(payloadRaw);
-      } catch (error) {
-        throw new WrapperHelperError(
-          `invalid input payload: ${formatError(error)}`,
-          2,
-        );
-      }
-      if (!isRecord(payload)) {
-        throw new WrapperHelperError(
-          "invalid input payload: root must be JSON object",
-          2,
-        );
-      }
-      const prompt = buildPrompt(payload, defaultEnv);
-      console.log(prompt);
-      return 0;
+      return runBuildPrompt();
     }
-
     if (command === "snapshot-dotenv") {
-      const rootPath = requiredEnv("TARGET_PROJECT_DIR");
-      const snapshotPath = requiredEnv("SNAPSHOT_PATH");
-      writeDotenvSnapshot(rootPath, snapshotPath);
-      return 0;
+      return runSnapshotDotenv();
     }
-
     if (command === "verify-dotenv") {
-      const rootPath = requiredEnv("TARGET_PROJECT_DIR");
-      const snapshotPath = requiredEnv("SNAPSHOT_PATH");
-      verifyDotenvSnapshotUnchanged(rootPath, snapshotPath);
-      return 0;
+      return runVerifyDotenv();
     }
-
     if (command === "extract-result") {
-      const streamPath = requiredEnv("STREAM_PATH");
-      const outputPath = requiredEnv("OUTPUT_PATH");
-      extractResultToFile(streamPath, outputPath);
-      return 0;
+      return runExtractResult();
     }
-
-    throw new WrapperHelperError(`unknown helper mode: ${command}`, 2);
+    throw new WrapperHelperError(`unknown helper mode: ${command}`, EXIT_CODE_INVALID_INPUT);
   } catch (error) {
     if (error instanceof WrapperHelperError) {
       console.error(error.message);

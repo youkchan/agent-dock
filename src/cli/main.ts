@@ -8,7 +8,6 @@ import {
   type TeammateAdapter,
 } from "../application/orchestrator/orchestrator.ts";
 import {
-  buildSpecCreatorTaskConfig,
   collectSpecContextInteractive,
   type SpecContext,
   type SpecCreatorTaskConfig,
@@ -77,12 +76,6 @@ const DEFAULT_IO: CliIO = {
     Deno.stderr.writeSync(new TextEncoder().encode(text));
   },
 };
-
-const SPEC_CREATOR_ACTIVE_PERSONAS = [
-  "spec-planner",
-  "spec-reviewer",
-  "spec-code-creator",
-];
 
 interface CompileOpenSpecArgs {
   changeId: string;
@@ -186,6 +179,8 @@ const SPEC_CREATOR_PREPROCESS_USAGE = [
 const SPEC_CREATOR_USAGE = [
   "usage: spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--persona-dir DIR]",
 ].join("\n");
+
+const DEFAULT_WRAPPER_RUNTIME = "ts";
 
 const GLOBAL_USAGE = [
   "usage: agent-dock <command> [options]",
@@ -327,24 +322,33 @@ function collectPersonaExecutionSandboxes(
 }
 
 export function defaultTeammateCommand(executablePath?: string): string {
-  const wrapperPath = resolveDefaultWrapperPath(executablePath);
-  return `bash ${shellQuote(wrapperPath)}`;
+  resolveWrapperRuntime();
+  const runtimePath = resolveDefaultRuntimePath(executablePath);
+  return `deno run --no-prompt --allow-read --allow-write --allow-env --allow-run ${
+    shellQuote(runtimePath)
+  }`;
 }
 
-export function resolveDefaultWrapperPath(executablePath?: string): string {
+function resolveDefaultRuntimePath(executablePath?: string): string {
   const resolvedEntry = resolveExecutablePath(executablePath);
-  const wrapperPath = findWrapperFrom(path.dirname(resolvedEntry));
-  if (wrapperPath === null) {
+  const runtimePath = findRuntimeFrom(path.dirname(resolvedEntry));
+  if (runtimePath === null) {
     throw new Error(
       "subprocess adapter requires command settings. " +
         "Set TEAMMATE_COMMAND or both TEAMMATE_PLAN_COMMAND and TEAMMATE_EXECUTE_COMMAND, " +
         "or pass --teammate-command / --plan-command / --execute-command. " +
-        `Default wrapper was not found: ${
-          path.resolve(path.dirname(resolvedEntry), "codex_wrapper.sh")
+        `Default ts wrapper was not found: ${
+          path.resolve(
+            path.dirname(resolvedEntry),
+            "src",
+            "infrastructure",
+            "wrapper",
+            "runtime.ts",
+          )
         }`,
     );
   }
-  return wrapperPath;
+  return runtimePath;
 }
 
 export function shouldBootstrapRunState(
@@ -1722,10 +1726,16 @@ function shellQuote(raw: string): string {
   return `'${raw.replace(/'/gu, `'"'"'`)}'`;
 }
 
-function findWrapperFrom(startDir: string): string | null {
+function findRuntimeFrom(startDir: string): string | null {
   let current = path.resolve(startDir);
   while (true) {
-    const candidate = path.join(current, "codex_wrapper.sh");
+    const candidate = path.join(
+      current,
+      "src",
+      "infrastructure",
+      "wrapper",
+      "runtime.ts",
+    );
     if (isFile(candidate)) {
       return candidate;
     }
@@ -1740,14 +1750,6 @@ function findWrapperFrom(startDir: string): string | null {
 function isFile(filePath: string): boolean {
   try {
     return Deno.statSync(filePath).isFile;
-  } catch (_error) {
-    return false;
-  }
-}
-
-function isDirectory(dirPath: string): boolean {
-  try {
-    return Deno.statSync(dirPath).isDirectory;
   } catch (_error) {
     return false;
   }
@@ -1871,6 +1873,18 @@ function getEnv(name: string, fallback: string): string {
   } catch (_error) {
     return fallback;
   }
+}
+
+function resolveWrapperRuntime(
+  rawRuntime: string = getEnv("CODEX_WRAPPER_RUNTIME", DEFAULT_WRAPPER_RUNTIME),
+): "ts" {
+  const normalized = String(rawRuntime).trim().toLowerCase();
+  if (!normalized || normalized === "ts") {
+    return "ts";
+  }
+  throw new Error(
+    `unsupported CODEX_WRAPPER_RUNTIME=${rawRuntime}. supported values: ts`,
+  );
 }
 
 function isRecord(raw: unknown): raw is Record<string, unknown> {

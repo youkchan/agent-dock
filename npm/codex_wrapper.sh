@@ -1,15 +1,40 @@
 #!/usr/bin/env bash
+
+# Contract (legacy runtime entry):
+# - Final result block is emitted through extract-result and requires:
+#   RESULT: completed|blocked
+#   SUMMARY: <= 100 chars
+#   CHANGED_FILES: comma-separated normalized to (none) when empty/none/-/blank
+#   CHECKS: executed check commands
+# - JUDGMENT is optional here; it is required only for decision phases
+#   (review/spec_check/test) via helper-side validation.
+# - CHANGED_FILES is validated structurally in helper; this wrapper does not
+#   change execution flow for non-empty/empty CHANGED_FILES.
+# - RESULT_PHASE must be set before extract-result and is valid only for
+#   implement/review/spec_check/test; otherwise helper exits with:
+#   "missing or invalid RESULT_PHASE" (code 2).
+# - Stream view behavior:
+#   - CODEX_STREAM_VIEW=assistant: user and assistant thinking/codex streams only
+#   - CODEX_STREAM_VIEW=thinking: strips user stream
+#   - CODEX_STREAM_VIEW=all_compact: compact executor output, keeps CODEX_STREAM_EXEC_KEEP_LINES
+#   - CODEX_STREAM_VIEW=all: pass-through
+# - Failure categories (stderr/exit):
+#   - input-validation: empty stdin, helper parse/JSON/env/mode/result-block errors (2)
+#   - environment: .env read/deny or dotenv snapshot mismatch (3/4)
+#   - codex-fail: codex command failure (passthrough codex exit code)
+#   - result-block: codex produced no output block or empty tmp output (3)
+#   - unexpected internal (set -e / unhandled): 1
 set -euo pipefail
 
-if ! command -v codex >/dev/null 2>&1; then
-  echo "codex command not found" >&2
-  exit 1
-fi
-
-if ! command -v deno >/dev/null 2>&1; then
-  echo "deno command not found" >&2
-  exit 1
-fi
+emit_stderr_category() {
+  local category="$1"
+  shift
+  echo "# [${category}]" >&2
+  while (($# > 0)); do
+    echo "$1" >&2
+    shift
+  done
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_PROJECT_DIR="${TARGET_PROJECT_DIR:-$SCRIPT_DIR}"
@@ -27,9 +52,31 @@ CODEX_STREAM_EXEC_KEEP_LINES="${CODEX_STREAM_EXEC_KEEP_LINES:-3}"
 CODEX_DENY_DOTENV="${CODEX_DENY_DOTENV:-1}"
 CODEX_WRAPPER_LANG="${CODEX_WRAPPER_LANG:-en_US.UTF-8}"
 CODEX_RUST_BACKTRACE="${CODEX_RUST_BACKTRACE:-0}"
+CODEX_WRAPPER_RUNTIME="${CODEX_WRAPPER_RUNTIME:-legacy}"
+
+if [[ "$CODEX_WRAPPER_RUNTIME" == "legacy" ]]; then
+  : # legacy runtime preserves existing flow
+elif [[ "$CODEX_WRAPPER_RUNTIME" == "ts" ]]; then
+  # Runtime command assembly is migrated in src/infrastructure/wrapper/runtime.ts for this path.
+  emit_stderr_category input-validation "CODEX_WRAPPER_RUNTIME=ts is not supported yet in this runtime shim"
+  exit 64
+else
+  emit_stderr_category input-validation "Unsupported CODEX_WRAPPER_RUNTIME=$CODEX_WRAPPER_RUNTIME"
+  exit 64
+fi
+
+if ! command -v codex >/dev/null 2>&1; then
+  emit_stderr_category environment "codex command not found"
+  exit 1
+fi
+
+if ! command -v deno >/dev/null 2>&1; then
+  emit_stderr_category environment "deno command not found"
+  exit 1
+fi
 
 if [[ ! -f "$WRAPPER_HELPER_SCRIPT" ]]; then
-  echo "wrapper helper not found: $WRAPPER_HELPER_SCRIPT" >&2
+  emit_stderr_category unexpected-internal "wrapper helper not found: $WRAPPER_HELPER_SCRIPT"
   exit 1
 fi
 
@@ -48,7 +95,7 @@ run_wrapper_helper() {
 
 PAYLOAD="$(cat)"
 if [[ -z "${PAYLOAD// }" ]]; then
-  echo "empty stdin payload" >&2
+  emit_stderr_category input-validation "empty stdin payload"
   exit 2
 fi
 
@@ -349,18 +396,17 @@ if [[ $codex_exit_code -ne 0 ]]; then
   ERROR_LOG_PATH="${CODEX_ERROR_LOG_PATH:-/tmp/codex_wrapper_last_error.log}"
   if [[ -s "$TMP_STREAM_LOG" ]]; then
     cp "$TMP_STREAM_LOG" "$ERROR_LOG_PATH" 2>/dev/null || true
-    echo "codex command failed (exit=$codex_exit_code)" >&2
-    echo "codex stderr/stdout tail (full: $ERROR_LOG_PATH):" >&2
+    emit_stderr_category codex-fail "codex command failed (exit=$codex_exit_code)" "codex stderr/stdout tail (full: $ERROR_LOG_PATH):"
     tail -n 80 "$TMP_STREAM_LOG" >&2 || true
   fi
   if [[ -s "$TMP_STREAM_LOG" ]]; then
     preview="$(tail -n 60 "$TMP_STREAM_LOG" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g' | cut -c 1-1200)"
-    echo "codex command failed (exit=$codex_exit_code): $preview" >&2
+    emit_stderr_category codex-fail "codex command failed (exit=$codex_exit_code): $preview"
   elif [[ -s "$TMP_OUTPUT" ]]; then
     preview="$(head -c 400 "$TMP_OUTPUT" | tr '\n' ' ')"
-    echo "codex command failed (exit=$codex_exit_code): $preview" >&2
+    emit_stderr_category codex-fail "codex command failed (exit=$codex_exit_code): $preview"
   else
-    echo "codex command failed (exit=$codex_exit_code)" >&2
+    emit_stderr_category codex-fail "codex command failed (exit=$codex_exit_code)"
   fi
   exit $codex_exit_code
 fi
@@ -370,9 +416,9 @@ if [[ ! -s "$TMP_OUTPUT" ]]; then
 fi
 
 if [[ ! -s "$TMP_OUTPUT" ]]; then
-  echo "codex returned empty output" >&2
+  emit_stderr_category result-block "codex returned empty output"
   if [[ -s "$TMP_STREAM_LOG" ]]; then
-    echo "last stream lines:" >&2
+    emit_stderr_category result-block "last stream lines:"
     tail -n 40 "$TMP_STREAM_LOG" >&2 || true
   fi
   exit 3

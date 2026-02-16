@@ -83,7 +83,7 @@ function loadOverridePersonas(
   }
 
   if (typeof raw === "string") {
-    return loadPersonasFromDirectory(raw, sourceLabel);
+    return loadPersonasFromDirectory(raw);
   }
 
   return parsePersonaList(raw, sourceLabel);
@@ -91,7 +91,6 @@ function loadOverridePersonas(
 
 function loadPersonasFromDirectory(
   personaDirPath: string,
-  sourceLabel: string,
 ): PersonaDefinition[] {
   const personasPath = normalizePersonasPath(personaDirPath);
 

@@ -4,6 +4,7 @@ import {
   containsDotenvReference,
   extractResultBlock,
   extractResultToFile,
+  runCli,
   sanitizePromptText,
   verifyDotenvSnapshotUnchanged,
   WrapperHelperError,
@@ -200,6 +201,165 @@ Deno.test("buildPrompt includes quality issues when provided", () => {
   );
 });
 
+Deno.test("golden contract has zero diff for fixed payload, prompt, stream and result", () => {
+  const payload = {
+    mode: "execute",
+    teammate_id: "tm-1",
+    task: {
+      id: "1.7",
+      title: "add golden parity check",
+      description: "Verify fixed payload/prompt/stream/result block parity",
+      target_paths: [
+        "src/infrastructure/wrapper/helper.ts",
+        "src/infrastructure/wrapper/helper_test.ts",
+      ],
+      depends_on: ["1.6"],
+      requires_plan: false,
+      progress_log: [
+        {
+          timestamp: 1771247093.362,
+          source: "system",
+          text: "execution started persona=implementer phase=implement",
+        },
+      ],
+    },
+  };
+
+  const shellExpectedPrompt = [
+    "You are implementation teammate tm-1.",
+    "Execute the task below.",
+    "",
+    "task_id: 1.7",
+    "title: add golden parity check",
+    "description: Verify fixed payload/prompt/stream/result block parity",
+    "target_paths: src/infrastructure/wrapper/helper.ts, src/infrastructure/wrapper/helper_test.ts",
+    "depends_on: 1.6",
+    "requires_plan: False",
+    "existing_progress_log_count: 1",
+    "existing_progress_log_recent:",
+    "- [1771247093.362] system: execution started persona=implementer phase=implement",
+    "",
+    "Constraints:",
+    "- Do not edit outside target_paths",
+    "- Do not read/reference/edit .env or .env.*",
+    "- Run required local checks",
+    "- OpenSpec change_id: add-codex-wrapper-step1-contract-first-golden-compat",
+    "- For OpenSpec validation, use `openspec validate add-codex-wrapper-step1-contract-first-golden-compat --strict` only",
+    "- Never use task_id as openspec validate target",
+    "- Do not use `agent-dock openspec ...` or `./node_modules/.bin/openspec ...`",
+    "- For `deno test`, use `--allow-read --allow-write --allow-env --allow-run` by default",
+    "- If failed, provide a short root cause",
+    "",
+    "",
+    "",
+    "",
+    "Final output must be exactly these 4 lines:",
+    "RESULT: completed|blocked",
+    "SUMMARY: <=100 chars",
+    "CHANGED_FILES: comma-separated",
+    "CHECKS: executed check commands",
+  ].join("\n");
+
+  const shellStreamLog = [
+    "setup",
+    "RESULT: completed",
+    "SUMMARY: Golden regression baseline reached",
+    "CHANGED_FILES: src/infrastructure/wrapper/helper_test.ts, ",
+    "CHECKS: deno test --allow-read --allow-write --allow-env --allow-run src/infrastructure/wrapper/helper_test.ts; openspec validate add-codex-wrapper-step1-contract-first-golden-compat --strict",
+    "done",
+  ].join("\n");
+  const shellExpectedResult = [
+    "RESULT: completed",
+    "SUMMARY: Golden regression baseline reached",
+    "CHANGED_FILES: src/infrastructure/wrapper/helper_test.ts",
+    "CHECKS: deno test --allow-read --allow-write --allow-env --allow-run src/infrastructure/wrapper/helper_test.ts; openspec validate add-codex-wrapper-step1-contract-first-golden-compat --strict",
+  ].join("\n");
+  const shellExpectedExitCode = 2;
+  const shellExpectedStderr = "missing or invalid RESULT_PHASE";
+
+  const actualPrompt = buildPrompt(
+    payload,
+    makeEnv({
+      CODEX_DENY_DOTENV: "1",
+      OPENSPEC_CHANGE_ID: " add-codex-wrapper-step1-contract-first-golden-compat ",
+      CODEX_PROMPT_MAX_CHARS: "4000",
+    }),
+  );
+  const actualResultBlock = extractResultBlock(shellStreamLog);
+  const differences: string[] = [];
+
+  if (actualPrompt !== shellExpectedPrompt) {
+    differences.push("prompt");
+  }
+  if (actualResultBlock !== shellExpectedResult) {
+    differences.push("result block");
+  }
+
+  withTempDir((root) => {
+    const streamPath = `${root}/stream.log`;
+    const outputPath = `${root}/result.log`;
+    Deno.writeTextFileSync(streamPath, shellStreamLog);
+    withEnv("RESULT_PHASE", "implement", () => {
+      extractResultToFile(streamPath, outputPath);
+    });
+    const actualFileResult = Deno.readTextFileSync(outputPath);
+    if (actualFileResult !== shellExpectedResult) {
+      differences.push("file result");
+    }
+
+    const stderrLines: string[] = [];
+    const originalError = console.error;
+    try {
+      console.error = (...args: unknown[]) => {
+        stderrLines.push(args.map((arg) => String(arg)).join(" "));
+      };
+      withEnv("STREAM_PATH", streamPath, () => {
+        withEnv("OUTPUT_PATH", outputPath, () => {
+          withEnv("RESULT_PHASE", "invalid", () => {
+            const actualExitCode = runCli(["extract-result"]);
+            if (actualExitCode !== shellExpectedExitCode) {
+              differences.push("exit code");
+            }
+          });
+        });
+      });
+    } finally {
+      console.error = originalError;
+    }
+    const actualStderr = stderrLines.join("\n").trim();
+    if (actualStderr !== shellExpectedStderr) {
+      differences.push("stderr");
+    }
+  });
+
+  assert(
+    differences.length === 0,
+    `golden comparison expected zero diff but found: ${differences.join(", ")}`,
+  );
+});
+
+Deno.test("buildPrompt requires CHANGED_FILES to be (none) for non-implement phases", () => {
+  const payload = {
+    mode: "execute",
+    teammate_id: "tm-1",
+    task: {
+      id: "2.9",
+      title: "review docs",
+      description: "inspect docs",
+      target_paths: ["README.md"],
+      depends_on: [],
+      requires_plan: false,
+      progress_log: [],
+      current_phase: "review",
+    },
+  };
+  const prompt = buildPrompt(payload, makeEnv({ CODEX_DENY_DOTENV: "1" }));
+  assert(
+    prompt.includes("In non-implement phases, CHANGED_FILES must be (none)"),
+    "prompt should require no changed files for non-implement phase",
+  );
+});
+
 Deno.test("buildPrompt rejects .env references when deny rule is enabled", () => {
   const payload = {
     mode: "execute",
@@ -275,6 +435,28 @@ Deno.test("extractResultBlock reads last 4-line result block", () => {
         "RESULT: completed",
         "SUMMARY: done",
         "CHANGED_FILES: a.ts",
+        "CHECKS: deno test",
+      ].join("\n"),
+    `unexpected extracted block: ${extracted}`,
+  );
+});
+
+Deno.test("extractResultBlock correctly normalizes normal result block", () => {
+  const raw = [
+    "some log lines",
+    "RESULT: completed",
+    "SUMMARY: done",
+    "CHANGED_FILES: src/a.ts,src/b.ts,   ",
+    "CHECKS: deno test",
+  ].join("\n");
+  const extracted = extractResultBlock(raw);
+  assert(extracted !== null, "expected extracted block");
+  assert(
+    extracted ===
+      [
+        "RESULT: completed",
+        "SUMMARY: done",
+        "CHANGED_FILES: src/a.ts, src/b.ts",
         "CHECKS: deno test",
       ].join("\n"),
     `unexpected extracted block: ${extracted}`,
@@ -375,6 +557,103 @@ Deno.test("extractResultToFile fail-closes when RESULT_PHASE is missing", () => 
 
     assert(thrown instanceof WrapperHelperError, "expected WrapperHelperError");
     assert(thrown.exitCode === 2, "expected missing env exit code 2");
+    assert(
+      thrown.message.includes("missing or invalid RESULT_PHASE"),
+      `unexpected message: ${thrown.message}`,
+    );
+  });
+});
+
+Deno.test("extractResultToFile fail-closes when extract-result block is missing", () => {
+  withTempDir((root) => {
+    const streamPath = `${root}/stream.log`;
+    const outputPath = `${root}/output.log`;
+    Deno.writeTextFileSync(
+      streamPath,
+      [
+        "START",
+        "SUMMARY: done",
+        "CHANGED_FILES: (none)",
+        "CHECKS: deno test",
+      ].join("\n"),
+    );
+
+    let thrown: unknown = null;
+    withEnv("RESULT_PHASE", "implement", () => {
+      try {
+        extractResultToFile(streamPath, outputPath);
+      } catch (error) {
+        thrown = error;
+      }
+    });
+
+    assert(thrown instanceof WrapperHelperError, "expected WrapperHelperError");
+    assert(thrown.exitCode === 2, "expected missing block exit code 2");
+    assert(
+      thrown.message.includes("result block not found"),
+      `unexpected message: ${thrown.message}`,
+    );
+  });
+});
+
+Deno.test("extractResultToFile fail-closes when stale JUDGMENT is outside last result block", () => {
+  withTempDir((root) => {
+    const streamPath = `${root}/stream.log`;
+    const outputPath = `${root}/output.log`;
+    Deno.writeTextFileSync(
+      streamPath,
+      [
+        "JUDGMENT: pass",
+        "RESULT: completed",
+        "SUMMARY: done",
+        "CHANGED_FILES: (none)",
+        "CHECKS: deno test",
+      ].join("\n"),
+    );
+
+    let thrown: unknown = null;
+    withEnv("RESULT_PHASE", "review", () => {
+      try {
+        extractResultToFile(streamPath, outputPath);
+      } catch (error) {
+        thrown = error;
+      }
+    });
+
+    assert(thrown instanceof WrapperHelperError, "expected WrapperHelperError");
+    assert(thrown.exitCode === 2, "expected stale line exit code 2");
+    assert(
+      thrown.message.includes("result block not found"),
+      `unexpected message: ${thrown.message}`,
+    );
+  });
+});
+
+Deno.test("extractResultToFile fail-closes when RESULT_PHASE is invalid", () => {
+  withTempDir((root) => {
+    const streamPath = `${root}/stream.log`;
+    const outputPath = `${root}/output.log`;
+    Deno.writeTextFileSync(
+      streamPath,
+      [
+        "RESULT: completed",
+        "SUMMARY: done",
+        "CHANGED_FILES: (none)",
+        "CHECKS: deno test",
+      ].join("\n"),
+    );
+
+    let thrown: unknown = null;
+    withEnv("RESULT_PHASE", "invalid", () => {
+      try {
+        extractResultToFile(streamPath, outputPath);
+      } catch (error) {
+        thrown = error;
+      }
+    });
+
+    assert(thrown instanceof WrapperHelperError, "expected WrapperHelperError");
+    assert(thrown.exitCode === 2, "expected invalid phase exit code 2");
     assert(
       thrown.message.includes("missing or invalid RESULT_PHASE"),
       `unexpected message: ${thrown.message}`,
