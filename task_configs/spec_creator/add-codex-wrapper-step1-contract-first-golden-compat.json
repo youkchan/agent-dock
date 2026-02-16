@@ -1,0 +1,431 @@
+{
+  "teammates": [
+    "spec-planner",
+    "spec-reviewer",
+    "spec-code-creator"
+  ],
+  "personas": [
+    {
+      "id": "implementer",
+      "role": "implementer",
+      "focus": "実装を前進させる",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "code-reviewer",
+      "role": "reviewer",
+      "focus": "品質と回帰リスクを確認する",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-checker",
+      "role": "spec_guard",
+      "focus": "仕様逸脱を防ぐ",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "test-owner",
+      "role": "test_guard",
+      "focus": "検証の十分性を担保し、MUST/SHALLごとにtransport経路テストとfail-closed拒否テストの両方を要求する",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-planner",
+      "role": "spec_guard",
+      "focus": "要件をOpenSpec構成へ正規化し、要件外追加を禁止し、MUST/SHALLごとにtransport経路とfail-closed拒否点をtasks/designへ固定する",
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-reviewer",
+      "role": "reviewer",
+      "focus": "proposal/tasks/design/code_summaryの整合と過不足を検証し、要件外追加・過剰修正・冗長化を禁止し、transport経路未配線・拒否点未定義・対応テスト欠落をblockerとして停止する",
+      "can_block": true,
+      "enabled": true,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-code-creator",
+      "role": "spec_guard",
+      "focus": "実装認知負荷低減のためcode_summary.mdにコード粒度と対応関係を明記し、taskごとのtransport経路・拒否点・検証テスト対応を記録する",
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    }
+  ],
+  "persona_defaults": {
+    "phase_order": [
+      "implement",
+      "review"
+    ],
+    "phase_policies": {
+      "implement": {
+        "active_personas": [
+          "spec-planner"
+        ],
+        "executor_personas": [
+          "spec-planner"
+        ],
+        "state_transition_personas": [
+          "spec-planner"
+        ]
+      },
+      "review": {
+        "active_personas": [
+          "spec-reviewer"
+        ],
+        "executor_personas": [
+          "spec-reviewer"
+        ],
+        "state_transition_personas": [
+          "spec-reviewer"
+        ]
+      }
+    }
+  },
+  "tasks": [
+    {
+      "id": "1.1",
+      "title": "要件をOpenSpec要素へ正規化する",
+      "description": "requirements_text を整理し、change の最小スコープを定義する。\n\nspec_context:\n- requirements_text: ## 1. 変更の目的 codex_wrapper.sh の論理を段階的に TypeScript に寄せるが、運用を壊さない。 まずは codex_wrapper.sh をデフォルト入口として維持し、既存 runtime 挙動を維持したまま内部実装だけを整理する。 最終的には shell 依存を減らすが、今回は 互換性確保が第一。 ## 2. 現状の課題 - 変更内容が大きく、既存挙動の再現性が不十分だと、判定や実行結果の取り回しで静かに不一致が起きる。 - RESULT/JUDGMENT/CHANGED_FILES などの判定契約、環境設定ファイル保護、RESULT_PHASE 解釈が仕様化されていないと、実装者ごとに解釈差分が生まれやすい。 - shell と TS の境界が曖昧なまま実装を始めると、どこが変更対象かが不明確になり、ロールバックが難しくなる。 ## 3. 変更方針（本 change の中核） ### 方針A: 契約先行 実装に入る前に現行挙動を明文化する。 - RESULT/JUDGMENT の必須条件 - CHANGED_FILES の正規化ルール - 空 payload / JSON parse 失敗時の exit code - stderr 文言（少なくとも分類可能な失敗種別） - CODEX_STREAM_VIEW 挙動 - 環境設定ファイル拒否境界 - RESULT_PHASE 解釈 この契約が strict 検査とテストで固定されるまでは、実装に手を入れない。 ### 方針B: goldens で「壊れていない」を量で保証 現行 shell 実装を基準値として、固定入力の入出力を golden 化し、同値比較で移行する。 payload / prompt / stream / result block を再現可能テストにする。 ### 方針C: 段階移行（2層） - Step1: codex_wrapper.sh 維持。shell は薄いラッパーへ寄せ、helper.ts の分割・整備を実施。 - Step2: 将来の TS CLI へ切替可能な導線を追加（デフォルトは変更しない）。 - Step3: 並列比較で差分ゼロを確認後、必要なら shell 依存を縮退。 ### 方針D: 差分ゼロを強制 実装変更は同時比較前提で進める。 feature flag/RESULT_PHASE を使って両経路の結果を同時取得し、差分時は必ず fail。 比較対象は result block / exit code / stderr（3点）。 ### 方針E: 変更不可原則 この change 内で不変とする要素: - 外部契約（I/O スキーマ） - parser/判断条件の意味 - 既存エラー分類の基本動作 - UX 的整形（表示文言の自由変更） 仕様外最適化やフォーマット刷新は次 change に回す。 ## 4. 対象範囲 - 直接対象: codex_wrapper.sh, src/infrastructure/wrapper/helper.ts の構造化・分割、検証整備 - 間接対象: spec 文書（openspec） - 非対象: codex 自体の API 仕様変更、実行順序や sandbox などの別テーマ ## 5. 成功条件（この段階のゲート） - openspec validate <change-id> --strict 通過 - 既存挙動の golden ベースの回帰テスト通過 - Step1 終了時点で codex_wrapper.sh 経路がデフォルトで継続し、既存 subprocess 実行経路が壊れない language (ja/en): ja ### A) codex_wrapper.sh（Step1 では基本維持） 対象ファイル: codex_wrapper.sh（1-385） 維持必須（変更禁止） - 既定 wrapper としての起動入口（bash codex_wrapper.sh） - WRAPPER_HELPER_CMD の既存 4 サブコマンド呼び出し（build-prompt/snapshot-dotenv/verify-dotenv/extract-result） - CODEX_STREAM_VIEW 分岐（assistant/thinking/all_compact/all） - RESULT_PHASE を用いた extract_result_block 呼び出し - エラー時の終了コード／空出力時の fail-closed 追加・整理（Step1 でも可能） 1. 実行経路分岐変数を追加（後続の TS 直接化準備） - 例: CODex_WRAPPER_RUNTIME=legacy（デフォルト） - legacy の場合は現状フローをそのまま実行（何も動作変更なし） - ts は未対応なら即 fail（Step1 では使わない） → ここで「将来の TS 入口」を事故なく差し込める。 2. 契約説明コメントを追加 - RESULT/SUMMARY/CHANGED_FILES/CHECKS/JUDGMENT の要求仕様を上部コメント化 - これで helper.ts 側と差分が起きたときの原因切り分けがしやすくなる。 3. ログ/エラー種別をテストで固定化しやすい形に微整理 - 既存メッセージを変更しない前提で、stderr 出力箇所を「カテゴリ名付き」コメント追加のみ（本文は不変）。 ### B) src/infrastructure/wrapper/helper.ts 対象ファイル: src/infrastructure/wrapper/helper.ts 維持必須 - buildPrompt の文字列仕様（plan/execute のフォーマット） - resolveTaskPhase のフェーズ解決順（current_phase → current_phase_index → progress_log） - collectDotenvSnapshot / verifyDotenvSnapshotUnchanged - extractResultBlock の block 解析規則（RESULT 以降、重複不可、空行打ち切り） - extractResultToFile の RESULT_PHASE 必須。 追加・整理 1. サブコマンド関数を明示的に分割 - runBuildPrompt, runSnapshotDotenv, runVerifyDotenv, runExtractResult の内部 API として切り出し（戻り値/throw は既存維持）。 - runCli は dispatch のみ担当にする（既存挙動は変更しない）。 2. 契約定数を専用化 - RESULT_KEYS / OPTIONAL_RESULT_KEYS / exit code（2/3/4）を export const で明文化し、後続 spec と 1 対 1 対応させる。 - ここは動作変更ではなく「参照先固定化」。 3. テスト観点を追加（既存 helper_test.ts） - 実行結果 block の正規ケース - 非 implement の CHANGED_FILES 空/非空判定 - extract-result 欠落や stale line - RESULT_PHASE 未設定/不正 の 失敗ケース\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/proposal.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/tasks.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/design.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/code_summary.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/specs/add-codex-wrapper-step1-contract-first-golden-compat/spec.md"
+      ],
+      "depends_on": [],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.2",
+      "title": "proposal.md を生成する",
+      "description": "変更理由、変更内容、影響範囲を proposal.md に記述する。\n\nspec_context:\n- requirements_text: ## 1. 変更の目的 codex_wrapper.sh の論理を段階的に TypeScript に寄せるが、運用を壊さない。 まずは codex_wrapper.sh をデフォルト入口として維持し、既存 runtime 挙動を維持したまま内部実装だけを整理する。 最終的には shell 依存を減らすが、今回は 互換性確保が第一。 ## 2. 現状の課題 - 変更内容が大きく、既存挙動の再現性が不十分だと、判定や実行結果の取り回しで静かに不一致が起きる。 - RESULT/JUDGMENT/CHANGED_FILES などの判定契約、環境設定ファイル保護、RESULT_PHASE 解釈が仕様化されていないと、実装者ごとに解釈差分が生まれやすい。 - shell と TS の境界が曖昧なまま実装を始めると、どこが変更対象かが不明確になり、ロールバックが難しくなる。 ## 3. 変更方針（本 change の中核） ### 方針A: 契約先行 実装に入る前に現行挙動を明文化する。 - RESULT/JUDGMENT の必須条件 - CHANGED_FILES の正規化ルール - 空 payload / JSON parse 失敗時の exit code - stderr 文言（少なくとも分類可能な失敗種別） - CODEX_STREAM_VIEW 挙動 - 環境設定ファイル拒否境界 - RESULT_PHASE 解釈 この契約が strict 検査とテストで固定されるまでは、実装に手を入れない。 ### 方針B: goldens で「壊れていない」を量で保証 現行 shell 実装を基準値として、固定入力の入出力を golden 化し、同値比較で移行する。 payload / prompt / stream / result block を再現可能テストにする。 ### 方針C: 段階移行（2層） - Step1: codex_wrapper.sh 維持。shell は薄いラッパーへ寄せ、helper.ts の分割・整備を実施。 - Step2: 将来の TS CLI へ切替可能な導線を追加（デフォルトは変更しない）。 - Step3: 並列比較で差分ゼロを確認後、必要なら shell 依存を縮退。 ### 方針D: 差分ゼロを強制 実装変更は同時比較前提で進める。 feature flag/RESULT_PHASE を使って両経路の結果を同時取得し、差分時は必ず fail。 比較対象は result block / exit code / stderr（3点）。 ### 方針E: 変更不可原則 この change 内で不変とする要素: - 外部契約（I/O スキーマ） - parser/判断条件の意味 - 既存エラー分類の基本動作 - UX 的整形（表示文言の自由変更） 仕様外最適化やフォーマット刷新は次 change に回す。 ## 4. 対象範囲 - 直接対象: codex_wrapper.sh, src/infrastructure/wrapper/helper.ts の構造化・分割、検証整備 - 間接対象: spec 文書（openspec） - 非対象: codex 自体の API 仕様変更、実行順序や sandbox などの別テーマ ## 5. 成功条件（この段階のゲート） - openspec validate <change-id> --strict 通過 - 既存挙動の golden ベースの回帰テスト通過 - Step1 終了時点で codex_wrapper.sh 経路がデフォルトで継続し、既存 subprocess 実行経路が壊れない language (ja/en): ja ### A) codex_wrapper.sh（Step1 では基本維持） 対象ファイル: codex_wrapper.sh（1-385） 維持必須（変更禁止） - 既定 wrapper としての起動入口（bash codex_wrapper.sh） - WRAPPER_HELPER_CMD の既存 4 サブコマンド呼び出し（build-prompt/snapshot-dotenv/verify-dotenv/extract-result） - CODEX_STREAM_VIEW 分岐（assistant/thinking/all_compact/all） - RESULT_PHASE を用いた extract_result_block 呼び出し - エラー時の終了コード／空出力時の fail-closed 追加・整理（Step1 でも可能） 1. 実行経路分岐変数を追加（後続の TS 直接化準備） - 例: CODex_WRAPPER_RUNTIME=legacy（デフォルト） - legacy の場合は現状フローをそのまま実行（何も動作変更なし） - ts は未対応なら即 fail（Step1 では使わない） → ここで「将来の TS 入口」を事故なく差し込める。 2. 契約説明コメントを追加 - RESULT/SUMMARY/CHANGED_FILES/CHECKS/JUDGMENT の要求仕様を上部コメント化 - これで helper.ts 側と差分が起きたときの原因切り分けがしやすくなる。 3. ログ/エラー種別をテストで固定化しやすい形に微整理 - 既存メッセージを変更しない前提で、stderr 出力箇所を「カテゴリ名付き」コメント追加のみ（本文は不変）。 ### B) src/infrastructure/wrapper/helper.ts 対象ファイル: src/infrastructure/wrapper/helper.ts 維持必須 - buildPrompt の文字列仕様（plan/execute のフォーマット） - resolveTaskPhase のフェーズ解決順（current_phase → current_phase_index → progress_log） - collectDotenvSnapshot / verifyDotenvSnapshotUnchanged - extractResultBlock の block 解析規則（RESULT 以降、重複不可、空行打ち切り） - extractResultToFile の RESULT_PHASE 必須。 追加・整理 1. サブコマンド関数を明示的に分割 - runBuildPrompt, runSnapshotDotenv, runVerifyDotenv, runExtractResult の内部 API として切り出し（戻り値/throw は既存維持）。 - runCli は dispatch のみ担当にする（既存挙動は変更しない）。 2. 契約定数を専用化 - RESULT_KEYS / OPTIONAL_RESULT_KEYS / exit code（2/3/4）を export const で明文化し、後続 spec と 1 対 1 対応させる。 - ここは動作変更ではなく「参照先固定化」。 3. テスト観点を追加（既存 helper_test.ts） - 実行結果 block の正規ケース - 非 implement の CHANGED_FILES 空/非空判定 - extract-result 欠落や stale line - RESULT_PHASE 未設定/不正 の 失敗ケース\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/proposal.md"
+      ],
+      "depends_on": [
+        "1.1"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.3",
+      "title": "tasks.md を固定テンプレート準拠で生成する",
+      "description": "print-openspec-template の固定行を維持し、実装タスクを checklist 形式で定義する。\n\nspec_context:\n- requirements_text: ## 1. 変更の目的 codex_wrapper.sh の論理を段階的に TypeScript に寄せるが、運用を壊さない。 まずは codex_wrapper.sh をデフォルト入口として維持し、既存 runtime 挙動を維持したまま内部実装だけを整理する。 最終的には shell 依存を減らすが、今回は 互換性確保が第一。 ## 2. 現状の課題 - 変更内容が大きく、既存挙動の再現性が不十分だと、判定や実行結果の取り回しで静かに不一致が起きる。 - RESULT/JUDGMENT/CHANGED_FILES などの判定契約、環境設定ファイル保護、RESULT_PHASE 解釈が仕様化されていないと、実装者ごとに解釈差分が生まれやすい。 - shell と TS の境界が曖昧なまま実装を始めると、どこが変更対象かが不明確になり、ロールバックが難しくなる。 ## 3. 変更方針（本 change の中核） ### 方針A: 契約先行 実装に入る前に現行挙動を明文化する。 - RESULT/JUDGMENT の必須条件 - CHANGED_FILES の正規化ルール - 空 payload / JSON parse 失敗時の exit code - stderr 文言（少なくとも分類可能な失敗種別） - CODEX_STREAM_VIEW 挙動 - 環境設定ファイル拒否境界 - RESULT_PHASE 解釈 この契約が strict 検査とテストで固定されるまでは、実装に手を入れない。 ### 方針B: goldens で「壊れていない」を量で保証 現行 shell 実装を基準値として、固定入力の入出力を golden 化し、同値比較で移行する。 payload / prompt / stream / result block を再現可能テストにする。 ### 方針C: 段階移行（2層） - Step1: codex_wrapper.sh 維持。shell は薄いラッパーへ寄せ、helper.ts の分割・整備を実施。 - Step2: 将来の TS CLI へ切替可能な導線を追加（デフォルトは変更しない）。 - Step3: 並列比較で差分ゼロを確認後、必要なら shell 依存を縮退。 ### 方針D: 差分ゼロを強制 実装変更は同時比較前提で進める。 feature flag/RESULT_PHASE を使って両経路の結果を同時取得し、差分時は必ず fail。 比較対象は result block / exit code / stderr（3点）。 ### 方針E: 変更不可原則 この change 内で不変とする要素: - 外部契約（I/O スキーマ） - parser/判断条件の意味 - 既存エラー分類の基本動作 - UX 的整形（表示文言の自由変更） 仕様外最適化やフォーマット刷新は次 change に回す。 ## 4. 対象範囲 - 直接対象: codex_wrapper.sh, src/infrastructure/wrapper/helper.ts の構造化・分割、検証整備 - 間接対象: spec 文書（openspec） - 非対象: codex 自体の API 仕様変更、実行順序や sandbox などの別テーマ ## 5. 成功条件（この段階のゲート） - openspec validate <change-id> --strict 通過 - 既存挙動の golden ベースの回帰テスト通過 - Step1 終了時点で codex_wrapper.sh 経路がデフォルトで継続し、既存 subprocess 実行経路が壊れない language (ja/en): ja ### A) codex_wrapper.sh（Step1 では基本維持） 対象ファイル: codex_wrapper.sh（1-385） 維持必須（変更禁止） - 既定 wrapper としての起動入口（bash codex_wrapper.sh） - WRAPPER_HELPER_CMD の既存 4 サブコマンド呼び出し（build-prompt/snapshot-dotenv/verify-dotenv/extract-result） - CODEX_STREAM_VIEW 分岐（assistant/thinking/all_compact/all） - RESULT_PHASE を用いた extract_result_block 呼び出し - エラー時の終了コード／空出力時の fail-closed 追加・整理（Step1 でも可能） 1. 実行経路分岐変数を追加（後続の TS 直接化準備） - 例: CODex_WRAPPER_RUNTIME=legacy（デフォルト） - legacy の場合は現状フローをそのまま実行（何も動作変更なし） - ts は未対応なら即 fail（Step1 では使わない） → ここで「将来の TS 入口」を事故なく差し込める。 2. 契約説明コメントを追加 - RESULT/SUMMARY/CHANGED_FILES/CHECKS/JUDGMENT の要求仕様を上部コメント化 - これで helper.ts 側と差分が起きたときの原因切り分けがしやすくなる。 3. ログ/エラー種別をテストで固定化しやすい形に微整理 - 既存メッセージを変更しない前提で、stderr 出力箇所を「カテゴリ名付き」コメント追加のみ（本文は不変）。 ### B) src/infrastructure/wrapper/helper.ts 対象ファイル: src/infrastructure/wrapper/helper.ts 維持必須 - buildPrompt の文字列仕様（plan/execute のフォーマット） - resolveTaskPhase のフェーズ解決順（current_phase → current_phase_index → progress_log） - collectDotenvSnapshot / verifyDotenvSnapshotUnchanged - extractResultBlock の block 解析規則（RESULT 以降、重複不可、空行打ち切り） - extractResultToFile の RESULT_PHASE 必須。 追加・整理 1. サブコマンド関数を明示的に分割 - runBuildPrompt, runSnapshotDotenv, runVerifyDotenv, runExtractResult の内部 API として切り出し（戻り値/throw は既存維持）。 - runCli は dispatch のみ担当にする（既存挙動は変更しない）。 2. 契約定数を専用化 - RESULT_KEYS / OPTIONAL_RESULT_KEYS / exit code（2/3/4）を export const で明文化し、後続 spec と 1 対 1 対応させる。 - ここは動作変更ではなく「参照先固定化」。 3. テスト観点を追加（既存 helper_test.ts） - 実行結果 block の正規ケース - 非 implement の CHANGED_FILES 空/非空判定 - extract-result 欠落や stale line - RESULT_PHASE 未設定/不正 の 失敗ケース\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/tasks.md"
+      ],
+      "depends_on": [
+        "1.2"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.4",
+      "title": "必要時に design.md を生成する",
+      "description": "設計上の判断が必要な場合のみ design.md を作成し、意思決定とトレードオフを記述する。\n\nspec_context:\n- requirements_text: ## 1. 変更の目的 codex_wrapper.sh の論理を段階的に TypeScript に寄せるが、運用を壊さない。 まずは codex_wrapper.sh をデフォルト入口として維持し、既存 runtime 挙動を維持したまま内部実装だけを整理する。 最終的には shell 依存を減らすが、今回は 互換性確保が第一。 ## 2. 現状の課題 - 変更内容が大きく、既存挙動の再現性が不十分だと、判定や実行結果の取り回しで静かに不一致が起きる。 - RESULT/JUDGMENT/CHANGED_FILES などの判定契約、環境設定ファイル保護、RESULT_PHASE 解釈が仕様化されていないと、実装者ごとに解釈差分が生まれやすい。 - shell と TS の境界が曖昧なまま実装を始めると、どこが変更対象かが不明確になり、ロールバックが難しくなる。 ## 3. 変更方針（本 change の中核） ### 方針A: 契約先行 実装に入る前に現行挙動を明文化する。 - RESULT/JUDGMENT の必須条件 - CHANGED_FILES の正規化ルール - 空 payload / JSON parse 失敗時の exit code - stderr 文言（少なくとも分類可能な失敗種別） - CODEX_STREAM_VIEW 挙動 - 環境設定ファイル拒否境界 - RESULT_PHASE 解釈 この契約が strict 検査とテストで固定されるまでは、実装に手を入れない。 ### 方針B: goldens で「壊れていない」を量で保証 現行 shell 実装を基準値として、固定入力の入出力を golden 化し、同値比較で移行する。 payload / prompt / stream / result block を再現可能テストにする。 ### 方針C: 段階移行（2層） - Step1: codex_wrapper.sh 維持。shell は薄いラッパーへ寄せ、helper.ts の分割・整備を実施。 - Step2: 将来の TS CLI へ切替可能な導線を追加（デフォルトは変更しない）。 - Step3: 並列比較で差分ゼロを確認後、必要なら shell 依存を縮退。 ### 方針D: 差分ゼロを強制 実装変更は同時比較前提で進める。 feature flag/RESULT_PHASE を使って両経路の結果を同時取得し、差分時は必ず fail。 比較対象は result block / exit code / stderr（3点）。 ### 方針E: 変更不可原則 この change 内で不変とする要素: - 外部契約（I/O スキーマ） - parser/判断条件の意味 - 既存エラー分類の基本動作 - UX 的整形（表示文言の自由変更） 仕様外最適化やフォーマット刷新は次 change に回す。 ## 4. 対象範囲 - 直接対象: codex_wrapper.sh, src/infrastructure/wrapper/helper.ts の構造化・分割、検証整備 - 間接対象: spec 文書（openspec） - 非対象: codex 自体の API 仕様変更、実行順序や sandbox などの別テーマ ## 5. 成功条件（この段階のゲート） - openspec validate <change-id> --strict 通過 - 既存挙動の golden ベースの回帰テスト通過 - Step1 終了時点で codex_wrapper.sh 経路がデフォルトで継続し、既存 subprocess 実行経路が壊れない language (ja/en): ja ### A) codex_wrapper.sh（Step1 では基本維持） 対象ファイル: codex_wrapper.sh（1-385） 維持必須（変更禁止） - 既定 wrapper としての起動入口（bash codex_wrapper.sh） - WRAPPER_HELPER_CMD の既存 4 サブコマンド呼び出し（build-prompt/snapshot-dotenv/verify-dotenv/extract-result） - CODEX_STREAM_VIEW 分岐（assistant/thinking/all_compact/all） - RESULT_PHASE を用いた extract_result_block 呼び出し - エラー時の終了コード／空出力時の fail-closed 追加・整理（Step1 でも可能） 1. 実行経路分岐変数を追加（後続の TS 直接化準備） - 例: CODex_WRAPPER_RUNTIME=legacy（デフォルト） - legacy の場合は現状フローをそのまま実行（何も動作変更なし） - ts は未対応なら即 fail（Step1 では使わない） → ここで「将来の TS 入口」を事故なく差し込める。 2. 契約説明コメントを追加 - RESULT/SUMMARY/CHANGED_FILES/CHECKS/JUDGMENT の要求仕様を上部コメント化 - これで helper.ts 側と差分が起きたときの原因切り分けがしやすくなる。 3. ログ/エラー種別をテストで固定化しやすい形に微整理 - 既存メッセージを変更しない前提で、stderr 出力箇所を「カテゴリ名付き」コメント追加のみ（本文は不変）。 ### B) src/infrastructure/wrapper/helper.ts 対象ファイル: src/infrastructure/wrapper/helper.ts 維持必須 - buildPrompt の文字列仕様（plan/execute のフォーマット） - resolveTaskPhase のフェーズ解決順（current_phase → current_phase_index → progress_log） - collectDotenvSnapshot / verifyDotenvSnapshotUnchanged - extractResultBlock の block 解析規則（RESULT 以降、重複不可、空行打ち切り） - extractResultToFile の RESULT_PHASE 必須。 追加・整理 1. サブコマンド関数を明示的に分割 - runBuildPrompt, runSnapshotDotenv, runVerifyDotenv, runExtractResult の内部 API として切り出し（戻り値/throw は既存維持）。 - runCli は dispatch のみ担当にする（既存挙動は変更しない）。 2. 契約定数を専用化 - RESULT_KEYS / OPTIONAL_RESULT_KEYS / exit code（2/3/4）を export const で明文化し、後続 spec と 1 対 1 対応させる。 - ここは動作変更ではなく「参照先固定化」。 3. テスト観点を追加（既存 helper_test.ts） - 実行結果 block の正規ケース - 非 implement の CHANGED_FILES 空/非空判定 - extract-result 欠落や stale line - RESULT_PHASE 未設定/不正 の 失敗ケース\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/design.md"
+      ],
+      "depends_on": [
+        "1.2"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.5",
+      "title": "code_summary.md を生成する",
+      "description": "tasks.md の task_id と code unit の対応を code_summary.md に記述する。\n\nspec_context:\n- requirements_text: ## 1. 変更の目的 codex_wrapper.sh の論理を段階的に TypeScript に寄せるが、運用を壊さない。 まずは codex_wrapper.sh をデフォルト入口として維持し、既存 runtime 挙動を維持したまま内部実装だけを整理する。 最終的には shell 依存を減らすが、今回は 互換性確保が第一。 ## 2. 現状の課題 - 変更内容が大きく、既存挙動の再現性が不十分だと、判定や実行結果の取り回しで静かに不一致が起きる。 - RESULT/JUDGMENT/CHANGED_FILES などの判定契約、環境設定ファイル保護、RESULT_PHASE 解釈が仕様化されていないと、実装者ごとに解釈差分が生まれやすい。 - shell と TS の境界が曖昧なまま実装を始めると、どこが変更対象かが不明確になり、ロールバックが難しくなる。 ## 3. 変更方針（本 change の中核） ### 方針A: 契約先行 実装に入る前に現行挙動を明文化する。 - RESULT/JUDGMENT の必須条件 - CHANGED_FILES の正規化ルール - 空 payload / JSON parse 失敗時の exit code - stderr 文言（少なくとも分類可能な失敗種別） - CODEX_STREAM_VIEW 挙動 - 環境設定ファイル拒否境界 - RESULT_PHASE 解釈 この契約が strict 検査とテストで固定されるまでは、実装に手を入れない。 ### 方針B: goldens で「壊れていない」を量で保証 現行 shell 実装を基準値として、固定入力の入出力を golden 化し、同値比較で移行する。 payload / prompt / stream / result block を再現可能テストにする。 ### 方針C: 段階移行（2層） - Step1: codex_wrapper.sh 維持。shell は薄いラッパーへ寄せ、helper.ts の分割・整備を実施。 - Step2: 将来の TS CLI へ切替可能な導線を追加（デフォルトは変更しない）。 - Step3: 並列比較で差分ゼロを確認後、必要なら shell 依存を縮退。 ### 方針D: 差分ゼロを強制 実装変更は同時比較前提で進める。 feature flag/RESULT_PHASE を使って両経路の結果を同時取得し、差分時は必ず fail。 比較対象は result block / exit code / stderr（3点）。 ### 方針E: 変更不可原則 この change 内で不変とする要素: - 外部契約（I/O スキーマ） - parser/判断条件の意味 - 既存エラー分類の基本動作 - UX 的整形（表示文言の自由変更） 仕様外最適化やフォーマット刷新は次 change に回す。 ## 4. 対象範囲 - 直接対象: codex_wrapper.sh, src/infrastructure/wrapper/helper.ts の構造化・分割、検証整備 - 間接対象: spec 文書（openspec） - 非対象: codex 自体の API 仕様変更、実行順序や sandbox などの別テーマ ## 5. 成功条件（この段階のゲート） - openspec validate <change-id> --strict 通過 - 既存挙動の golden ベースの回帰テスト通過 - Step1 終了時点で codex_wrapper.sh 経路がデフォルトで継続し、既存 subprocess 実行経路が壊れない language (ja/en): ja ### A) codex_wrapper.sh（Step1 では基本維持） 対象ファイル: codex_wrapper.sh（1-385） 維持必須（変更禁止） - 既定 wrapper としての起動入口（bash codex_wrapper.sh） - WRAPPER_HELPER_CMD の既存 4 サブコマンド呼び出し（build-prompt/snapshot-dotenv/verify-dotenv/extract-result） - CODEX_STREAM_VIEW 分岐（assistant/thinking/all_compact/all） - RESULT_PHASE を用いた extract_result_block 呼び出し - エラー時の終了コード／空出力時の fail-closed 追加・整理（Step1 でも可能） 1. 実行経路分岐変数を追加（後続の TS 直接化準備） - 例: CODex_WRAPPER_RUNTIME=legacy（デフォルト） - legacy の場合は現状フローをそのまま実行（何も動作変更なし） - ts は未対応なら即 fail（Step1 では使わない） → ここで「将来の TS 入口」を事故なく差し込める。 2. 契約説明コメントを追加 - RESULT/SUMMARY/CHANGED_FILES/CHECKS/JUDGMENT の要求仕様を上部コメント化 - これで helper.ts 側と差分が起きたときの原因切り分けがしやすくなる。 3. ログ/エラー種別をテストで固定化しやすい形に微整理 - 既存メッセージを変更しない前提で、stderr 出力箇所を「カテゴリ名付き」コメント追加のみ（本文は不変）。 ### B) src/infrastructure/wrapper/helper.ts 対象ファイル: src/infrastructure/wrapper/helper.ts 維持必須 - buildPrompt の文字列仕様（plan/execute のフォーマット） - resolveTaskPhase のフェーズ解決順（current_phase → current_phase_index → progress_log） - collectDotenvSnapshot / verifyDotenvSnapshotUnchanged - extractResultBlock の block 解析規則（RESULT 以降、重複不可、空行打ち切り） - extractResultToFile の RESULT_PHASE 必須。 追加・整理 1. サブコマンド関数を明示的に分割 - runBuildPrompt, runSnapshotDotenv, runVerifyDotenv, runExtractResult の内部 API として切り出し（戻り値/throw は既存維持）。 - runCli は dispatch のみ担当にする（既存挙動は変更しない）。 2. 契約定数を専用化 - RESULT_KEYS / OPTIONAL_RESULT_KEYS / exit code（2/3/4）を export const で明文化し、後続 spec と 1 対 1 対応させる。 - ここは動作変更ではなく「参照先固定化」。 3. テスト観点を追加（既存 helper_test.ts） - 実行結果 block の正規ケース - 非 implement の CHANGED_FILES 空/非空判定 - extract-result 欠落や stale line - RESULT_PHASE 未設定/不正 の 失敗ケース\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/code_summary.md"
+      ],
+      "depends_on": [
+        "1.3"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-code-creator"
+            ],
+            "executor_personas": [
+              "spec-code-creator"
+            ],
+            "state_transition_personas": [
+              "spec-code-creator"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.6",
+      "title": "生成成果物の整合性をレビューする",
+      "description": "proposal/tasks/design/code_summary の整合、要件逸脱、過剰修正、冗長化を検証し、旧形式コマンド（`agent-dock openspec ...` / `./node_modules/.bin/openspec ...`）を実行指示として記載しない。\n\nspec_context:\n- requirements_text: ## 1. 変更の目的 codex_wrapper.sh の論理を段階的に TypeScript に寄せるが、運用を壊さない。 まずは codex_wrapper.sh をデフォルト入口として維持し、既存 runtime 挙動を維持したまま内部実装だけを整理する。 最終的には shell 依存を減らすが、今回は 互換性確保が第一。 ## 2. 現状の課題 - 変更内容が大きく、既存挙動の再現性が不十分だと、判定や実行結果の取り回しで静かに不一致が起きる。 - RESULT/JUDGMENT/CHANGED_FILES などの判定契約、環境設定ファイル保護、RESULT_PHASE 解釈が仕様化されていないと、実装者ごとに解釈差分が生まれやすい。 - shell と TS の境界が曖昧なまま実装を始めると、どこが変更対象かが不明確になり、ロールバックが難しくなる。 ## 3. 変更方針（本 change の中核） ### 方針A: 契約先行 実装に入る前に現行挙動を明文化する。 - RESULT/JUDGMENT の必須条件 - CHANGED_FILES の正規化ルール - 空 payload / JSON parse 失敗時の exit code - stderr 文言（少なくとも分類可能な失敗種別） - CODEX_STREAM_VIEW 挙動 - 環境設定ファイル拒否境界 - RESULT_PHASE 解釈 この契約が strict 検査とテストで固定されるまでは、実装に手を入れない。 ### 方針B: goldens で「壊れていない」を量で保証 現行 shell 実装を基準値として、固定入力の入出力を golden 化し、同値比較で移行する。 payload / prompt / stream / result block を再現可能テストにする。 ### 方針C: 段階移行（2層） - Step1: codex_wrapper.sh 維持。shell は薄いラッパーへ寄せ、helper.ts の分割・整備を実施。 - Step2: 将来の TS CLI へ切替可能な導線を追加（デフォルトは変更しない）。 - Step3: 並列比較で差分ゼロを確認後、必要なら shell 依存を縮退。 ### 方針D: 差分ゼロを強制 実装変更は同時比較前提で進める。 feature flag/RESULT_PHASE を使って両経路の結果を同時取得し、差分時は必ず fail。 比較対象は result block / exit code / stderr（3点）。 ### 方針E: 変更不可原則 この change 内で不変とする要素: - 外部契約（I/O スキーマ） - parser/判断条件の意味 - 既存エラー分類の基本動作 - UX 的整形（表示文言の自由変更） 仕様外最適化やフォーマット刷新は次 change に回す。 ## 4. 対象範囲 - 直接対象: codex_wrapper.sh, src/infrastructure/wrapper/helper.ts の構造化・分割、検証整備 - 間接対象: spec 文書（openspec） - 非対象: codex 自体の API 仕様変更、実行順序や sandbox などの別テーマ ## 5. 成功条件（この段階のゲート） - openspec validate <change-id> --strict 通過 - 既存挙動の golden ベースの回帰テスト通過 - Step1 終了時点で codex_wrapper.sh 経路がデフォルトで継続し、既存 subprocess 実行経路が壊れない language (ja/en): ja ### A) codex_wrapper.sh（Step1 では基本維持） 対象ファイル: codex_wrapper.sh（1-385） 維持必須（変更禁止） - 既定 wrapper としての起動入口（bash codex_wrapper.sh） - WRAPPER_HELPER_CMD の既存 4 サブコマンド呼び出し（build-prompt/snapshot-dotenv/verify-dotenv/extract-result） - CODEX_STREAM_VIEW 分岐（assistant/thinking/all_compact/all） - RESULT_PHASE を用いた extract_result_block 呼び出し - エラー時の終了コード／空出力時の fail-closed 追加・整理（Step1 でも可能） 1. 実行経路分岐変数を追加（後続の TS 直接化準備） - 例: CODex_WRAPPER_RUNTIME=legacy（デフォルト） - legacy の場合は現状フローをそのまま実行（何も動作変更なし） - ts は未対応なら即 fail（Step1 では使わない） → ここで「将来の TS 入口」を事故なく差し込める。 2. 契約説明コメントを追加 - RESULT/SUMMARY/CHANGED_FILES/CHECKS/JUDGMENT の要求仕様を上部コメント化 - これで helper.ts 側と差分が起きたときの原因切り分けがしやすくなる。 3. ログ/エラー種別をテストで固定化しやすい形に微整理 - 既存メッセージを変更しない前提で、stderr 出力箇所を「カテゴリ名付き」コメント追加のみ（本文は不変）。 ### B) src/infrastructure/wrapper/helper.ts 対象ファイル: src/infrastructure/wrapper/helper.ts 維持必須 - buildPrompt の文字列仕様（plan/execute のフォーマット） - resolveTaskPhase のフェーズ解決順（current_phase → current_phase_index → progress_log） - collectDotenvSnapshot / verifyDotenvSnapshotUnchanged - extractResultBlock の block 解析規則（RESULT 以降、重複不可、空行打ち切り） - extractResultToFile の RESULT_PHASE 必須。 追加・整理 1. サブコマンド関数を明示的に分割 - runBuildPrompt, runSnapshotDotenv, runVerifyDotenv, runExtractResult の内部 API として切り出し（戻り値/throw は既存維持）。 - runCli は dispatch のみ担当にする（既存挙動は変更しない）。 2. 契約定数を専用化 - RESULT_KEYS / OPTIONAL_RESULT_KEYS / exit code（2/3/4）を export const で明文化し、後続 spec と 1 対 1 対応させる。 - ここは動作変更ではなく「参照先固定化」。 3. テスト観点を追加（既存 helper_test.ts） - 実行結果 block の正規ケース - 非 implement の CHANGED_FILES 空/非空判定 - extract-result 欠落や stale line - RESULT_PHASE 未設定/不正 の 失敗ケース\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/proposal.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/tasks.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/design.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/code_summary.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/specs/add-codex-wrapper-step1-contract-first-golden-compat/spec.md"
+      ],
+      "depends_on": [
+        "1.2",
+        "1.3",
+        "1.4",
+        "1.5"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.7",
+      "title": "OpenSpec strict validate を実行する",
+      "description": "`openspec validate <change_id> --strict` のみを実行し、旧形式（`agent-dock openspec ...` / `./node_modules/.bin/openspec ...`）は使用禁止とする。失敗時は修正後に再実行する。\n\nspec_context:\n- requirements_text: ## 1. 変更の目的 codex_wrapper.sh の論理を段階的に TypeScript に寄せるが、運用を壊さない。 まずは codex_wrapper.sh をデフォルト入口として維持し、既存 runtime 挙動を維持したまま内部実装だけを整理する。 最終的には shell 依存を減らすが、今回は 互換性確保が第一。 ## 2. 現状の課題 - 変更内容が大きく、既存挙動の再現性が不十分だと、判定や実行結果の取り回しで静かに不一致が起きる。 - RESULT/JUDGMENT/CHANGED_FILES などの判定契約、環境設定ファイル保護、RESULT_PHASE 解釈が仕様化されていないと、実装者ごとに解釈差分が生まれやすい。 - shell と TS の境界が曖昧なまま実装を始めると、どこが変更対象かが不明確になり、ロールバックが難しくなる。 ## 3. 変更方針（本 change の中核） ### 方針A: 契約先行 実装に入る前に現行挙動を明文化する。 - RESULT/JUDGMENT の必須条件 - CHANGED_FILES の正規化ルール - 空 payload / JSON parse 失敗時の exit code - stderr 文言（少なくとも分類可能な失敗種別） - CODEX_STREAM_VIEW 挙動 - 環境設定ファイル拒否境界 - RESULT_PHASE 解釈 この契約が strict 検査とテストで固定されるまでは、実装に手を入れない。 ### 方針B: goldens で「壊れていない」を量で保証 現行 shell 実装を基準値として、固定入力の入出力を golden 化し、同値比較で移行する。 payload / prompt / stream / result block を再現可能テストにする。 ### 方針C: 段階移行（2層） - Step1: codex_wrapper.sh 維持。shell は薄いラッパーへ寄せ、helper.ts の分割・整備を実施。 - Step2: 将来の TS CLI へ切替可能な導線を追加（デフォルトは変更しない）。 - Step3: 並列比較で差分ゼロを確認後、必要なら shell 依存を縮退。 ### 方針D: 差分ゼロを強制 実装変更は同時比較前提で進める。 feature flag/RESULT_PHASE を使って両経路の結果を同時取得し、差分時は必ず fail。 比較対象は result block / exit code / stderr（3点）。 ### 方針E: 変更不可原則 この change 内で不変とする要素: - 外部契約（I/O スキーマ） - parser/判断条件の意味 - 既存エラー分類の基本動作 - UX 的整形（表示文言の自由変更） 仕様外最適化やフォーマット刷新は次 change に回す。 ## 4. 対象範囲 - 直接対象: codex_wrapper.sh, src/infrastructure/wrapper/helper.ts の構造化・分割、検証整備 - 間接対象: spec 文書（openspec） - 非対象: codex 自体の API 仕様変更、実行順序や sandbox などの別テーマ ## 5. 成功条件（この段階のゲート） - openspec validate <change-id> --strict 通過 - 既存挙動の golden ベースの回帰テスト通過 - Step1 終了時点で codex_wrapper.sh 経路がデフォルトで継続し、既存 subprocess 実行経路が壊れない language (ja/en): ja ### A) codex_wrapper.sh（Step1 では基本維持） 対象ファイル: codex_wrapper.sh（1-385） 維持必須（変更禁止） - 既定 wrapper としての起動入口（bash codex_wrapper.sh） - WRAPPER_HELPER_CMD の既存 4 サブコマンド呼び出し（build-prompt/snapshot-dotenv/verify-dotenv/extract-result） - CODEX_STREAM_VIEW 分岐（assistant/thinking/all_compact/all） - RESULT_PHASE を用いた extract_result_block 呼び出し - エラー時の終了コード／空出力時の fail-closed 追加・整理（Step1 でも可能） 1. 実行経路分岐変数を追加（後続の TS 直接化準備） - 例: CODex_WRAPPER_RUNTIME=legacy（デフォルト） - legacy の場合は現状フローをそのまま実行（何も動作変更なし） - ts は未対応なら即 fail（Step1 では使わない） → ここで「将来の TS 入口」を事故なく差し込める。 2. 契約説明コメントを追加 - RESULT/SUMMARY/CHANGED_FILES/CHECKS/JUDGMENT の要求仕様を上部コメント化 - これで helper.ts 側と差分が起きたときの原因切り分けがしやすくなる。 3. ログ/エラー種別をテストで固定化しやすい形に微整理 - 既存メッセージを変更しない前提で、stderr 出力箇所を「カテゴリ名付き」コメント追加のみ（本文は不変）。 ### B) src/infrastructure/wrapper/helper.ts 対象ファイル: src/infrastructure/wrapper/helper.ts 維持必須 - buildPrompt の文字列仕様（plan/execute のフォーマット） - resolveTaskPhase のフェーズ解決順（current_phase → current_phase_index → progress_log） - collectDotenvSnapshot / verifyDotenvSnapshotUnchanged - extractResultBlock の block 解析規則（RESULT 以降、重複不可、空行打ち切り） - extractResultToFile の RESULT_PHASE 必須。 追加・整理 1. サブコマンド関数を明示的に分割 - runBuildPrompt, runSnapshotDotenv, runVerifyDotenv, runExtractResult の内部 API として切り出し（戻り値/throw は既存維持）。 - runCli は dispatch のみ担当にする（既存挙動は変更しない）。 2. 契約定数を専用化 - RESULT_KEYS / OPTIONAL_RESULT_KEYS / exit code（2/3/4）を export const で明文化し、後続 spec と 1 対 1 対応させる。 - ここは動作変更ではなく「参照先固定化」。 3. テスト観点を追加（既存 helper_test.ts） - 実行結果 block の正規ケース - 非 implement の CHANGED_FILES 空/非空判定 - extract-result 欠落や stale line - RESULT_PHASE 未設定/不正 の 失敗ケース\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/proposal.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/tasks.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/design.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/code_summary.md",
+        "openspec/changes/add-codex-wrapper-step1-contract-first-golden-compat/specs/add-codex-wrapper-step1-contract-first-golden-compat/spec.md"
+      ],
+      "depends_on": [
+        "1.6"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "meta": {
+    "source_change_id": "add-codex-wrapper-step1-contract-first-golden-compat",
+    "generated_by": "spec-creator-preprocess",
+    "spec_context": {
+      "requirements_text": "## 1. 変更の目的\n\n      codex_wrapper.sh の論理を段階的に TypeScript に寄せるが、運用を壊さない。\n      まずは codex_wrapper.sh をデフォルト入口として維持し、既存 runtime 挙動を維持したまま内部実装だけを整理する。\n      最終的には shell 依存を減らすが、今回は 互換性確保が第一。\n\n      ## 2. 現状の課題\n\n      - 変更内容が大きく、既存挙動の再現性が不十分だと、判定や実行結果の取り回しで静かに不一致が起きる。\n      - RESULT/JUDGMENT/CHANGED_FILES などの判定契約、環境設定ファイル保護、RESULT_PHASE 解釈が仕様化されていないと、実装者ごとに解釈差分が生まれやすい。\n      - shell と TS の境界が曖昧なまま実装を始めると、どこが変更対象かが不明確になり、ロールバックが難しくなる。\n\n      ## 3. 変更方針（本 change の中核）\n\n      ### 方針A: 契約先行\n\n      実装に入る前に現行挙動を明文化する。\n\n      - RESULT/JUDGMENT の必須条件\n      - CHANGED_FILES の正規化ルール\n      - 空 payload / JSON parse 失敗時の exit code\n      - stderr 文言（少なくとも分類可能な失敗種別）\n      - CODEX_STREAM_VIEW 挙動\n      - 環境設定ファイル拒否境界\n      - RESULT_PHASE 解釈\n\n      この契約が strict 検査とテストで固定されるまでは、実装に手を入れない。\n\n      ### 方針B: goldens で「壊れていない」を量で保証\n\n      現行 shell 実装を基準値として、固定入力の入出力を golden 化し、同値比較で移行する。\n      payload / prompt / stream / result block を再現可能テストにする。\n\n      ### 方針C: 段階移行（2層）\n\n      - Step1: codex_wrapper.sh 維持。shell は薄いラッパーへ寄せ、helper.ts の分割・整備を実施。\n      - Step2: 将来の TS CLI へ切替可能な導線を追加（デフォルトは変更しない）。\n      - Step3: 並列比較で差分ゼロを確認後、必要なら shell 依存を縮退。\n\n      ### 方針D: 差分ゼロを強制\n\n      実装変更は同時比較前提で進める。\n      feature flag/RESULT_PHASE を使って両経路の結果を同時取得し、差分時は必ず fail。\n      比較対象は result block / exit code / stderr（3点）。\n\n      ### 方針E: 変更不可原則\n\n      この change 内で不変とする要素:\n\n      - 外部契約（I/O スキーマ）\n      - parser/判断条件の意味\n      - 既存エラー分類の基本動作\n      - UX 的整形（表示文言の自由変更）\n\n      仕様外最適化やフォーマット刷新は次 change に回す。\n\n      ## 4. 対象範囲\n\n      - 直接対象: codex_wrapper.sh, src/infrastructure/wrapper/helper.ts の構造化・分割、検証整備\n      - 間接対象: spec 文書（openspec）\n      - 非対象: codex 自体の API 仕様変更、実行順序や sandbox などの別テーマ\n\n      ## 5. 成功条件（この段階のゲート）\n\n      - openspec validate <change-id> --strict 通過\n      - 既存挙動の golden ベースの回帰テスト通過\n      - Step1 終了時点で codex_wrapper.sh 経路がデフォルトで継続し、既存 subprocess 実行経路が壊れない\n\n      language (ja/en): ja\n\n      ### A) codex_wrapper.sh（Step1 では基本維持）\n\n      対象ファイル: codex_wrapper.sh（1-385）\n\n      維持必須（変更禁止）\n\n      - 既定 wrapper としての起動入口（bash codex_wrapper.sh）\n      - WRAPPER_HELPER_CMD の既存 4 サブコマンド呼び出し（build-prompt/snapshot-dotenv/verify-dotenv/extract-result）\n      - CODEX_STREAM_VIEW 分岐（assistant/thinking/all_compact/all）\n      - RESULT_PHASE を用いた extract_result_block 呼び出し\n      - エラー時の終了コード／空出力時の fail-closed\n\n      追加・整理（Step1 でも可能）\n\n      1. 実行経路分岐変数を追加（後続の TS 直接化準備）\n         - 例: CODex_WRAPPER_RUNTIME=legacy（デフォルト）\n         - legacy の場合は現状フローをそのまま実行（何も動作変更なし）\n         - ts は未対応なら即 fail（Step1 では使わない）\n           → ここで「将来の TS 入口」を事故なく差し込める。\n      2. 契約説明コメントを追加\n         - RESULT/SUMMARY/CHANGED_FILES/CHECKS/JUDGMENT の要求仕様を上部コメント化\n         - これで helper.ts 側と差分が起きたときの原因切り分けがしやすくなる。\n      3. ログ/エラー種別をテストで固定化しやすい形に微整理\n         - 既存メッセージを変更しない前提で、stderr 出力箇所を「カテゴリ名付き」コメント追加のみ（本文は不変）。\n\n      ### B) src/infrastructure/wrapper/helper.ts\n\n      対象ファイル: src/infrastructure/wrapper/helper.ts\n\n      維持必須\n\n      - buildPrompt の文字列仕様（plan/execute のフォーマット）\n      - resolveTaskPhase のフェーズ解決順（current_phase → current_phase_index → progress_log）\n      - collectDotenvSnapshot / verifyDotenvSnapshotUnchanged\n      - extractResultBlock の block 解析規則（RESULT 以降、重複不可、空行打ち切り）\n      - extractResultToFile の RESULT_PHASE 必須。\n\n      追加・整理\n\n      1. サブコマンド関数を明示的に分割\n         - runBuildPrompt, runSnapshotDotenv, runVerifyDotenv, runExtractResult の内部 API として切り出し（戻り値/throw は既存維持）。\n         - runCli は dispatch のみ担当にする（既存挙動は変更しない）。\n      2. 契約定数を専用化\n         - RESULT_KEYS / OPTIONAL_RESULT_KEYS / exit code（2/3/4）を export const で明文化し、後続 spec と 1 対 1 対応させる。\n         - ここは動作変更ではなく「参照先固定化」。\n      3. テスト観点を追加（既存 helper_test.ts）\n         - 実行結果 block の正規ケース\n         - 非 implement の CHANGED_FILES 空/非空判定\n         - extract-result 欠落や stale line\n         - RESULT_PHASE 未設定/不正 の 失敗ケース",
+      "language": "ja",
+      "runtime_stack": "typescript",
+      "persona_policy": {
+        "active_personas": [
+          "spec-planner",
+          "spec-reviewer",
+          "spec-code-creator"
+        ]
+      }
+    }
+  }
+}

@@ -48,6 +48,11 @@ import {
   writeTasksMarkdown,
 } from "../infrastructure/openspec/spec_creator.ts";
 import {
+  assertSpecCreatorSemanticContracts,
+  collectSpecCreatorQualityViolations,
+  type SpecCreatorQualityViolation,
+} from "../infrastructure/openspec/spec_creator_quality.ts";
+import {
   DEFAULT_TEMPLATE_LANG,
   getOpenSpecTasksTemplate,
   SUPPORTED_TEMPLATE_LANGS,
@@ -825,24 +830,57 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
   io.stdout(`[spec-creator] wrote ${outputPath}\n`);
 
   if (args.noRun) {
+    assertSpecCreatorSemanticContracts(paths, "post-generate");
     return 0;
   }
 
   const stateDir = args.stateDir
     ? path.resolve(args.stateDir)
     : path.resolve(defaultSpecCreatorStateDir(context.change_id));
-  io.stdout(`[spec-creator] run --config ${outputPath}\n`);
-  const runExitCode = runCommand([
-    "--config",
-    outputPath,
-    "--state-dir",
-    stateDir,
-    ...(args.resume ? ["--resume"] : []),
-  ], io);
-  if (runExitCode === 0) {
-    assertNoForbiddenSpecCreatorCommands(paths, "post-run");
+
+  const maxQualityRetriesRaw = safeIntEnv("SPEC_CREATOR_QUALITY_MAX_RETRIES", 1);
+  const maxQualityRetries = Math.max(0, Math.min(3, maxQualityRetriesRaw));
+  let attempt = 0;
+  while (true) {
+    const preRunViolations = collectSpecCreatorQualityViolations(paths);
+    if (preRunViolations.length > 0) {
+      const issues = formatSpecCreatorQualityIssues(preRunViolations);
+      Deno.env.set("SPEC_CREATOR_QUALITY_ISSUES", issues);
+      io.stdout(
+        `[spec-creator] quality_preflight_issues=${preRunViolations.length} attempt=${attempt}\n`,
+      );
+    } else {
+      Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
+    }
+
+    io.stdout(`[spec-creator] run --config ${outputPath}\n`);
+    const runExitCode = runCommand([
+      "--config",
+      outputPath,
+      "--state-dir",
+      stateDir,
+      ...(args.resume ? ["--resume"] : []),
+    ], io);
+    Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
+    if (runExitCode !== 0) {
+      return runExitCode;
+    }
+
+    try {
+      assertNoForbiddenSpecCreatorCommands(paths, "post-run");
+      assertSpecCreatorSemanticContracts(paths, "post-run");
+      return 0;
+    } catch (error) {
+      if (attempt >= maxQualityRetries) {
+        throw error;
+      }
+      attempt += 1;
+      const reason = error instanceof Error ? error.message : String(error);
+      io.stdout(
+        `[spec-creator] quality_retry=${attempt}/${maxQualityRetries} reason=${reason}\n`,
+      );
+    }
   }
-  return runExitCode;
 }
 
 interface SpecCreatorArtifactPaths {
@@ -932,17 +970,21 @@ function writeSpecCreatorArtifacts(
   writeTaskConfigFile(context.task_config, outputPath);
 }
 
-function assertNoForbiddenSpecCreatorCommands(
-  paths: SpecCreatorArtifactPaths,
-  phase: "post-generate" | "post-run",
-): void {
-  const artifactPaths = [
+function listSpecCreatorArtifactPaths(paths: SpecCreatorArtifactPaths): string[] {
+  return [
     paths.proposalPath,
     paths.tasksPath,
     paths.designPath,
     paths.codeSummaryPath,
     paths.deltaSpecPath,
   ];
+}
+
+function assertNoForbiddenSpecCreatorCommands(
+  paths: SpecCreatorArtifactPaths,
+  phase: "post-generate" | "post-run",
+): void {
+  const artifactPaths = listSpecCreatorArtifactPaths(paths);
   const violations: string[] = [];
 
   for (const artifactPath of artifactPaths) {
@@ -985,6 +1027,24 @@ function isForbiddenCommandExemptContext(line: string): boolean {
     }
   }
   return false;
+}
+
+function formatSpecCreatorQualityIssues(
+  violations: SpecCreatorQualityViolation[],
+): string {
+  const lines = violations.map((violation) =>
+    `${toRelativePath(violation.file)}:${violation.line}:${violation.rule_id}:${violation.message}`
+  );
+  const joined = lines.join("\n");
+  if (joined.length <= 4000) {
+    return joined;
+  }
+  return `${joined.slice(0, 3960)}\n...`;
+}
+
+function toRelativePath(filePath: string): string {
+  const relative = path.relative(Deno.cwd(), filePath);
+  return relative.length > 0 ? relative : filePath;
 }
 
 function writeTaskConfigFile(

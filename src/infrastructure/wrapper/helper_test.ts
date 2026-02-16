@@ -125,6 +125,42 @@ Deno.test("buildPrompt keeps prompt bool text for requires_plan", () => {
   );
 });
 
+Deno.test("buildPrompt includes quality issues when provided", () => {
+  const payload = {
+    mode: "execute",
+    teammate_id: "tm-1",
+    task: {
+      id: "1.6",
+      title: "review",
+      description: "fix semantic issues",
+      target_paths: ["openspec/changes/foo/spec.md"],
+      depends_on: [],
+      requires_plan: false,
+      progress_log: [],
+      persona_policy: {
+        phase_order: ["implement", "review"],
+      },
+      current_phase_index: 1,
+    },
+  };
+  const prompt = buildPrompt(
+    payload,
+    makeEnv({
+      CODEX_DENY_DOTENV: "1",
+      SPEC_CREATOR_QUALITY_ISSUES:
+        "spec.md:7:stage_contract:run --config must not require compile error",
+    }),
+  );
+  assert(
+    prompt.includes("quality_issues:"),
+    "prompt should include quality issues section",
+  );
+  assert(
+    prompt.includes("stage_contract"),
+    "prompt should include provided quality issue details",
+  );
+});
+
 Deno.test("buildPrompt rejects .env references when deny rule is enabled", () => {
   const payload = {
     mode: "execute",

@@ -335,6 +335,18 @@ Keep total output within 12 lines.`;
         "- If JUDGMENT is changes_required, include all required fixes found in this pass",
       ].join("\n")
       : "";
+    const qualityIssuesRaw = readEnv("SPEC_CREATOR_QUALITY_ISSUES", "").trim();
+    const qualityIssues = qualityIssuesRaw.length > 0
+      ? qualityIssuesRaw.slice(0, 3000)
+      : "";
+    const qualityIssueConstraint = qualityIssues.length > 0
+      ? [
+        "- Resolve the quality issues listed below in this execution before final output",
+        "",
+        "quality_issues:",
+        qualityIssues,
+      ].join("\n")
+      : "";
     const outputContractText = requiresJudgment
       ? `Final output must be exactly these 5 lines:
 RESULT: completed|blocked
@@ -371,6 +383,7 @@ Constraints:
 - If failed, provide a short root cause
 ${changedFilesConstraint ? `${changedFilesConstraint}\n` : ""}
 ${decisionReviewConstraint ? `${decisionReviewConstraint}\n` : ""}
+${qualityIssueConstraint ? `${qualityIssueConstraint}\n` : ""}
 
 ${outputContractText}`;
 
