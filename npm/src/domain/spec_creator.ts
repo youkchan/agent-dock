@@ -89,14 +89,14 @@ export function createSpecCreatorTaskConfigTemplate(
       createPersona(
         "spec-planner",
         "spec_guard",
-        "要件をOpenSpec構成へ正規化し、要件外追加を禁止し、MUST/SHALLごとにtransport経路とfail-closed拒否点をtasks/designへ固定する",
+        "要件をOpenSpec構成へ正規化し、要件外追加を禁止し、MUST/SHALLごとにtransport経路とfail-closed拒否点をtasks/designへ固定する。実行経路(run/spec-creator)・段階(compile/runtime)・データモデルキーの整合を維持する",
         false,
         true,
       ),
       createPersona(
         "spec-reviewer",
         "reviewer",
-        "proposal/tasks/design/code_summaryの整合と過不足を検証し、要件外追加・過剰修正・冗長化を禁止し、transport経路未配線・拒否点未定義・対応テスト欠落をblockerとして停止する",
+        "proposal/tasks/design/code_summaryの整合と過不足を検証し、要件外追加・過剰修正・冗長化を禁止し、transport経路未配線・拒否点未定義・対応テスト欠落をblockerとして停止する。判定時系列(blocked/changes_required)矛盾、入力契約未固定、実データモデルとのキー不一致を検知して停止する",
         true,
         true,
       ),
@@ -184,7 +184,7 @@ export function createSpecCreatorTaskConfigTemplate(
         id: "1.6",
         title: "生成成果物の整合性をレビューする",
         description:
-          "proposal/tasks/design/code_summary の整合、要件逸脱、過剰修正、冗長化を検証し、旧形式コマンド（`agent-dock openspec ...` / `./node_modules/.bin/openspec ...`）を実行指示として記載しない。",
+          "proposal/tasks/design/code_summary の整合、要件逸脱、過剰修正、冗長化を検証する。実行経路、段階責務、判定時系列、入力契約、テスト整合、データモデルキー整合、遷移条件、利用可能性(定義だけでなく割当/実行可能)を確認する。",
         target_paths: [...allOutputPaths],
         depends_on: ["1.2", "1.3", "1.4", "1.5"],
         requires_plan: false,
@@ -196,7 +196,7 @@ export function createSpecCreatorTaskConfigTemplate(
         id: "1.7",
         title: "OpenSpec strict validate を実行する",
         description:
-          "`openspec validate <change_id> --strict` のみを実行し、旧形式（`agent-dock openspec ...` / `./node_modules/.bin/openspec ...`）は使用禁止とする。失敗時は修正後に再実行する。",
+          "openspec validate <change_id> --strict を実行し、失敗時は修正後に再実行する。",
         target_paths: [...allOutputPaths],
         depends_on: ["1.6"],
         requires_plan: false,
