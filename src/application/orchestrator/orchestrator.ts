@@ -14,6 +14,7 @@ import type {
 } from "../../domain/persona.ts";
 import { isDecisionTaskPhase, type Task } from "../../domain/task.ts";
 import { defaultPersonas } from "../../infrastructure/persona/catalog.ts";
+import { extractResultBlock } from "../../infrastructure/wrapper/helper.ts";
 import {
   DEFAULT_TASK_PROGRESS_LOG_LIMIT,
   StateStore,
@@ -77,9 +78,39 @@ interface PersonaActionResult {
 }
 
 interface DecisionPhaseExecutionOutcome {
-  kind: "pass" | "changes_required" | "blocked" | "reviewer_stop";
+  kind:
+    | "pass"
+    | "changes_required"
+    | "blocked"
+    | "reviewer_stop"
+    | "needs_approval";
   summary: string;
   event: EventPayload | null;
+}
+
+type ValidationCode =
+  | "missing_result"
+  | "invalid_result_value"
+  | "missing_summary"
+  | "missing_changed_files"
+  | "missing_checks"
+  | "missing_judgment"
+  | "invalid_judgment"
+  | "forbidden_checks_command"
+  | "nonimplement_changed_files"
+  | "malformed_result_block";
+
+interface ValidationOutcome {
+  ok: boolean;
+  code: ValidationCode | null;
+  recoverable: boolean;
+  reason: string | null;
+  executionResult: ParsedExecutionResult;
+}
+
+interface ExecutionValidationContext {
+  requiresJudgment: boolean;
+  nonImplementPhase: boolean;
 }
 
 interface NormalizedTaskPersonaPolicy {
@@ -138,6 +169,16 @@ const REVIEWER_STOP_RULE_PATTERNS: Record<string, RegExp[]> = {
     /\btoo verbose\b/iu,
   ],
 };
+
+const VALIDATION_RECOVERABLE_CODES = new Set<ValidationCode>([
+  "missing_result",
+  "invalid_result_value",
+  "missing_summary",
+  "missing_changed_files",
+  "missing_checks",
+  "missing_judgment",
+  "malformed_result_block",
+]);
 
 export class OrchestratorConfig {
   leadId: string;
@@ -307,6 +348,7 @@ export class AgentTeamsLikeOrchestrator {
   readonly phaseOrder: string[];
   readonly phasePolicies: Record<string, Record<string, string[]>>;
   readonly workspaceRootCanonical: string;
+  readonly validationMaxRetry: number;
 
   constructor(options: {
     store: StateStore;
@@ -356,6 +398,10 @@ export class AgentTeamsLikeOrchestrator {
     } catch {
       this.workspaceRootCanonical = workspaceRoot;
     }
+
+    this.validationMaxRetry = resolveValidationMaxRetry((message) =>
+      this.log(message)
+    );
   }
 
   run(): Record<string, unknown> {
@@ -582,9 +628,12 @@ export class AgentTeamsLikeOrchestrator {
   }
 
   private validateImplementationExecutorPersonas(): void {
-    const globalImplementExecutors = this.phasePolicies.implement?.executor_personas;
-    if (Array.isArray(globalImplementExecutors) &&
-      globalImplementExecutors.length > 1) {
+    const globalImplementExecutors = this.phasePolicies.implement
+      ?.executor_personas;
+    if (
+      Array.isArray(globalImplementExecutors) &&
+      globalImplementExecutors.length > 1
+    ) {
       throw new Error(
         "runtime validation error: implementation phase executor_personas must be exactly one",
       );
@@ -595,7 +644,9 @@ export class AgentTeamsLikeOrchestrator {
       const taskExecutors = policy.executor_personas;
       if (Array.isArray(taskExecutors) && taskExecutors.length > 1) {
         throw new Error(
-          `runtime validation error: implementation phase executor_personas must be exactly one for task ${String(task.id ?? "<unknown>")}`,
+          `runtime validation error: implementation phase executor_personas must be exactly one for task ${
+            String(task.id ?? "<unknown>")
+          }`,
         );
       }
     }
@@ -1221,6 +1272,18 @@ export class AgentTeamsLikeOrchestrator {
         continue;
       }
 
+      if (
+        current.status === "needs_approval" &&
+        update.new_status === "pending" &&
+        this.isValidationGuardReason(current.block_reason)
+      ) {
+        this.log(
+          `[lead] skip update task=${update.task_id} ` +
+            `reason=validation_guard requested=${update.new_status}`,
+        );
+        continue;
+      }
+
       if (update.new_status === "blocked" && current.status !== "blocked") {
         this.log(
           `[lead] skip update task=${update.task_id} reason=blocked_transition_not_allowed ` +
@@ -1299,6 +1362,12 @@ export class AgentTeamsLikeOrchestrator {
           `[lead] skip fallback approval release task=${task.id} ` +
             `reason=revision_cycle_guard revision_count=${task.revision_count} ` +
             `max_revision_cycles=${task.max_revision_cycles}`,
+        );
+        continue;
+      }
+      if (this.isValidationGuardReason(task.block_reason)) {
+        this.log(
+          `skip fallback approval release task=${task.id} reason=validation_guard`,
         );
         continue;
       }
@@ -1431,82 +1500,140 @@ export class AgentTeamsLikeOrchestrator {
     }
     this.appendTaskProgressLog(task.id, "system", startDetail);
 
-    let result: string;
-    try {
-      result = this.adapter.executeTask(
-        teammateId,
-        this.store.getTask(task.id) ?? taskForExecution,
-        onProgress,
+    const validationContext: ExecutionValidationContext = {
+      requiresJudgment: isDecisionTaskPhase(phase),
+      nonImplementPhase: phase !== null && phase !== "implement",
+    };
+    let result = "";
+    let executionResult: ParsedExecutionResult | null = null;
+    for (let attempt = 0;; attempt += 1) {
+      try {
+        result = this.adapter.executeTask(
+          teammateId,
+          this.store.getTask(task.id) ?? taskForExecution,
+          onProgress,
+        );
+      } catch (error) {
+        const blocked = this.store.markTaskBlocked(
+          task.id,
+          teammateId,
+          this.short(String(error), 180),
+        );
+        this.appendTaskProgressLog(
+          blocked.id,
+          "system",
+          `execution blocked: ${blocked.block_reason ?? "blocked"}`,
+        );
+        this.store.sendMessage(
+          teammateId,
+          this.config.leadId,
+          `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+          blocked.id,
+        );
+        this.log(
+          `[${teammateId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        );
+
+        return {
+          changed: true,
+          events: [
+            this.makeEvent(
+              "Blocked",
+              blocked.id,
+              teammateId,
+              blocked.block_reason ?? "blocked",
+            ),
+          ],
+        };
+      }
+
+      const reviewerStopRule = this.detectReviewerStopRule(teammateId, result);
+      if (reviewerStopRule !== null) {
+        const flagged = this.store.applyTaskUpdate(task.id, "needs_approval");
+        this.appendTaskProgressLog(
+          flagged.id,
+          "system",
+          `reviewer stop candidate rule=${reviewerStopRule}: ${
+            this.short(result, 160)
+          }`,
+        );
+        this.store.sendMessage(
+          teammateId,
+          this.config.leadId,
+          `reviewer stop candidate task=${flagged.id} rule=${reviewerStopRule}`,
+          flagged.id,
+        );
+        this.log(
+          `[${teammateId}] reviewer stop candidate task=${flagged.id} ` +
+            `rule=${reviewerStopRule}`,
+        );
+
+        return {
+          changed: true,
+          events: [
+            this.makeEvent(
+              "ReviewerViolation",
+              flagged.id,
+              teammateId,
+              `rule=${reviewerStopRule}`,
+            ),
+          ],
+        };
+      }
+
+      const validation = this.validateExecutionResult(
+        result,
+        validationContext,
       );
-    } catch (error) {
-      const blocked = this.store.markTaskBlocked(
+      if (validation.ok) {
+        executionResult = validation.executionResult;
+        break;
+      }
+
+      const code = validation.code ?? "malformed_result_block";
+      this.log(
+        `validation failed task=${task.id} code=${code} recoverable=${
+          validation.recoverable ? "true" : "false"
+        } attempt=${attempt}`,
+      );
+      if (validation.recoverable && attempt < this.validationMaxRetry) {
+        this.log(
+          `validation retry task=${task.id} code=${code} attempt=${
+            attempt + 1
+          }`,
+        );
+        continue;
+      }
+      if (validation.recoverable) {
+        this.log(`validation retry exhausted task=${task.id} code=${code}`);
+      }
+
+      const reason = validation.recoverable
+        ? `validation_retry_exhausted:${code}`
+        : `validation_failed:${code}`;
+      const paused = this.escalateValidationFailureToNeedsApproval(
         task.id,
         teammateId,
-        this.short(String(error), 180),
-      );
-      this.appendTaskProgressLog(
-        blocked.id,
-        "system",
-        `execution blocked: ${blocked.block_reason ?? "blocked"}`,
-      );
-      this.store.sendMessage(
         teammateId,
-        this.config.leadId,
-        `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
-        blocked.id,
+        reason,
+        result,
       );
-      this.log(
-        `[${teammateId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
-      );
-
       return {
         changed: true,
         events: [
           this.makeEvent(
-            "Blocked",
-            blocked.id,
+            "NeedsApproval",
+            paused.id,
             teammateId,
-            blocked.block_reason ?? "blocked",
+            reason,
           ),
         ],
       };
     }
-
-    const reviewerStopRule = this.detectReviewerStopRule(teammateId, result);
-    if (reviewerStopRule !== null) {
-      const flagged = this.store.applyTaskUpdate(task.id, "needs_approval");
-      this.appendTaskProgressLog(
-        flagged.id,
-        "system",
-        `reviewer stop candidate rule=${reviewerStopRule}: ${
-          this.short(result, 160)
-        }`,
-      );
-      this.store.sendMessage(
-        teammateId,
-        this.config.leadId,
-        `reviewer stop candidate task=${flagged.id} rule=${reviewerStopRule}`,
-        flagged.id,
-      );
-      this.log(
-        `[${teammateId}] reviewer stop candidate task=${flagged.id} ` +
-          `rule=${reviewerStopRule}`,
-      );
-
-      return {
-        changed: true,
-        events: [
-          this.makeEvent(
-            "ReviewerViolation",
-            flagged.id,
-            teammateId,
-            `rule=${reviewerStopRule}`,
-          ),
-        ],
-      };
+    if (executionResult === null) {
+      throw new Error("execution result validation did not produce a result");
     }
 
-    const executionResult = parseExecutionResultBlock(result);
     if (executionResult.status !== "completed") {
       const blockReason = executionResult.status === "blocked"
         ? `execution result is blocked${
@@ -1546,7 +1673,6 @@ export class AgentTeamsLikeOrchestrator {
     }
 
     if (isDecisionTaskPhase(phase)) {
-
       if (
         executionResult.judgment_raw !== null &&
         executionResult.changed_files.length > 0
@@ -1847,7 +1973,11 @@ export class AgentTeamsLikeOrchestrator {
         executorId,
         onProgress,
       );
-      if (outcome.kind === "blocked" || outcome.kind === "reviewer_stop") {
+      if (
+        outcome.kind === "blocked" ||
+        outcome.kind === "reviewer_stop" ||
+        outcome.kind === "needs_approval"
+      ) {
         return {
           changed: true,
           events: [outcome.event as EventPayload],
@@ -1894,9 +2024,7 @@ export class AgentTeamsLikeOrchestrator {
         this.store.sendMessage(
           teammateId,
           this.config.leadId,
-          `task needs_approval task=${paused.id} reason=revision_cycle_guard revision_count=${
-            sendBack.revision_count
-          }`,
+          `task needs_approval task=${paused.id} reason=revision_cycle_guard revision_count=${sendBack.revision_count}`,
           paused.id,
         );
         this.log(
@@ -1932,9 +2060,9 @@ export class AgentTeamsLikeOrchestrator {
             "ChangesRequired",
             sendBack.id,
             teammateId,
-            `detail=${this.short(reason, 120)} revision_count=${
-              sendBack.revision_count
-            }`,
+            `detail=${
+              this.short(reason, 120)
+            } revision_count=${sendBack.revision_count}`,
           ),
         ],
       };
@@ -2007,82 +2135,139 @@ export class AgentTeamsLikeOrchestrator {
     executionSubjectId: string,
     onProgress: ProgressCallback,
   ): DecisionPhaseExecutionOutcome {
-    let result: string;
+    let result = "";
     const taskOwnerId = task.owner ?? executionSubjectId;
-    try {
-      result = this.adapter.executeTask(
+    const validationContext: ExecutionValidationContext = {
+      requiresJudgment: true,
+      nonImplementPhase: true,
+    };
+    let executionResult: ParsedExecutionResult | null = null;
+    for (let attempt = 0;; attempt += 1) {
+      try {
+        result = this.adapter.executeTask(
+          executionSubjectId,
+          task,
+          onProgress,
+        );
+      } catch (error) {
+        const blocked = this.store.markTaskBlocked(
+          task.id,
+          taskOwnerId,
+          this.short(String(error), 180),
+        );
+        this.appendTaskProgressLog(
+          blocked.id,
+          "system",
+          `execution blocked: ${blocked.block_reason ?? "blocked"}`,
+        );
+        this.store.sendMessage(
+          executionSubjectId,
+          this.config.leadId,
+          `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+          blocked.id,
+        );
+        this.log(
+          `[${executionSubjectId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        );
+        return {
+          kind: "blocked",
+          summary: "execution failed",
+          event: this.makeEvent(
+            "Blocked",
+            blocked.id,
+            executionSubjectId,
+            blocked.block_reason ?? "blocked",
+          ),
+        };
+      }
+
+      const reviewerStopRule = this.detectReviewerStopRule(
         executionSubjectId,
-        task,
-        onProgress,
+        result,
       );
-    } catch (error) {
-      const blocked = this.store.markTaskBlocked(
+      if (reviewerStopRule !== null) {
+        const flagged = this.store.applyTaskUpdate(task.id, "needs_approval");
+        this.appendTaskProgressLog(
+          flagged.id,
+          "system",
+          `reviewer stop candidate rule=${reviewerStopRule}: ${
+            this.short(result, 160)
+          }`,
+        );
+        this.store.sendMessage(
+          executionSubjectId,
+          this.config.leadId,
+          `reviewer stop candidate task=${flagged.id} rule=${reviewerStopRule}`,
+          flagged.id,
+        );
+        this.log(
+          `[${executionSubjectId}] reviewer stop candidate task=${flagged.id} ` +
+            `rule=${reviewerStopRule}`,
+        );
+        return {
+          kind: "reviewer_stop",
+          summary: this.short(result, 120),
+          event: this.makeEvent(
+            "ReviewerViolation",
+            flagged.id,
+            executionSubjectId,
+            `rule=${reviewerStopRule}`,
+          ),
+        };
+      }
+
+      const validation = this.validateExecutionResult(
+        result,
+        validationContext,
+      );
+      if (validation.ok) {
+        executionResult = validation.executionResult;
+        break;
+      }
+
+      const code = validation.code ?? "malformed_result_block";
+      this.log(
+        `validation failed task=${task.id} code=${code} recoverable=${
+          validation.recoverable ? "true" : "false"
+        } attempt=${attempt}`,
+      );
+      if (validation.recoverable && attempt < this.validationMaxRetry) {
+        this.log(
+          `validation retry task=${task.id} code=${code} attempt=${
+            attempt + 1
+          }`,
+        );
+        continue;
+      }
+      if (validation.recoverable) {
+        this.log(`validation retry exhausted task=${task.id} code=${code}`);
+      }
+
+      const reason = validation.recoverable
+        ? `validation_retry_exhausted:${code}`
+        : `validation_failed:${code}`;
+      const paused = this.escalateValidationFailureToNeedsApproval(
         task.id,
         taskOwnerId,
-        this.short(String(error), 180),
-      );
-      this.appendTaskProgressLog(
-        blocked.id,
-        "system",
-        `execution blocked: ${blocked.block_reason ?? "blocked"}`,
-      );
-      this.store.sendMessage(
         executionSubjectId,
-        this.config.leadId,
-        `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
-        blocked.id,
-      );
-      this.log(
-        `[${executionSubjectId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        reason,
+        result,
       );
       return {
-        kind: "blocked",
-        summary: "execution failed",
-        event: this.makeEvent(
-          "Blocked",
-          blocked.id,
-          executionSubjectId,
-          blocked.block_reason ?? "blocked",
-        ),
-      };
-    }
-
-    const reviewerStopRule = this.detectReviewerStopRule(
-      executionSubjectId,
-      result,
-    );
-    if (reviewerStopRule !== null) {
-      const flagged = this.store.applyTaskUpdate(task.id, "needs_approval");
-      this.appendTaskProgressLog(
-        flagged.id,
-        "system",
-        `reviewer stop candidate rule=${reviewerStopRule}: ${
-          this.short(result, 160)
-        }`,
-      );
-      this.store.sendMessage(
-        executionSubjectId,
-        this.config.leadId,
-        `reviewer stop candidate task=${flagged.id} rule=${reviewerStopRule}`,
-        flagged.id,
-      );
-      this.log(
-        `[${executionSubjectId}] reviewer stop candidate task=${flagged.id} ` +
-          `rule=${reviewerStopRule}`,
-      );
-      return {
-        kind: "reviewer_stop",
+        kind: "needs_approval",
         summary: this.short(result, 120),
         event: this.makeEvent(
-          "ReviewerViolation",
-          flagged.id,
+          "NeedsApproval",
+          paused.id,
           executionSubjectId,
-          `rule=${reviewerStopRule}`,
+          reason,
         ),
       };
     }
+    if (executionResult === null) {
+      throw new Error("decision validation did not produce a result");
+    }
 
-    const executionResult = parseExecutionResultBlock(result);
     const summary = executionResult.summary ?? this.short(result, 120);
     const status = executionResult.status;
     if (status !== "completed") {
@@ -2122,7 +2307,8 @@ export class AgentTeamsLikeOrchestrator {
       };
     }
 
-    if (executionResult.judgment_raw !== null &&
+    if (
+      executionResult.judgment_raw !== null &&
       executionResult.changed_files.length > 0
     ) {
       const blocked = this.store.markTaskBlocked(
@@ -2229,6 +2415,131 @@ export class AgentTeamsLikeOrchestrator {
     return detectReviewerStopRule(result);
   }
 
+  private isValidationGuardReason(
+    reason: string | null | undefined,
+  ): boolean {
+    if (typeof reason !== "string") {
+      return false;
+    }
+    return reason.startsWith("validation_failed:") ||
+      reason.startsWith("validation_retry_exhausted:");
+  }
+
+  private validateExecutionResult(
+    text: string,
+    context: ExecutionValidationContext,
+  ): ValidationOutcome {
+    const executionResult = parseExecutionResultBlock(text);
+    const fail = (code: ValidationCode): ValidationOutcome => ({
+      ok: false,
+      code,
+      recoverable: VALIDATION_RECOVERABLE_CODES.has(code),
+      reason: code,
+      executionResult,
+    });
+
+    if (executionResult.malformed) {
+      return fail("malformed_result_block");
+    }
+    if (executionResult.result_raw === null) {
+      return fail("missing_result");
+    }
+    if (executionResult.status === null) {
+      return fail("invalid_result_value");
+    }
+    if (executionResult.status === "blocked") {
+      return {
+        ok: true,
+        code: null,
+        recoverable: false,
+        reason: null,
+        executionResult,
+      };
+    }
+    if (
+      executionResult.summary_raw === null ||
+      executionResult.summary === null ||
+      executionResult.summary.length === 0
+    ) {
+      return fail("missing_summary");
+    }
+    if (executionResult.changed_files_raw === null) {
+      return fail("missing_changed_files");
+    }
+    if (
+      !executionResult.has_checks ||
+      executionResult.checks === null ||
+      executionResult.checks.length === 0
+    ) {
+      return fail("missing_checks");
+    }
+    if (this.isForbiddenChecksCommand(executionResult.checks)) {
+      return fail("forbidden_checks_command");
+    }
+    if (context.requiresJudgment) {
+      if (
+        executionResult.judgment_raw === null ||
+        executionResult.judgment_raw.length === 0
+      ) {
+        return fail("missing_judgment");
+      }
+      if (executionResult.judgment === null) {
+        return fail("invalid_judgment");
+      }
+    }
+    if (context.nonImplementPhase && executionResult.changed_files.length > 0) {
+      return fail("nonimplement_changed_files");
+    }
+
+    return {
+      ok: true,
+      code: null,
+      recoverable: false,
+      reason: null,
+      executionResult,
+    };
+  }
+
+  private isForbiddenChecksCommand(checksRaw: string): boolean {
+    const probe = [
+      "RESULT: completed",
+      "SUMMARY: validation-probe",
+      "CHANGED_FILES: (none)",
+      `CHECKS: ${checksRaw}`,
+    ].join("\n");
+    return extractResultBlock(probe) === null;
+  }
+
+  private escalateValidationFailureToNeedsApproval(
+    taskId: string,
+    taskOwnerId: string,
+    actorId: string,
+    reason: string,
+    result: string,
+  ): Task {
+    const blocked = this.store.markTaskBlocked(
+      taskId,
+      taskOwnerId,
+      this.short(reason, 180),
+    );
+    const paused = this.store.applyTaskUpdate(blocked.id, "needs_approval");
+    this.appendTaskProgressLog(
+      paused.id,
+      "system",
+      `validation needs_approval reason=${reason}: ${this.short(result, 160)}`,
+    );
+    this.store.sendMessage(
+      actorId,
+      this.config.leadId,
+      `task needs_approval task=${paused.id} reason=${paused.block_reason}`,
+      paused.id,
+    );
+    this.log(
+      `[${actorId}] needs_approval task=${paused.id} reason=${paused.block_reason}`,
+    );
+    return paused;
+  }
+
   private resolveDecisionPhaseBlockReason(
     executionResult: ParsedExecutionResult,
   ): string | null {
@@ -2245,7 +2556,6 @@ export class AgentTeamsLikeOrchestrator {
     }
     return null;
   }
-
 
   private isReviewerExecutionSubject(executionSubjectId: string): boolean {
     const persona = this.personaById.get(executionSubjectId);
@@ -2412,11 +2722,17 @@ function normalizeReviewerStopRule(rawRule: string): string {
 }
 
 interface ParsedExecutionResult {
+  result_raw: string | null;
   status: "completed" | "blocked" | null;
+  summary_raw: string | null;
   summary: string | null;
+  changed_files_raw: string | null;
   changed_files: string[];
+  checks: string | null;
+  has_checks: boolean;
   judgment: PhaseJudgment | null;
   judgment_raw: string | null;
+  malformed: boolean;
 }
 
 function parseExecutionResultBlock(
@@ -2433,8 +2749,10 @@ function parseExecutionResultBlock(
     JUDGMENT: /^JUDGMENT:\s*(.*)$/iu,
   } as const;
   let status: "completed" | "blocked" | null = null;
-  let summary: string | null = null;
+  let resultRaw: string | null = null;
+  let summaryRaw: string | null = null;
   let changedFilesRaw: string | null = null;
+  let checksRaw: string | null = null;
   let judgmentRaw: string | null = null;
   let judgment: PhaseJudgment | null = null;
   let seenResult = false;
@@ -2442,6 +2760,7 @@ function parseExecutionResultBlock(
   let seenChangedFiles = false;
   let seenChecks = false;
   let seenJudgment = false;
+  let malformed = false;
 
   let blockStart = -1;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -2452,11 +2771,17 @@ function parseExecutionResultBlock(
   }
   if (blockStart < 0) {
     return {
+      result_raw: resultRaw,
       status,
-      summary,
+      summary_raw: summaryRaw,
+      summary: null,
+      changed_files_raw: changedFilesRaw,
       changed_files: [],
+      checks: checksRaw,
+      has_checks: seenChecks,
       judgment,
       judgment_raw: judgmentRaw,
+      malformed,
     };
   }
 
@@ -2468,10 +2793,12 @@ function parseExecutionResultBlock(
     const resultMatch = patterns.RESULT.exec(line);
     if (resultMatch) {
       if (seenResult) {
+        malformed = true;
         break;
       }
       seenResult = true;
-      const normalized = resultMatch[1].trim().toLowerCase();
+      resultRaw = resultMatch[1].trim();
+      const normalized = resultRaw.toLowerCase();
       if (normalized === "completed" || normalized === "blocked") {
         status = normalized;
       } else {
@@ -2482,15 +2809,17 @@ function parseExecutionResultBlock(
     const summaryMatch = patterns.SUMMARY.exec(line);
     if (summaryMatch) {
       if (seenSummary) {
+        malformed = true;
         break;
       }
       seenSummary = true;
-      summary = summaryMatch[1].trim();
+      summaryRaw = summaryMatch[1].trim();
       continue;
     }
     const changedFilesMatch = patterns.CHANGED_FILES.exec(line);
     if (changedFilesMatch) {
       if (seenChangedFiles) {
+        malformed = true;
         break;
       }
       seenChangedFiles = true;
@@ -2500,14 +2829,17 @@ function parseExecutionResultBlock(
     const checksMatch = patterns.CHECKS.exec(line);
     if (checksMatch) {
       if (seenChecks) {
+        malformed = true;
         break;
       }
       seenChecks = true;
+      checksRaw = checksMatch[1].trim();
       continue;
     }
     const judgmentMatch = patterns.JUDGMENT.exec(line);
     if (judgmentMatch) {
       if (seenJudgment) {
+        malformed = true;
         break;
       }
       seenJudgment = true;
@@ -2515,15 +2847,22 @@ function parseExecutionResultBlock(
       judgment = normalizePhaseJudgment(judgmentRaw);
       continue;
     }
+    malformed = true;
     break;
   }
 
   return {
+    result_raw: resultRaw,
     status,
-    summary,
+    summary_raw: summaryRaw,
+    summary: summaryRaw,
+    changed_files_raw: changedFilesRaw,
     changed_files: normalizeChangedFiles(changedFilesRaw ?? ""),
+    checks: checksRaw,
+    has_checks: seenChecks,
     judgment,
     judgment_raw: judgmentRaw,
+    malformed,
   };
 }
 
@@ -2533,6 +2872,19 @@ function getEnv(name: string, fallback: string): string {
   } catch (_error) {
     return fallback;
   }
+}
+
+function resolveValidationMaxRetry(
+  logger: (message: string) => void,
+): number {
+  const raw = getEnv("ORCHESTRATOR_VALIDATION_MAX_RETRY", "1");
+  if (raw === "0" || raw === "1") {
+    return Number.parseInt(raw, 10);
+  }
+  logger(
+    `[orchestrator] invalid ORCHESTRATOR_VALIDATION_MAX_RETRY=${raw} fallback=1`,
+  );
+  return 1;
 }
 
 function nowSeconds(): number {

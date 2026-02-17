@@ -1,4 +1,8 @@
-import { createTask, normalizeTaskPhase, type Task } from "../../domain/task.ts";
+import {
+  createTask,
+  normalizeTaskPhase,
+  type Task,
+} from "../../domain/task.ts";
 import type { PersonaDefinition } from "../../domain/persona.ts";
 import { createSpecCreatorTaskConfigTemplate } from "../../domain/spec_creator.ts";
 import { StateStore } from "../../infrastructure/state/store.ts";
@@ -37,7 +41,9 @@ function assertThrowsMessage(fn: () => void, text: string): void {
     thrown = error;
   }
   if (!(thrown instanceof Error)) {
-    throw new Error(`expected function to throw Error with message including ${text}`);
+    throw new Error(
+      `expected function to throw Error with message including ${text}`,
+    );
   }
   if (!thrown.message.includes(text)) {
     throw new Error(`expected '${thrown.message}' to include '${text}'`);
@@ -128,6 +134,52 @@ class OrderedResultAdapter implements TeammateAdapter {
   executeTask(teammateId: string, _task: Task): string {
     this.seenExecutionIds.push(teammateId);
     return this.resultByPersona[teammateId] ?? this.defaultResult;
+  }
+}
+
+class SequenceResultAdapter implements TeammateAdapter {
+  readonly seenExecutionIds: string[] = [];
+  readonly outputs: string[];
+  calls = 0;
+
+  constructor(outputs: string[]) {
+    this.outputs = [...outputs];
+  }
+
+  buildPlan(_teammateId: string, _task: Task): string {
+    return "plan";
+  }
+
+  executeTask(teammateId: string, _task: Task): string {
+    this.seenExecutionIds.push(teammateId);
+    const index = Math.min(this.calls, this.outputs.length - 1);
+    this.calls += 1;
+    if (index < 0) {
+      return completedResult("ok");
+    }
+    return this.outputs[index];
+  }
+}
+
+function withEnvVar(
+  name: string,
+  value: string | undefined,
+  run: () => void,
+): void {
+  const before = Deno.env.get(name);
+  if (value === undefined) {
+    Deno.env.delete(name);
+  } else {
+    Deno.env.set(name, value);
+  }
+  try {
+    run();
+  } finally {
+    if (before === undefined) {
+      Deno.env.delete(name);
+    } else {
+      Deno.env.set(name, before);
+    }
   }
 }
 
@@ -899,7 +951,10 @@ function resolveTaskPhaseForFixture(task: Task): string | null {
   return null;
 }
 
-function completedResult(summary: string, changedFiles: string = "(none)"): string {
+function completedResult(
+  summary: string,
+  changedFiles: string = "(none)",
+): string {
   return [
     "RESULT: completed",
     `SUMMARY: ${summary}`,
@@ -1076,7 +1131,7 @@ Deno.test("orchestrator review phase completes when JUDGMENT is pass", () => {
   });
 });
 
-Deno.test("orchestrator review phase blocks when JUDGMENT is missing", () => {
+Deno.test("orchestrator review phase moves to needs_approval when JUDGMENT is missing", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
     store.bootstrapTasks([
@@ -1124,15 +1179,17 @@ Deno.test("orchestrator review phase blocks when JUDGMENT is missing", () => {
 
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
-    assertEqual(task.status, "blocked", "task status");
+    assertEqual(task.status, "needs_approval", "task status");
     assert(
-      String(task.block_reason).includes("missing JUDGMENT in decision phase"),
-      "block reason should include missing judgment marker",
+      String(task.block_reason).includes(
+        "validation_retry_exhausted:missing_judgment",
+      ),
+      "block reason should include validation retry exhaustion marker",
     );
   });
 });
 
-Deno.test("orchestrator review phase blocks when only stale JUDGMENT exists", () => {
+Deno.test("orchestrator review phase moves to needs_approval when only stale JUDGMENT exists", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
     store.bootstrapTasks([
@@ -1184,10 +1241,12 @@ Deno.test("orchestrator review phase blocks when only stale JUDGMENT exists", ()
 
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
-    assertEqual(task.status, "blocked", "task status");
+    assertEqual(task.status, "needs_approval", "task status");
     assert(
-      String(task.block_reason).includes("missing JUDGMENT in decision phase"),
-      "block reason should include missing judgment marker",
+      String(task.block_reason).includes(
+        "validation_retry_exhausted:missing_judgment",
+      ),
+      "block reason should include validation retry exhaustion marker",
     );
   });
 });
@@ -1630,7 +1689,10 @@ Deno.test("orchestrator implement phase accepts symlink CHANGED_FILES outside wo
     try {
       Deno.mkdirSync("src", { recursive: true });
       Deno.symlinkSync(outsideDir, "src/outside-link");
-      Deno.writeTextFileSync(`${outsideDir}/secret.ts`, "export const x = 1;\n");
+      Deno.writeTextFileSync(
+        `${outsideDir}/secret.ts`,
+        "export const x = 1;\n",
+      );
 
       const store = new StateStore(`${dir}/state`);
       store.bootstrapTasks([
@@ -1712,7 +1774,7 @@ Deno.test("orchestrator implement phase accepts symlink CHANGED_FILES with non-e
   });
 });
 
-Deno.test("orchestrator review phase blocks when CHANGED_FILES is non-empty", () => {
+Deno.test("orchestrator review phase moves to needs_approval when CHANGED_FILES is non-empty", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
     store.bootstrapTasks([
@@ -1760,15 +1822,17 @@ Deno.test("orchestrator review phase blocks when CHANGED_FILES is non-empty", ()
     orchestrator.run();
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
-    assertEqual(task.status, "blocked", "task status");
+    assertEqual(task.status, "needs_approval", "task status");
     assert(
-      String(task.block_reason).includes("non-implement phase edited files"),
-      "block reason should include changed files violation",
+      String(task.block_reason).includes(
+        "validation_failed:nonimplement_changed_files",
+      ),
+      "block reason should include validation failure marker",
     );
   });
 });
 
-Deno.test("orchestrator review phase blocks when CHANGED_FILES is non-empty even if JUDGMENT is changes_required", () => {
+Deno.test("orchestrator review phase moves to needs_approval when CHANGED_FILES is non-empty even if JUDGMENT is changes_required", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
     store.bootstrapTasks([
@@ -1816,11 +1880,13 @@ Deno.test("orchestrator review phase blocks when CHANGED_FILES is non-empty even
     orchestrator.run();
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
-    assertEqual(task.status, "blocked", "task status");
+    assertEqual(task.status, "needs_approval", "task status");
     assertEqual(task.revision_count, 0, "revision count should not increase");
     assert(
-      String(task.block_reason).includes("non-implement phase edited files"),
-      "block reason should include changed files violation",
+      String(task.block_reason).includes(
+        "validation_failed:nonimplement_changed_files",
+      ),
+      "block reason should include validation failure marker",
     );
   });
 });
@@ -1921,6 +1987,355 @@ Deno.test("orchestrator does not trigger revision guard when count equals max at
     const stalled = store.getTask("A");
     assert(stalled !== null, "task should exist");
     assertEqual(stalled.status, "completed", "task status");
-    assertEqual(stalled.revision_count, 1, "revision count should remain equal");
+    assertEqual(
+      stalled.revision_count,
+      1,
+      "revision count should remain equal",
+    );
+  });
+});
+
+Deno.test("validation recovery: missing_result succeeds on single retry", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "task1",
+        target_paths: ["src/a.ts"],
+      }),
+    ]);
+
+    const adapter = new SequenceResultAdapter([
+      [
+        "SUMMARY: first output misses result",
+        "CHANGED_FILES: src/a.ts",
+        "CHECKS: deno test src",
+      ].join("\n"),
+      completedResult("retry fixed", "src/a.ts"),
+    ]);
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter,
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        teammateIds: ["tm-1"],
+        personas: [],
+        maxRounds: 5,
+        maxIdleRounds: 2,
+        maxIdleSeconds: 60,
+      }),
+    });
+
+    const result = orchestrator.run();
+    assertEqual(result.stop_reason, "all_tasks_completed", "stop reason");
+    assertEqual(adapter.calls, 2, "retry count");
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "completed", "task status");
+  });
+});
+
+Deno.test("validation recovery: missing_result twice becomes needs_approval", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "task1",
+        target_paths: ["src/a.ts"],
+      }),
+    ]);
+
+    const adapter = new SequenceResultAdapter([
+      [
+        "SUMMARY: first output misses result",
+        "CHANGED_FILES: src/a.ts",
+        "CHECKS: deno test src",
+      ].join("\n"),
+      [
+        "SUMMARY: second output still misses result",
+        "CHANGED_FILES: src/a.ts",
+        "CHECKS: deno test src",
+      ].join("\n"),
+    ]);
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter,
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        teammateIds: ["tm-1"],
+        personas: [],
+        maxRounds: 4,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+      }),
+    });
+
+    const result = orchestrator.run();
+    assertEqual(result.stop_reason, "idle_rounds_limit", "stop reason");
+    assertEqual(adapter.calls, 2, "retry count");
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "needs_approval", "task status");
+    assert(
+      String(task.block_reason).includes(
+        "validation_retry_exhausted:missing_result",
+      ),
+      "reason should include retry exhausted code",
+    );
+  });
+});
+
+Deno.test("validation recovery: forbidden checks command is non-recoverable", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "task1",
+        target_paths: ["src/a.ts"],
+      }),
+    ]);
+
+    const adapter = new SequenceResultAdapter([
+      [
+        "RESULT: completed",
+        "SUMMARY: done",
+        "CHANGED_FILES: src/a.ts",
+        "CHECKS: deno task check; ./node_modules/.bin/openspec validate add-foo --strict",
+      ].join("\n"),
+      completedResult("should not be retried", "src/a.ts"),
+    ]);
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter,
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        teammateIds: ["tm-1"],
+        personas: [],
+        maxRounds: 4,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+      }),
+    });
+
+    orchestrator.run();
+    assertEqual(adapter.calls, 1, "non-recoverable should not retry");
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "needs_approval", "task status");
+    assert(
+      String(task.block_reason).includes(
+        "validation_failed:forbidden_checks_command",
+      ),
+      "reason should include forbidden checks code",
+    );
+  });
+});
+
+Deno.test("validation recovery: nonimplement_changed_files is non-recoverable", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "review task",
+        target_paths: ["src/a.ts"],
+        current_phase_index: 1,
+      }),
+    ]);
+
+    const adapter = new SequenceResultAdapter([
+      decisionPhaseResult({
+        summary: "review complete",
+        changedFiles: "src/a.ts",
+        judgment: "pass",
+      }),
+      decisionPhaseResult({
+        summary: "should not be retried",
+        changedFiles: "(none)",
+        judgment: "pass",
+      }),
+    ]);
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter,
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        maxRounds: 4,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+        personas: [
+          createPersona("reviewer", {
+            enabled: true,
+            role: "reviewer",
+          }),
+        ],
+        personaDefaults: {
+          phase_order: ["implement", "review"],
+          phase_policies: {
+            implement: { executor_personas: ["implementer"] },
+            review: {
+              executor_personas: ["reviewer"],
+              state_transition_personas: ["lead"],
+            },
+          },
+        },
+      }),
+    });
+
+    orchestrator.run();
+    assertEqual(adapter.calls, 1, "non-recoverable should not retry");
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "needs_approval", "task status");
+    assert(
+      String(task.block_reason).includes(
+        "validation_failed:nonimplement_changed_files",
+      ),
+      "reason should include non-implement changed files code",
+    );
+  });
+});
+
+Deno.test("validation recovery: fallback does not release validation-guarded approvals", () => {
+  withTempDir((dir) => {
+    const logs: string[] = [];
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "stalled task",
+        target_paths: ["src/a.ts"],
+        status: "needs_approval",
+        block_reason: "validation_failed:missing_result",
+      }),
+    ]);
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter: new TemplateAdapter(),
+      provider: new MockOrchestratorProvider(),
+      eventLogger: (message) => logs.push(message),
+      config: new OrchestratorConfig({
+        teammateIds: ["tm-1"],
+        personas: [],
+        maxRounds: 3,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+      }),
+    });
+
+    orchestrator.run();
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "needs_approval", "task status");
+    assert(
+      logs.some((line) =>
+        line.includes(
+          "skip fallback approval release task=T1 reason=validation_guard",
+        )
+      ),
+      "fallback skip log should include validation guard marker",
+    );
+  });
+});
+
+Deno.test("validation recovery: max retry 0 disables retry", () => {
+  withEnvVar("ORCHESTRATOR_VALIDATION_MAX_RETRY", "0", () => {
+    withTempDir((dir) => {
+      const store = new StateStore(dir);
+      store.bootstrapTasks([
+        createTask({
+          id: "T1",
+          title: "task1",
+          target_paths: ["src/a.ts"],
+        }),
+      ]);
+
+      const adapter = new SequenceResultAdapter([
+        [
+          "SUMMARY: first output misses result",
+          "CHANGED_FILES: src/a.ts",
+          "CHECKS: deno test src",
+        ].join("\n"),
+        completedResult("retry must not run", "src/a.ts"),
+      ]);
+      const orchestrator = new AgentTeamsLikeOrchestrator({
+        store,
+        adapter,
+        provider: new MockOrchestratorProvider(),
+        config: new OrchestratorConfig({
+          teammateIds: ["tm-1"],
+          personas: [],
+          maxRounds: 4,
+          maxIdleRounds: 1,
+          maxIdleSeconds: 60,
+        }),
+      });
+
+      orchestrator.run();
+      assertEqual(adapter.calls, 1, "retry should be disabled");
+      const task = store.getTask("T1");
+      assert(task !== null, "task should exist");
+      assertEqual(task.status, "needs_approval", "task status");
+      assert(
+        String(task.block_reason).includes(
+          "validation_retry_exhausted:missing_result",
+        ),
+        "reason should include retry exhausted code",
+      );
+    });
+  });
+});
+
+Deno.test("validation recovery: invalid retry env falls back to default retry=1", () => {
+  withEnvVar("ORCHESTRATOR_VALIDATION_MAX_RETRY", "invalid", () => {
+    withTempDir((dir) => {
+      const logs: string[] = [];
+      const store = new StateStore(dir);
+      store.bootstrapTasks([
+        createTask({
+          id: "T1",
+          title: "task1",
+          target_paths: ["src/a.ts"],
+        }),
+      ]);
+
+      const adapter = new SequenceResultAdapter([
+        [
+          "SUMMARY: first output misses result",
+          "CHANGED_FILES: src/a.ts",
+          "CHECKS: deno test src",
+        ].join("\n"),
+        completedResult("retry fixed", "src/a.ts"),
+      ]);
+      const orchestrator = new AgentTeamsLikeOrchestrator({
+        store,
+        adapter,
+        provider: new MockOrchestratorProvider(),
+        eventLogger: (message) => logs.push(message),
+        config: new OrchestratorConfig({
+          teammateIds: ["tm-1"],
+          personas: [],
+          maxRounds: 5,
+          maxIdleRounds: 2,
+          maxIdleSeconds: 60,
+        }),
+      });
+
+      const result = orchestrator.run();
+      assertEqual(result.stop_reason, "all_tasks_completed", "stop reason");
+      assertEqual(adapter.calls, 2, "default retry should apply");
+      assert(
+        logs.some((line) =>
+          line.includes(
+            "invalid ORCHESTRATOR_VALIDATION_MAX_RETRY=invalid fallback=1",
+          )
+        ),
+        "warning log should include fallback message",
+      );
+    });
   });
 });
