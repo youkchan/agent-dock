@@ -461,6 +461,10 @@ function normalizeTaskFromLegacyPayload(payload: RuntimePayload): RuntimePayload
     task.target_paths = payload.target_paths;
   }
 
+  if ("related_paths" in payload) {
+    task.related_paths = payload.related_paths;
+  }
+
   if ("depends_on" in payload) {
     task.depends_on = payload.depends_on;
   }

@@ -53,6 +53,18 @@ function withTempDir(run: (dir: string) => void): void {
   }
 }
 
+function withTempCwd(run: (dir: string) => void): void {
+  withTempDir((dir) => {
+    const previous = Deno.cwd();
+    Deno.chdir(dir);
+    try {
+      run(dir);
+    } finally {
+      Deno.chdir(previous);
+    }
+  });
+}
+
 class TemplateAdapter implements TeammateAdapter {
   buildPlan(teammateId: string, task: Task): string {
     return `plan teammate=${teammateId} task=${task.id}`;
@@ -848,7 +860,8 @@ function phaseAwareResult(task: Task, summary: string): string {
       judgment: "pass",
     });
   }
-  return completedResult(summary);
+  const changedFile = task.target_paths[0] ?? "(none)";
+  return completedResult(summary, changedFile);
 }
 
 function resolveTaskPhaseForFixture(task: Task): string | null {
@@ -886,11 +899,11 @@ function resolveTaskPhaseForFixture(task: Task): string | null {
   return null;
 }
 
-function completedResult(summary: string): string {
+function completedResult(summary: string, changedFiles: string = "(none)"): string {
   return [
     "RESULT: completed",
     `SUMMARY: ${summary}`,
-    "CHANGED_FILES: src/sample.ts",
+    `CHANGED_FILES: ${changedFiles}`,
     "CHECKS: deno test src",
   ].join("\n");
 }
@@ -1464,6 +1477,205 @@ Deno.test("orchestrator test phase blocks on JUDGMENT blocked", () => {
       String(task.block_reason).includes("execution judgment is blocked"),
       "block reason should include judgment",
     );
+  });
+});
+
+Deno.test("orchestrator implement phase blocks when CHANGED_FILES is outside allowed scope", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "implement task",
+        target_paths: ["src/a.ts"],
+      }),
+    ]);
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter: new FixedResultAdapter(
+        completedResult("implemented", "src/out-of-scope.ts"),
+      ),
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        maxRounds: 3,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+        teammateIds: ["tm-1"],
+        personas: [],
+      }),
+    });
+
+    orchestrator.run();
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "blocked", "task status");
+    assert(
+      String(task.block_reason).includes("outside allowed scope"),
+      "block reason should include scope violation",
+    );
+  });
+});
+
+Deno.test("orchestrator implement phase allows CHANGED_FILES in related_paths", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "implement task",
+        target_paths: ["src/a.ts"],
+        related_paths: ["docs/notes.md"],
+      }),
+    ]);
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter: new FixedResultAdapter(
+        completedResult(
+          "implemented additional_edit_reason=docs_sync",
+          "docs/notes.md",
+        ),
+      ),
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        maxRounds: 3,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+        teammateIds: ["tm-1"],
+        personas: [],
+      }),
+    });
+
+    const result = orchestrator.run();
+    assertEqual(result.stop_reason, "all_tasks_completed", "stop reason");
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "completed", "task status");
+  });
+});
+
+Deno.test("orchestrator implement phase blocks related_paths edit without summary reason tag", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "implement task",
+        target_paths: ["src/a.ts"],
+        related_paths: ["docs/notes.md"],
+      }),
+    ]);
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter: new FixedResultAdapter(
+        completedResult("implemented", "docs/notes.md"),
+      ),
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        maxRounds: 3,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+        teammateIds: ["tm-1"],
+        personas: [],
+      }),
+    });
+
+    orchestrator.run();
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "blocked", "task status");
+    assert(
+      String(task.block_reason).includes("additional_edit_reason"),
+      "block reason should include missing additional_edit_reason",
+    );
+  });
+});
+
+Deno.test("orchestrator blocks traversal-like CHANGED_FILES paths", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "implement task",
+        target_paths: ["src"],
+      }),
+    ]);
+
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter: new FixedResultAdapter(
+        completedResult("implemented", "src/../secret.txt"),
+      ),
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        maxRounds: 3,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+        teammateIds: ["tm-1"],
+        personas: [],
+      }),
+    });
+
+    orchestrator.run();
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "blocked", "task status");
+    assert(
+      String(task.block_reason).includes("outside allowed scope"),
+      "block reason should include scope violation",
+    );
+  });
+});
+
+Deno.test("orchestrator blocks symlink CHANGED_FILES that resolves outside workspace", () => {
+  if (Deno.build.os === "windows") {
+    return;
+  }
+  withTempCwd((dir) => {
+    const outsideDir = Deno.makeTempDirSync();
+    try {
+      Deno.mkdirSync("src", { recursive: true });
+      Deno.symlinkSync(outsideDir, "src/outside-link");
+      Deno.writeTextFileSync(`${outsideDir}/secret.ts`, "export const x = 1;\n");
+
+      const store = new StateStore(`${dir}/state`);
+      store.bootstrapTasks([
+        createTask({
+          id: "T1",
+          title: "implement task",
+          target_paths: ["src"],
+        }),
+      ]);
+
+      const orchestrator = new AgentTeamsLikeOrchestrator({
+        store,
+        adapter: new FixedResultAdapter(
+          completedResult("implemented", "src/outside-link/secret.ts"),
+        ),
+        provider: new MockOrchestratorProvider(),
+        config: new OrchestratorConfig({
+          maxRounds: 3,
+          maxIdleRounds: 1,
+          maxIdleSeconds: 60,
+          teammateIds: ["tm-1"],
+          personas: [],
+        }),
+      });
+
+      orchestrator.run();
+      const task = store.getTask("T1");
+      assert(task !== null, "task should exist");
+      assertEqual(task.status, "blocked", "task status");
+      assert(
+        String(task.block_reason).includes("outside allowed scope"),
+        "block reason should include scope violation",
+      );
+    } finally {
+      Deno.removeSync(outsideDir, { recursive: true });
+    }
   });
 });
 

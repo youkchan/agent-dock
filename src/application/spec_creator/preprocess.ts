@@ -58,14 +58,9 @@ const DEFAULT_PROMPT_IO: SpecCreatorPromptIO = {
 
 export function normalizeChangeId(raw: string): string {
   const normalized = raw.trim();
-  if (!/^[a-z][a-z0-9-]*$/u.test(normalized)) {
+  if (!/^[a-z0-9][a-z0-9-]*$/u.test(normalized)) {
     throw new Error(
-      "spec creator requires --change-id in kebab-case (e.g. add-sample-change)",
-    );
-  }
-  if (!normalized.startsWith("add-")) {
-    throw new Error(
-      "spec creator requires --change-id to start with add- (e.g. add-sample-change)",
+      "spec creator requires --change-id in kebab-case (e.g. sample-change)",
     );
   }
   if (normalized.length > 64) {
@@ -127,6 +122,7 @@ export function buildSpecCreatorTaskConfig(
   const tasks = template.tasks.map((task) => ({
     ...task,
     target_paths: [...task.target_paths],
+    related_paths: [...task.related_paths],
     depends_on: [...task.depends_on],
     persona_policy: task.persona_policy === null
       ? null
@@ -242,7 +238,6 @@ function proposeChangeIdFromCodex(requirementsText: string): string {
     "Constraints:",
     "- one line only",
     "- kebab-case only",
-    "- must start with add-",
     "- max 64 chars",
     "",
     `requirements_text: ${requirementsText}`,
@@ -330,10 +325,10 @@ function proposeChangeIdLocal(requirementsText: string): string {
   }
   const body = uniqueTokens.slice(0, 4).join("-");
   if (!body) {
-    return "add-change";
+    return "change";
   }
-  const candidate = `add-${body}`.slice(0, 64).replace(/-+$/u, "");
-  return candidate || "add-change";
+  const candidate = body.slice(0, 64).replace(/-+$/u, "");
+  return candidate || "change";
 }
 
 function confirmSpecContext(

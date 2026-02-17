@@ -46,7 +46,7 @@ export class TemplateTeammateAdapter implements TeammateAdapter {
       ? task.target_paths.join(", ")
       : "(no paths)";
     return this.resultTemplate
-      .replace("{task_id}", task.id)
-      .replace("{paths}", paths);
+      .replaceAll("{task_id}", task.id)
+      .replaceAll("{paths}", paths);
   }
 }

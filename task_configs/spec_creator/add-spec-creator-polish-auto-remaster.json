@@ -1,0 +1,431 @@
+{
+  "teammates": [
+    "spec-planner",
+    "spec-reviewer",
+    "spec-code-creator"
+  ],
+  "personas": [
+    {
+      "id": "implementer",
+      "role": "implementer",
+      "focus": "実装を前進させる",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "code-reviewer",
+      "role": "reviewer",
+      "focus": "品質と回帰リスクを確認する",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-checker",
+      "role": "spec_guard",
+      "focus": "仕様逸脱を防ぐ",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "test-owner",
+      "role": "test_guard",
+      "focus": "検証の十分性を担保し、MUST/SHALLごとにtransport経路テストとfail-closed拒否テストの両方を要求する",
+      "can_block": false,
+      "enabled": false,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-planner",
+      "role": "spec_guard",
+      "focus": "要件をOpenSpec構成へ正規化し、要件外追加を禁止し、MUST/SHALLごとにtransport経路とfail-closed拒否点をtasks/designへ固定する。実行経路(run/spec-creator)・段階(compile/runtime)・データモデルキーの整合を維持する",
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-reviewer",
+      "role": "reviewer",
+      "focus": "proposal/tasks/design/code_summaryの整合と過不足を検証し、要件外追加・過剰修正・冗長化を禁止し、transport経路未配線・拒否点未定義・対応テスト欠落をblockerとして停止する。判定時系列(blocked/changes_required)矛盾、入力契約未固定、実データモデルとのキー不一致を検知して停止する",
+      "can_block": true,
+      "enabled": true,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "spec-code-creator",
+      "role": "spec_guard",
+      "focus": "実装認知負荷低減のためcode_summary.mdにコード粒度と対応関係を明記し、taskごとのtransport経路・拒否点・検証テスト対応を記録する",
+      "can_block": false,
+      "enabled": true,
+      "execution": {
+        "enabled": true,
+        "command_ref": "default",
+        "sandbox": "workspace-write",
+        "timeout_sec": 900
+      }
+    }
+  ],
+  "persona_defaults": {
+    "phase_order": [
+      "implement",
+      "review"
+    ],
+    "phase_policies": {
+      "implement": {
+        "active_personas": [
+          "spec-planner"
+        ],
+        "executor_personas": [
+          "spec-planner"
+        ],
+        "state_transition_personas": [
+          "spec-planner"
+        ]
+      },
+      "review": {
+        "active_personas": [
+          "spec-reviewer"
+        ],
+        "executor_personas": [
+          "spec-reviewer"
+        ],
+        "state_transition_personas": [
+          "spec-reviewer"
+        ]
+      }
+    }
+  },
+  "tasks": [
+    {
+      "id": "1.1",
+      "title": "要件をOpenSpec要素へ正規化する",
+      "description": "requirements_text を整理し、change の最小スコープを定義する。\n\nspec_context:\n- requirements_text: 仕様書：Spec Creator Polish (仕様の自動リマスター機能) 1. 背景と経緯 (Background) - Agent Dockの進化: agent-dock のランタイムやコンパイラは日々進化しており、新しい制約（例: implement フェーズの必須化、判定値の3値化、5行契約など）が追加されている。 - レガシー仕様の腐敗: 過去に作成された OpenSpec ファイルは、最新の openspec compiler ではエラーになるか、現在のベストプラクティス（より安全な遷移設計など）から乖離している。 - 仕様間の「ズレ」: proposal を修正した際に tasks や spec.md への反映を忘れるなど、ファイル間での論理的不整合が手動メンテナンスでは発生しやすい。 - AIによる再構築の必要性: 機械的な置換ではなく、最新の知能（Codex）を使って仕様全体を「今の正解」で再設計（Re-design）する手段が求められている。 2. 目的 (Goals) 1. 最新基準への適合: 古い仕様を、最新のコンパイラやオーケストレーターが100%受理できる形式に自動アップグレードする。 2. 論理整合性の確保: proposal, design, tasks, spec 間の矛盾を AI の判断で解消し、全体として一貫した仕様セットを作る。 3. フィードバックの反映: レビュー指摘（Feedback）を元に、関連する全ファイルを AI が一括で整合させながら修正する。 --- 3. 機能仕様 (Detailed Requirements) 3.1 実行インターフェース - コマンド: agent-dock spec-creator polish <change_id> [--feedback \"指示内容\"] - 対象: openspec/changes/<change_id>/ 配下の全 .md ファイル。 3.2 処理プロセス（Codex による再設計フロー） 1. 情報の集約 (Context Collection): - フォルダ内の全ファイル（Proposal, Design, Tasks, Code Summary, Specs）を読み込み、一つの「巨大な既存仕様コンテキスト」として結合する。 2. 最新基準（Architect Prompt）の注入: - 既存の Spec Creator が持つ「最新の Agent Dock 標準（正解の姿）」をシステム指示として与える。 - 指示例：「以下の古い仕様を、最新の 5行契約、判定3値化、および implement フェーズ必須化のルールに照らして、全体を再設計せよ」。 3. Codex による横断的判断 (Judgement): - AI は各ファイルをバラバラに直すのではなく、全体を一つの設計図として解釈する。 - 判断例: 「Proposal に新しい要件が増えたなら、Design の決定事項を更新し、Tasks に実装タスクを追加し、Spec.md に検証シナリオを書き加える」という連鎖的な修正を AI の判断で行う。 4. 全ファイルの一括生成 (Regeneration): - AI は「修正が必要なファイル全ての完成形」を出力する。 5. 上書きと自動検証: - 生成された内容で既存ファイルを直接上書きする。 - 直後に openspec compiler を内部で実行し、修正後の仕様が最新ルールをパスするか客観的に検証する。 --- 4. 修正・適用の具体基準 (Standards) AI は以下の「現在の正解」を絶対基準として Polish を行います。 - フェーズ構成: implement フェーズが必ず存在し、適切な担当者が割り当てられていること。 - 出力契約: 判定フェーズ（review/spec_check/test）が 5行契約（JUDGMENT 必須）になっていること。 - 判定値: pass | changes_required | blocked の 3値に正規化されていること。 - 空表現: CHANGED_FILES の変更なしが (none) と記述されていること。 - 論理経路: 「コンパイルエラー」と「実行時エラー」の使い分けなど、システム的な矛盾がないこと。 --- 5. 設計方針 (Architecture Policy) - 既存ルートへの合流: 新規作成（create）と Polish（修正）で「何が正しい仕様か」の判断基準（プロンプト）を共通化する。 - AI の主導権: 機械的な検索置換は行わず、常に Codex に「全体としての妥当性」を判断させる。 - 非破壊的な追加: 存在しないファイル（例: design.md）があれば、既存の文脈から AI が推論して新規作成する。 --- 6. 実装タスクの優先順位 1. 既存仕様スキャナーの実装: 指定された change_id から md ファイル群を収集する機能。 2. Polish 専用プロンプト構築: 既存ファイル群 ＋ 最新基準 ＋ ユーザーフィードバックを結合するロジック。 3. SpecCreator クラスの拡張: polish メソッドを追加し、Codex からのマルチファイル出力をパースする機能。 4. CLI との配線: spec-creator polish コマンドの実装。 5. バリデーター連携: 生成後の自動コンパイルチェックの実装。\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish-auto-remaster/proposal.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/tasks.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/design.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/code_summary.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/specs/add-spec-creator-polish-auto-remaster/spec.md"
+      ],
+      "depends_on": [],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.2",
+      "title": "proposal.md を生成する",
+      "description": "変更理由、変更内容、影響範囲を proposal.md に記述する。\n\nspec_context:\n- requirements_text: 仕様書：Spec Creator Polish (仕様の自動リマスター機能) 1. 背景と経緯 (Background) - Agent Dockの進化: agent-dock のランタイムやコンパイラは日々進化しており、新しい制約（例: implement フェーズの必須化、判定値の3値化、5行契約など）が追加されている。 - レガシー仕様の腐敗: 過去に作成された OpenSpec ファイルは、最新の openspec compiler ではエラーになるか、現在のベストプラクティス（より安全な遷移設計など）から乖離している。 - 仕様間の「ズレ」: proposal を修正した際に tasks や spec.md への反映を忘れるなど、ファイル間での論理的不整合が手動メンテナンスでは発生しやすい。 - AIによる再構築の必要性: 機械的な置換ではなく、最新の知能（Codex）を使って仕様全体を「今の正解」で再設計（Re-design）する手段が求められている。 2. 目的 (Goals) 1. 最新基準への適合: 古い仕様を、最新のコンパイラやオーケストレーターが100%受理できる形式に自動アップグレードする。 2. 論理整合性の確保: proposal, design, tasks, spec 間の矛盾を AI の判断で解消し、全体として一貫した仕様セットを作る。 3. フィードバックの反映: レビュー指摘（Feedback）を元に、関連する全ファイルを AI が一括で整合させながら修正する。 --- 3. 機能仕様 (Detailed Requirements) 3.1 実行インターフェース - コマンド: agent-dock spec-creator polish <change_id> [--feedback \"指示内容\"] - 対象: openspec/changes/<change_id>/ 配下の全 .md ファイル。 3.2 処理プロセス（Codex による再設計フロー） 1. 情報の集約 (Context Collection): - フォルダ内の全ファイル（Proposal, Design, Tasks, Code Summary, Specs）を読み込み、一つの「巨大な既存仕様コンテキスト」として結合する。 2. 最新基準（Architect Prompt）の注入: - 既存の Spec Creator が持つ「最新の Agent Dock 標準（正解の姿）」をシステム指示として与える。 - 指示例：「以下の古い仕様を、最新の 5行契約、判定3値化、および implement フェーズ必須化のルールに照らして、全体を再設計せよ」。 3. Codex による横断的判断 (Judgement): - AI は各ファイルをバラバラに直すのではなく、全体を一つの設計図として解釈する。 - 判断例: 「Proposal に新しい要件が増えたなら、Design の決定事項を更新し、Tasks に実装タスクを追加し、Spec.md に検証シナリオを書き加える」という連鎖的な修正を AI の判断で行う。 4. 全ファイルの一括生成 (Regeneration): - AI は「修正が必要なファイル全ての完成形」を出力する。 5. 上書きと自動検証: - 生成された内容で既存ファイルを直接上書きする。 - 直後に openspec compiler を内部で実行し、修正後の仕様が最新ルールをパスするか客観的に検証する。 --- 4. 修正・適用の具体基準 (Standards) AI は以下の「現在の正解」を絶対基準として Polish を行います。 - フェーズ構成: implement フェーズが必ず存在し、適切な担当者が割り当てられていること。 - 出力契約: 判定フェーズ（review/spec_check/test）が 5行契約（JUDGMENT 必須）になっていること。 - 判定値: pass | changes_required | blocked の 3値に正規化されていること。 - 空表現: CHANGED_FILES の変更なしが (none) と記述されていること。 - 論理経路: 「コンパイルエラー」と「実行時エラー」の使い分けなど、システム的な矛盾がないこと。 --- 5. 設計方針 (Architecture Policy) - 既存ルートへの合流: 新規作成（create）と Polish（修正）で「何が正しい仕様か」の判断基準（プロンプト）を共通化する。 - AI の主導権: 機械的な検索置換は行わず、常に Codex に「全体としての妥当性」を判断させる。 - 非破壊的な追加: 存在しないファイル（例: design.md）があれば、既存の文脈から AI が推論して新規作成する。 --- 6. 実装タスクの優先順位 1. 既存仕様スキャナーの実装: 指定された change_id から md ファイル群を収集する機能。 2. Polish 専用プロンプト構築: 既存ファイル群 ＋ 最新基準 ＋ ユーザーフィードバックを結合するロジック。 3. SpecCreator クラスの拡張: polish メソッドを追加し、Codex からのマルチファイル出力をパースする機能。 4. CLI との配線: spec-creator polish コマンドの実装。 5. バリデーター連携: 生成後の自動コンパイルチェックの実装。\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish-auto-remaster/proposal.md"
+      ],
+      "depends_on": [
+        "1.1"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.3",
+      "title": "tasks.md を固定テンプレート準拠で生成する",
+      "description": "print-openspec-template の固定行を維持し、実装タスクを checklist 形式で定義する。\n\nspec_context:\n- requirements_text: 仕様書：Spec Creator Polish (仕様の自動リマスター機能) 1. 背景と経緯 (Background) - Agent Dockの進化: agent-dock のランタイムやコンパイラは日々進化しており、新しい制約（例: implement フェーズの必須化、判定値の3値化、5行契約など）が追加されている。 - レガシー仕様の腐敗: 過去に作成された OpenSpec ファイルは、最新の openspec compiler ではエラーになるか、現在のベストプラクティス（より安全な遷移設計など）から乖離している。 - 仕様間の「ズレ」: proposal を修正した際に tasks や spec.md への反映を忘れるなど、ファイル間での論理的不整合が手動メンテナンスでは発生しやすい。 - AIによる再構築の必要性: 機械的な置換ではなく、最新の知能（Codex）を使って仕様全体を「今の正解」で再設計（Re-design）する手段が求められている。 2. 目的 (Goals) 1. 最新基準への適合: 古い仕様を、最新のコンパイラやオーケストレーターが100%受理できる形式に自動アップグレードする。 2. 論理整合性の確保: proposal, design, tasks, spec 間の矛盾を AI の判断で解消し、全体として一貫した仕様セットを作る。 3. フィードバックの反映: レビュー指摘（Feedback）を元に、関連する全ファイルを AI が一括で整合させながら修正する。 --- 3. 機能仕様 (Detailed Requirements) 3.1 実行インターフェース - コマンド: agent-dock spec-creator polish <change_id> [--feedback \"指示内容\"] - 対象: openspec/changes/<change_id>/ 配下の全 .md ファイル。 3.2 処理プロセス（Codex による再設計フロー） 1. 情報の集約 (Context Collection): - フォルダ内の全ファイル（Proposal, Design, Tasks, Code Summary, Specs）を読み込み、一つの「巨大な既存仕様コンテキスト」として結合する。 2. 最新基準（Architect Prompt）の注入: - 既存の Spec Creator が持つ「最新の Agent Dock 標準（正解の姿）」をシステム指示として与える。 - 指示例：「以下の古い仕様を、最新の 5行契約、判定3値化、および implement フェーズ必須化のルールに照らして、全体を再設計せよ」。 3. Codex による横断的判断 (Judgement): - AI は各ファイルをバラバラに直すのではなく、全体を一つの設計図として解釈する。 - 判断例: 「Proposal に新しい要件が増えたなら、Design の決定事項を更新し、Tasks に実装タスクを追加し、Spec.md に検証シナリオを書き加える」という連鎖的な修正を AI の判断で行う。 4. 全ファイルの一括生成 (Regeneration): - AI は「修正が必要なファイル全ての完成形」を出力する。 5. 上書きと自動検証: - 生成された内容で既存ファイルを直接上書きする。 - 直後に openspec compiler を内部で実行し、修正後の仕様が最新ルールをパスするか客観的に検証する。 --- 4. 修正・適用の具体基準 (Standards) AI は以下の「現在の正解」を絶対基準として Polish を行います。 - フェーズ構成: implement フェーズが必ず存在し、適切な担当者が割り当てられていること。 - 出力契約: 判定フェーズ（review/spec_check/test）が 5行契約（JUDGMENT 必須）になっていること。 - 判定値: pass | changes_required | blocked の 3値に正規化されていること。 - 空表現: CHANGED_FILES の変更なしが (none) と記述されていること。 - 論理経路: 「コンパイルエラー」と「実行時エラー」の使い分けなど、システム的な矛盾がないこと。 --- 5. 設計方針 (Architecture Policy) - 既存ルートへの合流: 新規作成（create）と Polish（修正）で「何が正しい仕様か」の判断基準（プロンプト）を共通化する。 - AI の主導権: 機械的な検索置換は行わず、常に Codex に「全体としての妥当性」を判断させる。 - 非破壊的な追加: 存在しないファイル（例: design.md）があれば、既存の文脈から AI が推論して新規作成する。 --- 6. 実装タスクの優先順位 1. 既存仕様スキャナーの実装: 指定された change_id から md ファイル群を収集する機能。 2. Polish 専用プロンプト構築: 既存ファイル群 ＋ 最新基準 ＋ ユーザーフィードバックを結合するロジック。 3. SpecCreator クラスの拡張: polish メソッドを追加し、Codex からのマルチファイル出力をパースする機能。 4. CLI との配線: spec-creator polish コマンドの実装。 5. バリデーター連携: 生成後の自動コンパイルチェックの実装。\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish-auto-remaster/tasks.md"
+      ],
+      "depends_on": [
+        "1.2"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.4",
+      "title": "必要時に design.md を生成する",
+      "description": "設計上の判断が必要な場合のみ design.md を作成し、意思決定とトレードオフを記述する。\n\nspec_context:\n- requirements_text: 仕様書：Spec Creator Polish (仕様の自動リマスター機能) 1. 背景と経緯 (Background) - Agent Dockの進化: agent-dock のランタイムやコンパイラは日々進化しており、新しい制約（例: implement フェーズの必須化、判定値の3値化、5行契約など）が追加されている。 - レガシー仕様の腐敗: 過去に作成された OpenSpec ファイルは、最新の openspec compiler ではエラーになるか、現在のベストプラクティス（より安全な遷移設計など）から乖離している。 - 仕様間の「ズレ」: proposal を修正した際に tasks や spec.md への反映を忘れるなど、ファイル間での論理的不整合が手動メンテナンスでは発生しやすい。 - AIによる再構築の必要性: 機械的な置換ではなく、最新の知能（Codex）を使って仕様全体を「今の正解」で再設計（Re-design）する手段が求められている。 2. 目的 (Goals) 1. 最新基準への適合: 古い仕様を、最新のコンパイラやオーケストレーターが100%受理できる形式に自動アップグレードする。 2. 論理整合性の確保: proposal, design, tasks, spec 間の矛盾を AI の判断で解消し、全体として一貫した仕様セットを作る。 3. フィードバックの反映: レビュー指摘（Feedback）を元に、関連する全ファイルを AI が一括で整合させながら修正する。 --- 3. 機能仕様 (Detailed Requirements) 3.1 実行インターフェース - コマンド: agent-dock spec-creator polish <change_id> [--feedback \"指示内容\"] - 対象: openspec/changes/<change_id>/ 配下の全 .md ファイル。 3.2 処理プロセス（Codex による再設計フロー） 1. 情報の集約 (Context Collection): - フォルダ内の全ファイル（Proposal, Design, Tasks, Code Summary, Specs）を読み込み、一つの「巨大な既存仕様コンテキスト」として結合する。 2. 最新基準（Architect Prompt）の注入: - 既存の Spec Creator が持つ「最新の Agent Dock 標準（正解の姿）」をシステム指示として与える。 - 指示例：「以下の古い仕様を、最新の 5行契約、判定3値化、および implement フェーズ必須化のルールに照らして、全体を再設計せよ」。 3. Codex による横断的判断 (Judgement): - AI は各ファイルをバラバラに直すのではなく、全体を一つの設計図として解釈する。 - 判断例: 「Proposal に新しい要件が増えたなら、Design の決定事項を更新し、Tasks に実装タスクを追加し、Spec.md に検証シナリオを書き加える」という連鎖的な修正を AI の判断で行う。 4. 全ファイルの一括生成 (Regeneration): - AI は「修正が必要なファイル全ての完成形」を出力する。 5. 上書きと自動検証: - 生成された内容で既存ファイルを直接上書きする。 - 直後に openspec compiler を内部で実行し、修正後の仕様が最新ルールをパスするか客観的に検証する。 --- 4. 修正・適用の具体基準 (Standards) AI は以下の「現在の正解」を絶対基準として Polish を行います。 - フェーズ構成: implement フェーズが必ず存在し、適切な担当者が割り当てられていること。 - 出力契約: 判定フェーズ（review/spec_check/test）が 5行契約（JUDGMENT 必須）になっていること。 - 判定値: pass | changes_required | blocked の 3値に正規化されていること。 - 空表現: CHANGED_FILES の変更なしが (none) と記述されていること。 - 論理経路: 「コンパイルエラー」と「実行時エラー」の使い分けなど、システム的な矛盾がないこと。 --- 5. 設計方針 (Architecture Policy) - 既存ルートへの合流: 新規作成（create）と Polish（修正）で「何が正しい仕様か」の判断基準（プロンプト）を共通化する。 - AI の主導権: 機械的な検索置換は行わず、常に Codex に「全体としての妥当性」を判断させる。 - 非破壊的な追加: 存在しないファイル（例: design.md）があれば、既存の文脈から AI が推論して新規作成する。 --- 6. 実装タスクの優先順位 1. 既存仕様スキャナーの実装: 指定された change_id から md ファイル群を収集する機能。 2. Polish 専用プロンプト構築: 既存ファイル群 ＋ 最新基準 ＋ ユーザーフィードバックを結合するロジック。 3. SpecCreator クラスの拡張: polish メソッドを追加し、Codex からのマルチファイル出力をパースする機能。 4. CLI との配線: spec-creator polish コマンドの実装。 5. バリデーター連携: 生成後の自動コンパイルチェックの実装。\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish-auto-remaster/design.md"
+      ],
+      "depends_on": [
+        "1.2"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-planner"
+            ],
+            "executor_personas": [
+              "spec-planner"
+            ],
+            "state_transition_personas": [
+              "spec-planner"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.5",
+      "title": "code_summary.md を生成する",
+      "description": "tasks.md の task_id と code unit の対応を code_summary.md に記述する。\n\nspec_context:\n- requirements_text: 仕様書：Spec Creator Polish (仕様の自動リマスター機能) 1. 背景と経緯 (Background) - Agent Dockの進化: agent-dock のランタイムやコンパイラは日々進化しており、新しい制約（例: implement フェーズの必須化、判定値の3値化、5行契約など）が追加されている。 - レガシー仕様の腐敗: 過去に作成された OpenSpec ファイルは、最新の openspec compiler ではエラーになるか、現在のベストプラクティス（より安全な遷移設計など）から乖離している。 - 仕様間の「ズレ」: proposal を修正した際に tasks や spec.md への反映を忘れるなど、ファイル間での論理的不整合が手動メンテナンスでは発生しやすい。 - AIによる再構築の必要性: 機械的な置換ではなく、最新の知能（Codex）を使って仕様全体を「今の正解」で再設計（Re-design）する手段が求められている。 2. 目的 (Goals) 1. 最新基準への適合: 古い仕様を、最新のコンパイラやオーケストレーターが100%受理できる形式に自動アップグレードする。 2. 論理整合性の確保: proposal, design, tasks, spec 間の矛盾を AI の判断で解消し、全体として一貫した仕様セットを作る。 3. フィードバックの反映: レビュー指摘（Feedback）を元に、関連する全ファイルを AI が一括で整合させながら修正する。 --- 3. 機能仕様 (Detailed Requirements) 3.1 実行インターフェース - コマンド: agent-dock spec-creator polish <change_id> [--feedback \"指示内容\"] - 対象: openspec/changes/<change_id>/ 配下の全 .md ファイル。 3.2 処理プロセス（Codex による再設計フロー） 1. 情報の集約 (Context Collection): - フォルダ内の全ファイル（Proposal, Design, Tasks, Code Summary, Specs）を読み込み、一つの「巨大な既存仕様コンテキスト」として結合する。 2. 最新基準（Architect Prompt）の注入: - 既存の Spec Creator が持つ「最新の Agent Dock 標準（正解の姿）」をシステム指示として与える。 - 指示例：「以下の古い仕様を、最新の 5行契約、判定3値化、および implement フェーズ必須化のルールに照らして、全体を再設計せよ」。 3. Codex による横断的判断 (Judgement): - AI は各ファイルをバラバラに直すのではなく、全体を一つの設計図として解釈する。 - 判断例: 「Proposal に新しい要件が増えたなら、Design の決定事項を更新し、Tasks に実装タスクを追加し、Spec.md に検証シナリオを書き加える」という連鎖的な修正を AI の判断で行う。 4. 全ファイルの一括生成 (Regeneration): - AI は「修正が必要なファイル全ての完成形」を出力する。 5. 上書きと自動検証: - 生成された内容で既存ファイルを直接上書きする。 - 直後に openspec compiler を内部で実行し、修正後の仕様が最新ルールをパスするか客観的に検証する。 --- 4. 修正・適用の具体基準 (Standards) AI は以下の「現在の正解」を絶対基準として Polish を行います。 - フェーズ構成: implement フェーズが必ず存在し、適切な担当者が割り当てられていること。 - 出力契約: 判定フェーズ（review/spec_check/test）が 5行契約（JUDGMENT 必須）になっていること。 - 判定値: pass | changes_required | blocked の 3値に正規化されていること。 - 空表現: CHANGED_FILES の変更なしが (none) と記述されていること。 - 論理経路: 「コンパイルエラー」と「実行時エラー」の使い分けなど、システム的な矛盾がないこと。 --- 5. 設計方針 (Architecture Policy) - 既存ルートへの合流: 新規作成（create）と Polish（修正）で「何が正しい仕様か」の判断基準（プロンプト）を共通化する。 - AI の主導権: 機械的な検索置換は行わず、常に Codex に「全体としての妥当性」を判断させる。 - 非破壊的な追加: 存在しないファイル（例: design.md）があれば、既存の文脈から AI が推論して新規作成する。 --- 6. 実装タスクの優先順位 1. 既存仕様スキャナーの実装: 指定された change_id から md ファイル群を収集する機能。 2. Polish 専用プロンプト構築: 既存ファイル群 ＋ 最新基準 ＋ ユーザーフィードバックを結合するロジック。 3. SpecCreator クラスの拡張: polish メソッドを追加し、Codex からのマルチファイル出力をパースする機能。 4. CLI との配線: spec-creator polish コマンドの実装。 5. バリデーター連携: 生成後の自動コンパイルチェックの実装。\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish-auto-remaster/code_summary.md"
+      ],
+      "depends_on": [
+        "1.3"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement",
+          "review"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-code-creator"
+            ],
+            "executor_personas": [
+              "spec-code-creator"
+            ],
+            "state_transition_personas": [
+              "spec-code-creator"
+            ]
+          },
+          "review": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.6",
+      "title": "生成成果物の整合性をレビューする",
+      "description": "proposal/tasks/design/code_summary の整合、要件逸脱、過剰修正、冗長化を検証する。実行経路、段階責務、判定時系列、入力契約、テスト整合、データモデルキー整合、遷移条件、利用可能性(定義だけでなく割当/実行可能)を確認する。\n\nspec_context:\n- requirements_text: 仕様書：Spec Creator Polish (仕様の自動リマスター機能) 1. 背景と経緯 (Background) - Agent Dockの進化: agent-dock のランタイムやコンパイラは日々進化しており、新しい制約（例: implement フェーズの必須化、判定値の3値化、5行契約など）が追加されている。 - レガシー仕様の腐敗: 過去に作成された OpenSpec ファイルは、最新の openspec compiler ではエラーになるか、現在のベストプラクティス（より安全な遷移設計など）から乖離している。 - 仕様間の「ズレ」: proposal を修正した際に tasks や spec.md への反映を忘れるなど、ファイル間での論理的不整合が手動メンテナンスでは発生しやすい。 - AIによる再構築の必要性: 機械的な置換ではなく、最新の知能（Codex）を使って仕様全体を「今の正解」で再設計（Re-design）する手段が求められている。 2. 目的 (Goals) 1. 最新基準への適合: 古い仕様を、最新のコンパイラやオーケストレーターが100%受理できる形式に自動アップグレードする。 2. 論理整合性の確保: proposal, design, tasks, spec 間の矛盾を AI の判断で解消し、全体として一貫した仕様セットを作る。 3. フィードバックの反映: レビュー指摘（Feedback）を元に、関連する全ファイルを AI が一括で整合させながら修正する。 --- 3. 機能仕様 (Detailed Requirements) 3.1 実行インターフェース - コマンド: agent-dock spec-creator polish <change_id> [--feedback \"指示内容\"] - 対象: openspec/changes/<change_id>/ 配下の全 .md ファイル。 3.2 処理プロセス（Codex による再設計フロー） 1. 情報の集約 (Context Collection): - フォルダ内の全ファイル（Proposal, Design, Tasks, Code Summary, Specs）を読み込み、一つの「巨大な既存仕様コンテキスト」として結合する。 2. 最新基準（Architect Prompt）の注入: - 既存の Spec Creator が持つ「最新の Agent Dock 標準（正解の姿）」をシステム指示として与える。 - 指示例：「以下の古い仕様を、最新の 5行契約、判定3値化、および implement フェーズ必須化のルールに照らして、全体を再設計せよ」。 3. Codex による横断的判断 (Judgement): - AI は各ファイルをバラバラに直すのではなく、全体を一つの設計図として解釈する。 - 判断例: 「Proposal に新しい要件が増えたなら、Design の決定事項を更新し、Tasks に実装タスクを追加し、Spec.md に検証シナリオを書き加える」という連鎖的な修正を AI の判断で行う。 4. 全ファイルの一括生成 (Regeneration): - AI は「修正が必要なファイル全ての完成形」を出力する。 5. 上書きと自動検証: - 生成された内容で既存ファイルを直接上書きする。 - 直後に openspec compiler を内部で実行し、修正後の仕様が最新ルールをパスするか客観的に検証する。 --- 4. 修正・適用の具体基準 (Standards) AI は以下の「現在の正解」を絶対基準として Polish を行います。 - フェーズ構成: implement フェーズが必ず存在し、適切な担当者が割り当てられていること。 - 出力契約: 判定フェーズ（review/spec_check/test）が 5行契約（JUDGMENT 必須）になっていること。 - 判定値: pass | changes_required | blocked の 3値に正規化されていること。 - 空表現: CHANGED_FILES の変更なしが (none) と記述されていること。 - 論理経路: 「コンパイルエラー」と「実行時エラー」の使い分けなど、システム的な矛盾がないこと。 --- 5. 設計方針 (Architecture Policy) - 既存ルートへの合流: 新規作成（create）と Polish（修正）で「何が正しい仕様か」の判断基準（プロンプト）を共通化する。 - AI の主導権: 機械的な検索置換は行わず、常に Codex に「全体としての妥当性」を判断させる。 - 非破壊的な追加: 存在しないファイル（例: design.md）があれば、既存の文脈から AI が推論して新規作成する。 --- 6. 実装タスクの優先順位 1. 既存仕様スキャナーの実装: 指定された change_id から md ファイル群を収集する機能。 2. Polish 専用プロンプト構築: 既存ファイル群 ＋ 最新基準 ＋ ユーザーフィードバックを結合するロジック。 3. SpecCreator クラスの拡張: polish メソッドを追加し、Codex からのマルチファイル出力をパースする機能。 4. CLI との配線: spec-creator polish コマンドの実装。 5. バリデーター連携: 生成後の自動コンパイルチェックの実装。\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish-auto-remaster/proposal.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/tasks.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/design.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/code_summary.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/specs/add-spec-creator-polish-auto-remaster/spec.md"
+      ],
+      "depends_on": [
+        "1.2",
+        "1.3",
+        "1.4",
+        "1.5"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "1.7",
+      "title": "OpenSpec strict validate を実行する",
+      "description": "openspec validate <change_id> --strict を実行し、失敗時は修正後に再実行する。\n\nspec_context:\n- requirements_text: 仕様書：Spec Creator Polish (仕様の自動リマスター機能) 1. 背景と経緯 (Background) - Agent Dockの進化: agent-dock のランタイムやコンパイラは日々進化しており、新しい制約（例: implement フェーズの必須化、判定値の3値化、5行契約など）が追加されている。 - レガシー仕様の腐敗: 過去に作成された OpenSpec ファイルは、最新の openspec compiler ではエラーになるか、現在のベストプラクティス（より安全な遷移設計など）から乖離している。 - 仕様間の「ズレ」: proposal を修正した際に tasks や spec.md への反映を忘れるなど、ファイル間での論理的不整合が手動メンテナンスでは発生しやすい。 - AIによる再構築の必要性: 機械的な置換ではなく、最新の知能（Codex）を使って仕様全体を「今の正解」で再設計（Re-design）する手段が求められている。 2. 目的 (Goals) 1. 最新基準への適合: 古い仕様を、最新のコンパイラやオーケストレーターが100%受理できる形式に自動アップグレードする。 2. 論理整合性の確保: proposal, design, tasks, spec 間の矛盾を AI の判断で解消し、全体として一貫した仕様セットを作る。 3. フィードバックの反映: レビュー指摘（Feedback）を元に、関連する全ファイルを AI が一括で整合させながら修正する。 --- 3. 機能仕様 (Detailed Requirements) 3.1 実行インターフェース - コマンド: agent-dock spec-creator polish <change_id> [--feedback \"指示内容\"] - 対象: openspec/changes/<change_id>/ 配下の全 .md ファイル。 3.2 処理プロセス（Codex による再設計フロー） 1. 情報の集約 (Context Collection): - フォルダ内の全ファイル（Proposal, Design, Tasks, Code Summary, Specs）を読み込み、一つの「巨大な既存仕様コンテキスト」として結合する。 2. 最新基準（Architect Prompt）の注入: - 既存の Spec Creator が持つ「最新の Agent Dock 標準（正解の姿）」をシステム指示として与える。 - 指示例：「以下の古い仕様を、最新の 5行契約、判定3値化、および implement フェーズ必須化のルールに照らして、全体を再設計せよ」。 3. Codex による横断的判断 (Judgement): - AI は各ファイルをバラバラに直すのではなく、全体を一つの設計図として解釈する。 - 判断例: 「Proposal に新しい要件が増えたなら、Design の決定事項を更新し、Tasks に実装タスクを追加し、Spec.md に検証シナリオを書き加える」という連鎖的な修正を AI の判断で行う。 4. 全ファイルの一括生成 (Regeneration): - AI は「修正が必要なファイル全ての完成形」を出力する。 5. 上書きと自動検証: - 生成された内容で既存ファイルを直接上書きする。 - 直後に openspec compiler を内部で実行し、修正後の仕様が最新ルールをパスするか客観的に検証する。 --- 4. 修正・適用の具体基準 (Standards) AI は以下の「現在の正解」を絶対基準として Polish を行います。 - フェーズ構成: implement フェーズが必ず存在し、適切な担当者が割り当てられていること。 - 出力契約: 判定フェーズ（review/spec_check/test）が 5行契約（JUDGMENT 必須）になっていること。 - 判定値: pass | changes_required | blocked の 3値に正規化されていること。 - 空表現: CHANGED_FILES の変更なしが (none) と記述されていること。 - 論理経路: 「コンパイルエラー」と「実行時エラー」の使い分けなど、システム的な矛盾がないこと。 --- 5. 設計方針 (Architecture Policy) - 既存ルートへの合流: 新規作成（create）と Polish（修正）で「何が正しい仕様か」の判断基準（プロンプト）を共通化する。 - AI の主導権: 機械的な検索置換は行わず、常に Codex に「全体としての妥当性」を判断させる。 - 非破壊的な追加: 存在しないファイル（例: design.md）があれば、既存の文脈から AI が推論して新規作成する。 --- 6. 実装タスクの優先順位 1. 既存仕様スキャナーの実装: 指定された change_id から md ファイル群を収集する機能。 2. Polish 専用プロンプト構築: 既存ファイル群 ＋ 最新基準 ＋ ユーザーフィードバックを結合するロジック。 3. SpecCreator クラスの拡張: polish メソッドを追加し、Codex からのマルチファイル出力をパースする機能。 4. CLI との配線: spec-creator polish コマンドの実装。 5. バリデーター連携: 生成後の自動コンパイルチェックの実装。\n- language: ja\n- runtime_stack: typescript (TypeScript-only runtime, use src/**/*.ts)\n- active_personas: spec-planner, spec-reviewer, spec-code-creator",
+      "target_paths": [
+        "openspec/changes/add-spec-creator-polish-auto-remaster/proposal.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/tasks.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/design.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/code_summary.md",
+        "openspec/changes/add-spec-creator-polish-auto-remaster/specs/add-spec-creator-polish-auto-remaster/spec.md"
+      ],
+      "depends_on": [
+        "1.6"
+      ],
+      "requires_plan": false,
+      "persona_policy": {
+        "phase_order": [
+          "implement"
+        ],
+        "phase_overrides": {
+          "implement": {
+            "active_personas": [
+              "spec-reviewer"
+            ],
+            "executor_personas": [
+              "spec-reviewer"
+            ],
+            "state_transition_personas": [
+              "spec-reviewer"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "meta": {
+    "source_change_id": "add-spec-creator-polish-auto-remaster",
+    "generated_by": "spec-creator-preprocess",
+    "spec_context": {
+      "requirements_text": "仕様書：Spec Creator Polish (仕様の自動リマスター機能)\n\n\n  1. 背景と経緯 (Background)\n   - Agent Dockの進化: agent-dock のランタイムやコンパイラは日々進化しており、新しい制約（例: implement フェーズの必須化、判定値の3値化、5行契約など）が追加されている。\n   - レガシー仕様の腐敗: 過去に作成された OpenSpec ファイルは、最新の openspec compiler ではエラーになるか、現在のベストプラクティス（より安全な遷移設計など）から乖離している。\n   - 仕様間の「ズレ」: proposal を修正した際に tasks や spec.md への反映を忘れるなど、ファイル間での論理的不整合が手動メンテナンスでは発生しやすい。\n   - AIによる再構築の必要性: 機械的な置換ではなく、最新の知能（Codex）を使って仕様全体を「今の正解」で再設計（Re-design）する手段が求められている。\n\n\n  2. 目的 (Goals)\n   1. 最新基準への適合: 古い仕様を、最新のコンパイラやオーケストレーターが100%受理できる形式に自動アップグレードする。\n   2. 論理整合性の確保: proposal, design, tasks, spec 間の矛盾を AI の判断で解消し、全体として一貫した仕様セットを作る。\n   3. フィードバックの反映: レビュー指摘（Feedback）を元に、関連する全ファイルを AI が一括で整合させながら修正する。\n\n  ---\n\n  3. 機能仕様 (Detailed Requirements)\n\n\n  3.1 実行インターフェース\n   - コマンド: agent-dock spec-creator polish <change_id> [--feedback \"指示内容\"]\n   - 対象: openspec/changes/<change_id>/ 配下の全 .md ファイル。\n\n\n  3.2 処理プロセス（Codex による再設計フロー）\n   1. 情報の集約 (Context Collection):\n       - フォルダ内の全ファイル（Proposal, Design, Tasks, Code Summary, Specs）を読み込み、一つの「巨大な既存仕様コンテキスト」として結合する。\n   2. 最新基準（Architect Prompt）の注入:\n       - 既存の Spec Creator が持つ「最新の Agent Dock 標準（正解の姿）」をシステム指示として与える。\n       - 指示例：「以下の古い仕様を、最新の 5行契約、判定3値化、および implement フェーズ必須化のルールに照らして、全体を再設計せよ」。\n   3. Codex による横断的判断 (Judgement):\n       - AI は各ファイルをバラバラに直すのではなく、全体を一つの設計図として解釈する。\n       - 判断例: 「Proposal に新しい要件が増えたなら、Design の決定事項を更新し、Tasks に実装タスクを追加し、Spec.md に検証シナリオを書き加える」という連鎖的な修正を AI\n         の判断で行う。\n   4. 全ファイルの一括生成 (Regeneration):\n       - AI は「修正が必要なファイル全ての完成形」を出力する。\n   5. 上書きと自動検証:\n       - 生成された内容で既存ファイルを直接上書きする。\n       - 直後に openspec compiler を内部で実行し、修正後の仕様が最新ルールをパスするか客観的に検証する。\n\n  ---\n\n  4. 修正・適用の具体基準 (Standards)\n\n\n  AI は以下の「現在の正解」を絶対基準として Polish を行います。\n\n\n   - フェーズ構成: implement フェーズが必ず存在し、適切な担当者が割り当てられていること。\n   - 出力契約: 判定フェーズ（review/spec_check/test）が 5行契約（JUDGMENT 必須）になっていること。\n   - 判定値: pass | changes_required | blocked の 3値に正規化されていること。\n   - 空表現: CHANGED_FILES の変更なしが (none) と記述されていること。\n   - 論理経路: 「コンパイルエラー」と「実行時エラー」の使い分けなど、システム的な矛盾がないこと。\n\n  ---\n\n\n  5. 設計方針 (Architecture Policy)\n   - 既存ルートへの合流: 新規作成（create）と Polish（修正）で「何が正しい仕様か」の判断基準（プロンプト）を共通化する。\n   - AI の主導権: 機械的な検索置換は行わず、常に Codex に「全体としての妥当性」を判断させる。\n   - 非破壊的な追加: 存在しないファイル（例: design.md）があれば、既存の文脈から AI が推論して新規作成する。\n\n  ---\n\n\n  6. 実装タスクの優先順位\n   1. 既存仕様スキャナーの実装: 指定された change_id から md ファイル群を収集する機能。\n   2. Polish 専用プロンプト構築: 既存ファイル群 ＋ 最新基準 ＋ ユーザーフィードバックを結合するロジック。\n   3. SpecCreator クラスの拡張: polish メソッドを追加し、Codex からのマルチファイル出力をパースする機能。\n   4. CLI との配線: spec-creator polish コマンドの実装。\n   5. バリデーター連携: 生成後の自動コンパイルチェックの実装。",
+      "language": "ja",
+      "runtime_stack": "typescript",
+      "persona_policy": {
+        "active_personas": [
+          "spec-planner",
+          "spec-reviewer",
+          "spec-code-creator"
+        ]
+      }
+    }
+  }
+}

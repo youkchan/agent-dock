@@ -59,6 +59,7 @@ Deno.test("compileChangeToConfig parses tasks markdown", () => {
         "- [ ] T-002 実装する",
         "  - 依存: T-001",
         "  - 対象: src/runtime/orchestrator.ts, src/runtime/store.ts",
+        "  - 関連許可: src/runtime/orchestrator_test.ts",
         "  - フェーズ担当: implement=implementer",
         "## 2. 検証項目",
         "- [x] `deno test src --allow-read --allow-write --allow-run --allow-env` が通る",
@@ -80,6 +81,9 @@ Deno.test("compileChangeToConfig parses tasks markdown", () => {
     assertDeepEqual(tasks[1].target_paths, [
       "src/runtime/orchestrator.ts",
       "src/runtime/store.ts",
+    ]);
+    assertDeepEqual(tasks[1].related_paths, [
+      "src/runtime/orchestrator_test.ts",
     ]);
 
     const meta = compiled.meta as Record<string, unknown>;
@@ -198,6 +202,8 @@ Deno.test("compileChangeToConfig applies override yaml", () => {
         "  T-002:",
         "    target_paths:",
         "      - src/b-override.ts",
+        "    related_paths:",
+        "      - src/b-override_test.ts",
         "    max_revision_cycles: 7",
       ].join("\n"),
     );
@@ -212,6 +218,7 @@ Deno.test("compileChangeToConfig applies override yaml", () => {
     const byId = new Map(tasks.map((task) => [String(task.id), task]));
     assertDeepEqual(byId.get("T-002")?.requires_plan, true);
     assertDeepEqual(byId.get("T-002")?.target_paths, ["src/b-override.ts"]);
+    assertDeepEqual(byId.get("T-002")?.related_paths, ["src/b-override_test.ts"]);
     assertDeepEqual(byId.get("T-002")?.max_revision_cycles, 7);
   });
 });

@@ -40,6 +40,28 @@ function withTempDir(fn: (root: string) => void): void {
   }
 }
 
+function fileExists(filePath: string): boolean {
+  try {
+    return Deno.statSync(filePath).isFile;
+  } catch {
+    return false;
+  }
+}
+
+function uniqueChangeId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+}
+
+function withTemporaryChangeDir(changeId: string, fn: () => void): void {
+  const dirPath = `openspec/changes/${changeId}`;
+  Deno.mkdirSync(dirPath, { recursive: true });
+  try {
+    fn();
+  } finally {
+    Deno.removeSync(dirPath, { recursive: true });
+  }
+}
+
 function withEnv(name: string, value: string, run: () => void): void {
   const original = Deno.env.get(name);
   Deno.env.set(name, value);
@@ -1170,6 +1192,139 @@ Deno.test("main spec-creator rejects duplicate --persona-dir", () => {
     }
     if (!buffer.state.stderr.includes("can only be used once")) {
       throw new Error(`stderr should include duplication error: ${buffer.state.stderr}`);
+    }
+  });
+});
+
+Deno.test("main spec-creator rejects unknown subcommand", () => {
+  const buffer = createIoBuffer();
+  const exitCode = main(["spec-creator", "unknown-subcommand"], buffer.io);
+  if (exitCode !== 1) {
+    throw new Error("spec-creator should reject unknown subcommand");
+  }
+  if (!buffer.state.stderr.includes("unrecognized spec-creator subcommand")) {
+    throw new Error(`stderr should include subcommand error: ${buffer.state.stderr}`);
+  }
+});
+
+Deno.test("main spec-creator polish requires positional change_id", () => {
+  const buffer = createIoBuffer();
+  const exitCode = main(["spec-creator", "polish"], buffer.io);
+  if (exitCode !== 1) {
+    throw new Error("spec-creator polish should require change_id");
+  }
+  if (!buffer.state.stderr.includes("requires positional <change_id>")) {
+    throw new Error(`stderr should include missing change_id error: ${buffer.state.stderr}`);
+  }
+});
+
+Deno.test("main spec-creator polish uses existing markdown context without interactive TTY", () => {
+  const changeId = uniqueChangeId("update-polish-context");
+  const changeDir = `openspec/changes/${changeId}`;
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  Deno.mkdirSync(changeDir, { recursive: true });
+  Deno.writeTextFileSync(
+    `${changeDir}/README.md`,
+    "# polish context\n- this file is used as source markdown context\n",
+  );
+
+  try {
+    const buffer = createIoBuffer();
+    const exitCode = main([
+      "spec-creator",
+      "polish",
+      changeId,
+      "--no-run",
+      "--output",
+      outputPath,
+    ], buffer.io);
+
+    if (exitCode !== 0) {
+      throw new Error(`spec-creator polish should succeed: ${buffer.state.stderr}`);
+    }
+    if (buffer.state.stderr.includes("interactive TTY")) {
+      throw new Error(`polish should not require interactive TTY: ${buffer.state.stderr}`);
+    }
+    if (!fileExists(outputPath)) {
+      throw new Error("spec-creator polish should produce task_config output");
+    }
+  } finally {
+    try {
+      Deno.removeSync(changeDir, { recursive: true });
+    } catch {
+      // noop
+    }
+    try {
+      Deno.removeSync(outputPath);
+    } catch {
+      // noop
+    }
+  }
+});
+
+Deno.test("main spec-creator polish --no-run still requires strict validate", () => {
+  const changeId = uniqueChangeId("update-polish-no-run-validate");
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  withTemporaryChangeDir(changeId, () => {
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/README.md`,
+      "# polish context\n- markdown source\n",
+    );
+    const buffer = createIoBuffer();
+    withEnv("PATH", "", () => {
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        changeId,
+        "--no-run",
+        "--output",
+        outputPath,
+      ], buffer.io);
+      if (exitCode !== 1) {
+        throw new Error("spec-creator polish --no-run should fail when strict validate cannot run");
+      }
+    });
+    if (!buffer.state.stderr.includes("openspec")) {
+      throw new Error(`stderr should include openspec validate failure: ${buffer.state.stderr}`);
+    }
+    if (fileExists(outputPath)) {
+      throw new Error("output should not be committed when staged validate fails");
+    }
+  });
+});
+
+Deno.test("main spec-creator polish requires existing change directory", () => {
+  const buffer = createIoBuffer();
+  const missingChangeId = uniqueChangeId("update-spec-creator");
+  const exitCode = main(
+    ["spec-creator", "polish", missingChangeId],
+    buffer.io,
+  );
+  if (exitCode !== 1) {
+    throw new Error("spec-creator polish should fail for missing change directory");
+  }
+  if (!buffer.state.stderr.includes("requires existing change_id directory")) {
+    throw new Error(
+      `stderr should include missing change directory error: ${buffer.state.stderr}`,
+    );
+  }
+});
+
+Deno.test("main spec-creator legacy create rejects existing change_id", () => {
+  const existingChangeId = uniqueChangeId("update-spec-creator");
+  withTemporaryChangeDir(existingChangeId, () => {
+    const buffer = createIoBuffer();
+    const exitCode = main(
+      ["spec-creator", "--change-id", existingChangeId],
+      buffer.io,
+    );
+    if (exitCode !== 1) {
+      throw new Error("spec-creator should fail when change directory already exists");
+    }
+    if (!buffer.state.stderr.includes("requires non-existing change_id")) {
+      throw new Error(
+        `stderr should include existing change directory error: ${buffer.state.stderr}`,
+      );
     }
   });
 });

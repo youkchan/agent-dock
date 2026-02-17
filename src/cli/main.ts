@@ -8,7 +8,10 @@ import {
   type TeammateAdapter,
 } from "../application/orchestrator/orchestrator.ts";
 import {
+  buildSpecCreatorTaskConfig,
   collectSpecContextInteractive,
+  normalizeChangeId,
+  type SpecCreatorLanguage,
   type SpecContext,
   type SpecCreatorTaskConfig,
 } from "../application/spec_creator/preprocess.ts";
@@ -41,6 +44,7 @@ import {
   writeCompiledConfig,
 } from "../infrastructure/openspec/compiler.ts";
 import {
+  collectChangeFilesRecursively,
   writeCodeSummaryMarkdown,
   writeDeltaSpecMarkdown,
   writeProposalMarkdown,
@@ -96,6 +100,16 @@ interface SpecCreatorPreprocessArgs {
 
 interface SpecCreatorArgs {
   changeId: string | null;
+  output: string | null;
+  noRun: boolean;
+  stateDir: string | null;
+  resume: boolean;
+  personaDir: string | null;
+}
+
+interface SpecCreatorPolishArgs {
+  changeId: string;
+  feedback: string | null;
   output: string | null;
   noRun: boolean;
   stateDir: string | null;
@@ -177,7 +191,12 @@ const SPEC_CREATOR_PREPROCESS_USAGE = [
 ].join("\n");
 
 const SPEC_CREATOR_USAGE = [
-  "usage: spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--persona-dir DIR]",
+  "usage: spec-creator polish <change_id> [--feedback TEXT] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--persona-dir DIR]",
+  "       spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--persona-dir DIR]  (deprecated)",
+].join("\n");
+
+const SPEC_CREATOR_POLISH_USAGE = [
+  "usage: spec-creator polish <change_id> [--feedback TEXT] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--persona-dir DIR]",
 ].join("\n");
 
 const DEFAULT_WRAPPER_RUNTIME = "ts";
@@ -574,6 +593,69 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
   return parsed;
 }
 
+function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
+  if (argv.includes("-h") || argv.includes("--help")) {
+    throw new HelpRequestedError(SPEC_CREATOR_POLISH_USAGE);
+  }
+  if (argv.length === 0 || argv[0].startsWith("--")) {
+    throw new Error(
+      "spec-creator polish requires positional <change_id> (fail-closed)",
+    );
+  }
+
+  const parsed: SpecCreatorPolishArgs = {
+    changeId: normalizeChangeId(argv[0]),
+    feedback: null,
+    output: null,
+    noRun: false,
+    stateDir: null,
+    resume: false,
+    personaDir: null,
+  };
+
+  for (let index = 1; index < argv.length; index += 1) {
+    const arg = argv[index];
+    const next = argv[index + 1];
+
+    if (arg === "--feedback") {
+      parsed.feedback = parseSingleArgValue("--feedback", parsed.feedback, next);
+      index += 1;
+      continue;
+    }
+    if (arg === "--output") {
+      parsed.output = requireOptionValue(arg, next);
+      index += 1;
+      continue;
+    }
+    if (arg === "--state-dir") {
+      parsed.stateDir = requireOptionValue(arg, next);
+      index += 1;
+      continue;
+    }
+    if (arg === "--persona-dir") {
+      parsed.personaDir = parseSingleArgValue(
+        "--persona-dir",
+        parsed.personaDir,
+        next,
+      );
+      index += 1;
+      continue;
+    }
+    if (arg === "--no-run") {
+      parsed.noRun = true;
+      continue;
+    }
+    if (arg === "--resume") {
+      parsed.resume = true;
+      continue;
+    }
+
+    throw new Error(`unrecognized argument: ${arg}`);
+  }
+
+  return parsed;
+}
+
 function parseRunArgs(argv: string[]): RunArgs {
   if (argv.includes("-h") || argv.includes("--help")) {
     throw new HelpRequestedError(RUN_USAGE);
@@ -829,6 +911,9 @@ function printTemplateCommand(argv: string[], io: CliIO): number {
 
 function specCreatorPreprocessCommand(argv: string[], io: CliIO): number {
   const args = parseSpecCreatorPreprocessArgs(argv);
+  if (args.changeId !== null) {
+    assertSpecCreatorChangeDirAbsent(args.changeId, "spec-creator-preprocess");
+  }
   const context = collectSpecContextInteractive({
     changeId: args.changeId,
   });
@@ -864,92 +949,266 @@ const SPEC_CREATOR_FORBIDDEN_COMMAND_EXEMPT_CONTEXT_PATTERNS = [
 ] as const;
 
 function specCreatorCommand(argv: string[], io: CliIO): number {
+  const subcommand = argv[0] ?? "";
+  if (subcommand === "polish") {
+    return specCreatorPolishCommand(argv.slice(1), io);
+  }
+  if (subcommand.length > 0 && !subcommand.startsWith("--")) {
+    throw new Error(
+      `unrecognized spec-creator subcommand: ${subcommand} (supported: polish)`,
+    );
+  }
+
+  const hasHelpFlag = argv.includes("-h") || argv.includes("--help");
+  if (!hasHelpFlag) {
+    io.stderr(
+      "[spec-creator] legacy direct mode is deprecated; use `spec-creator polish <change_id>`.\n",
+    );
+  }
   const args = parseSpecCreatorArgs(argv);
+  if (args.changeId !== null) {
+    assertSpecCreatorChangeDirAbsent(args.changeId, "spec-creator");
+  }
   const context = collectSpecContextInteractive({
     changeId: args.changeId,
   });
+  assertSpecCreatorChangeDirAbsent(context.change_id, "spec-creator");
+  return runSpecCreatorWorkflow(args, context, io);
+}
+
+function specCreatorPolishCommand(argv: string[], io: CliIO): number {
+  const args = parseSpecCreatorPolishArgs(argv);
+  assertSpecCreatorChangeDirPresent(args.changeId, "spec-creator polish");
+  const context = buildSpecCreatorPolishContextFromMarkdown(
+    args.changeId,
+    args.feedback,
+  );
+  return runSpecCreatorWorkflow(args, context, io);
+}
+
+function resolveSpecCreatorChangeDir(changeId: string): string {
+  return path.resolve("openspec", "changes", changeId);
+}
+
+function assertSpecCreatorChangeDirPresent(
+  changeId: string,
+  commandLabel: string,
+): void {
+  const changeDir = resolveSpecCreatorChangeDir(changeId);
+  if (!isDirectory(changeDir)) {
+    throw new Error(
+      `${commandLabel} requires existing change_id directory: ${changeId}`,
+    );
+  }
+}
+
+function assertSpecCreatorChangeDirAbsent(
+  changeId: string,
+  commandLabel: string,
+): void {
+  const changeDir = resolveSpecCreatorChangeDir(changeId);
+  if (isDirectory(changeDir)) {
+    throw new Error(
+      `${commandLabel} requires non-existing change_id: ${changeId}`,
+    );
+  }
+}
+
+const SPEC_CREATOR_POLISH_ACTIVE_PERSONAS = [
+  "spec-planner",
+  "spec-reviewer",
+  "spec-code-creator",
+];
+
+function buildSpecCreatorPolishContextFromMarkdown(
+  changeId: string,
+  feedbackRaw: string | null,
+): SpecCreatorContextPayload {
+  const changeDir = resolveSpecCreatorChangeDir(changeId);
+  const queue = collectChangeFilesRecursively(changeDir);
+  if (queue.markdownFiles.length === 0) {
+    throw new Error(
+      `spec-creator polish requires at least one markdown file under openspec/changes/${changeId}`,
+    );
+  }
+
+  const markdownContexts = queue.markdownFiles
+    .map((filePath) => {
+      const content = Deno.readTextFileSync(filePath).trim();
+      const relPath = path.relative(Deno.cwd(), filePath) || filePath;
+      return `### ${relPath}\n${content}`;
+    });
+  const requirementsText = [
+    `polish target: ${changeId}`,
+    "source_markdown_context:",
+    markdownContexts.join("\n\n"),
+  ].join("\n\n");
+  const feedback = feedbackRaw?.trim() ?? "";
+  const combinedRequirements = feedback.length > 0
+    ? `${requirementsText}\n\nfeedback: ${feedback}`
+    : requirementsText;
+  const language = detectSpecCreatorLanguage(markdownContexts.join("\n"));
+  const specContext: SpecContext = {
+    requirements_text: combinedRequirements,
+    language,
+    runtime_stack: "typescript",
+    persona_policy: {
+      active_personas: [...SPEC_CREATOR_POLISH_ACTIVE_PERSONAS],
+    },
+  };
+
+  return {
+    change_id: changeId,
+    spec_context: specContext,
+    task_config: buildSpecCreatorTaskConfig(changeId, specContext),
+  };
+}
+
+function detectSpecCreatorLanguage(raw: string): SpecCreatorLanguage {
+  return /[\u3040-\u30ff\u4e00-\u9faf]/u.test(raw) ? "ja" : "en";
+}
+
+function runSpecCreatorWorkflow(
+  args: {
+    output: string | null;
+    noRun: boolean;
+    stateDir: string | null;
+    resume: boolean;
+    personaDir: string | null;
+  },
+  context: SpecCreatorContextPayload,
+  io: CliIO,
+): number {
   const paths = resolveSpecCreatorArtifactPaths(context.change_id);
   const outputPath = path.resolve(
     args.output ?? defaultSpecCreatorOutputPath(context.change_id),
   );
-  writeSpecCreatorArtifacts({ context, paths, outputPath });
-  assertNoForbiddenSpecCreatorCommands(paths, "post-generate");
-  io.stdout(`[spec-creator] wrote ${paths.proposalPath}\n`);
-  io.stdout(`[spec-creator] wrote ${paths.tasksPath}\n`);
-  io.stdout(`[spec-creator] wrote ${paths.designPath}\n`);
-  io.stdout(`[spec-creator] wrote ${paths.codeSummaryPath}\n`);
-  io.stdout(`[spec-creator] wrote ${paths.deltaSpecPath}\n`);
-  io.stdout(`[spec-creator] wrote ${outputPath}\n`);
+  const artifactSnapshotBeforeWorkflow = snapshotArtifactContents(paths);
+  const outputSnapshotBeforeWorkflow = readArtifactContentOrNull(outputPath);
+  const stagingRoot = Deno.makeTempDirSync({
+    prefix: `spec_creator_stage_${context.change_id}_`,
+  });
+  const stagedPaths = toStagedArtifactPaths(paths, stagingRoot);
+  const stagedOutputPath = resolveStagedOutputPath(outputPath, stagingRoot);
 
-  if (args.noRun) {
-    assertSpecCreatorSemanticContracts(paths, "post-generate");
-    return 0;
-  }
-
-  const stateDir = args.stateDir
-    ? path.resolve(args.stateDir)
-    : path.resolve(defaultSpecCreatorStateDir(context.change_id));
-
-  const maxQualityRetriesRaw = safeIntEnv("SPEC_CREATOR_QUALITY_MAX_RETRIES", 1);
-  const maxQualityRetries = Math.max(0, Math.min(3, maxQualityRetriesRaw));
-  let attempt = 0;
-  while (true) {
-    const preRunViolations = collectSpecCreatorQualityViolations(paths);
-    if (preRunViolations.length > 0) {
-      const issues = formatSpecCreatorQualityIssues(preRunViolations);
-      Deno.env.set("SPEC_CREATOR_QUALITY_ISSUES", issues);
-      io.stdout(
-        `[spec-creator] quality_preflight_issues=${preRunViolations.length} attempt=${attempt}\n`,
-      );
-    } else {
-      Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
+  try {
+    prepareSpecCreatorStagingWorkspace(stagingRoot);
+    writeSpecCreatorArtifacts({
+      context,
+      paths: stagedPaths,
+      outputPath: stagedOutputPath,
+    });
+    assertNoForbiddenSpecCreatorCommands(stagedPaths, "post-generate");
+    assertSpecCreatorSemanticContracts(stagedPaths, "post-generate");
+    runStagedStrictValidate(context.change_id, stagingRoot);
+    for (const artifactPath of listSpecCreatorArtifactPaths(paths)) {
+      io.stdout(`[spec-creator] wrote ${artifactPath}\n`);
     }
+    io.stdout(`[spec-creator] wrote ${outputPath}\n`);
 
-    const runArgs = [
-      "--config",
-      outputPath,
-      "--state-dir",
-      stateDir,
-      ...(args.resume ? ["--resume"] : []),
-      ...(args.personaDir ? ["--persona-dir", args.personaDir] : []),
-    ];
-    const runArgsForLog = [
-      `--config ${outputPath}`,
-      `--state-dir ${stateDir}`,
-      ...(args.resume ? ["--resume"] : []),
-      ...(args.personaDir ? [`--persona-dir ${args.personaDir}`] : []),
-    ];
-    io.stdout(`[spec-creator] run ${runArgsForLog.join(" ")}\n`);
-    const runExitCode = runCommand(runArgs, io);
-    Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
-    if (runExitCode !== 0) {
-      return runExitCode;
-    }
-
-    try {
-      assertNoForbiddenSpecCreatorCommands(paths, "post-run");
-      assertSpecCreatorSemanticContracts(paths, "post-run");
+    if (args.noRun) {
+      applyStagedArtifactsAtomically({
+        stagingRoot,
+        stagedPaths,
+        targetPaths: paths,
+        stagedOutputPath,
+        outputPath,
+        artifactSnapshotBeforeWorkflow,
+        outputSnapshotBeforeWorkflow,
+      });
       return 0;
-    } catch (error) {
-      if (attempt >= maxQualityRetries) {
-        throw error;
-      }
-      attempt += 1;
-      const reason = error instanceof Error ? error.message : String(error);
-      io.stdout(
-        `[spec-creator] quality_retry=${attempt}/${maxQualityRetries} reason=${reason}\n`,
-      );
     }
+
+    const stateDir = args.stateDir
+      ? path.resolve(args.stateDir)
+      : path.resolve(defaultSpecCreatorStateDir(context.change_id));
+
+    const maxQualityRetriesRaw = safeIntEnv("SPEC_CREATOR_QUALITY_MAX_RETRIES", 1);
+    const maxQualityRetries = Math.max(0, Math.min(3, maxQualityRetriesRaw));
+    let attempt = 0;
+    while (true) {
+      const preRunViolations = collectSpecCreatorQualityViolations(stagedPaths);
+      if (preRunViolations.length > 0) {
+        const issues = formatSpecCreatorQualityIssues(preRunViolations);
+        Deno.env.set("SPEC_CREATOR_QUALITY_ISSUES", issues);
+        io.stdout(
+          `[spec-creator] quality_preflight_issues=${preRunViolations.length} attempt=${attempt}\n`,
+        );
+      } else {
+        Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
+      }
+
+      const runArgs = [
+        "--config",
+        stagedOutputPath,
+        "--state-dir",
+        stateDir,
+        ...(args.resume ? ["--resume"] : []),
+        ...(args.personaDir ? ["--persona-dir", args.personaDir] : []),
+      ];
+      const runArgsForLog = [
+        `--config ${stagedOutputPath}`,
+        `--state-dir ${stateDir}`,
+        ...(args.resume ? ["--resume"] : []),
+        ...(args.personaDir ? [`--persona-dir ${args.personaDir}`] : []),
+      ];
+      const artifactSnapshotBeforeRun = snapshotArtifactContents(stagedPaths);
+      io.stdout(`[spec-creator] run ${runArgsForLog.join(" ")}\n`);
+      const runExitCode = runWithCurrentDirectory(stagingRoot, () =>
+        runCommand(runArgs, io)
+      );
+      Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
+      if (runExitCode !== 0) {
+        return runExitCode;
+      }
+
+      try {
+        assertNoForbiddenSpecCreatorCommands(stagedPaths, "post-run");
+        assertSpecCreatorSemanticContracts(stagedPaths, "post-run");
+        const artifactSnapshotAfterRun = snapshotArtifactContents(stagedPaths);
+        if (
+          didArtifactContentsChange(
+            artifactSnapshotBeforeRun,
+            artifactSnapshotAfterRun,
+          )
+        ) {
+          runSpecCreatorPostAuditGate(context.change_id, io, stagingRoot);
+        }
+        applyStagedArtifactsAtomically({
+          stagingRoot,
+          stagedPaths,
+          targetPaths: paths,
+          stagedOutputPath,
+          outputPath,
+          artifactSnapshotBeforeWorkflow,
+          outputSnapshotBeforeWorkflow,
+        });
+        return 0;
+      } catch (error) {
+        if (attempt >= maxQualityRetries) {
+          throw error;
+        }
+        attempt += 1;
+        const reason = error instanceof Error ? error.message : String(error);
+        io.stdout(
+          `[spec-creator] quality_retry=${attempt}/${maxQualityRetries} reason=${reason}\n`,
+        );
+      }
+    }
+  } finally {
+    Deno.removeSync(stagingRoot, { recursive: true });
   }
 }
 
 interface SpecCreatorArtifactPaths {
+  changeId: string;
   changeDir: string;
   proposalPath: string;
   tasksPath: string;
   designPath: string;
   codeSummaryPath: string;
   deltaSpecPath: string;
+  deltaSpecPaths: string[];
 }
 
 interface SpecCreatorContextPayload {
@@ -960,13 +1219,16 @@ interface SpecCreatorContextPayload {
 
 function resolveSpecCreatorArtifactPaths(changeId: string): SpecCreatorArtifactPaths {
   const changeDir = path.resolve("openspec", "changes", changeId);
+  const deltaSpecPaths = collectDeltaSpecPaths(changeDir, changeId);
   return {
+    changeId,
     changeDir,
     proposalPath: path.join(changeDir, "proposal.md"),
     tasksPath: path.join(changeDir, "tasks.md"),
     designPath: path.join(changeDir, "design.md"),
     codeSummaryPath: path.join(changeDir, "code_summary.md"),
-    deltaSpecPath: path.join(changeDir, "specs", changeId, "spec.md"),
+    deltaSpecPath: deltaSpecPaths[0],
+    deltaSpecPaths,
   };
 }
 
@@ -1016,28 +1278,317 @@ function writeSpecCreatorArtifacts(
     tasksPath: paths.tasksPath,
     outputPath: paths.codeSummaryPath,
   });
-  writeDesignMarkdownStub({
-    designPath: paths.designPath,
-    lang,
-  });
-  writeDeltaSpecMarkdown({
-    specPath: paths.deltaSpecPath,
-    lang,
-    requirementName: `${context.change_id} generated baseline`,
-    requirementsText: context.spec_context.requirements_text,
-  });
+  if (shouldGenerateDesignMarkdown(context) && !isFile(paths.designPath)) {
+    writeDesignMarkdownStub({
+      designPath: paths.designPath,
+      lang,
+    });
+  }
+  for (const deltaSpecPath of paths.deltaSpecPaths) {
+    writeDeltaSpecMarkdown({
+      specPath: deltaSpecPath,
+      lang,
+      requirementName: `${context.change_id} generated baseline`,
+      requirementsText: context.spec_context.requirements_text,
+    });
+  }
 
   writeTaskConfigFile(context.task_config, outputPath);
 }
 
 function listSpecCreatorArtifactPaths(paths: SpecCreatorArtifactPaths): string[] {
-  return [
+  const ordered = [
     paths.proposalPath,
     paths.tasksPath,
-    paths.designPath,
     paths.codeSummaryPath,
-    paths.deltaSpecPath,
+    ...(isFile(paths.designPath) ? [paths.designPath] : []),
+    ...collectDeltaSpecPaths(paths.changeDir, paths.changeId),
   ];
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const artifactPath of ordered) {
+    if (seen.has(artifactPath)) {
+      continue;
+    }
+    seen.add(artifactPath);
+    unique.push(artifactPath);
+  }
+  return unique;
+}
+
+function shouldGenerateDesignMarkdown(
+  context: SpecCreatorContextPayload,
+): boolean {
+  const requirements = context.spec_context.requirements_text;
+  return /設計|design|architecture|アーキテクチャ|migration|移行|trade[\s-]?off|トレードオフ/iu
+    .test(requirements);
+}
+
+function collectDeltaSpecPaths(changeDir: string, changeId: string): string[] {
+  const specsRoot = path.join(changeDir, "specs");
+  const discovered: string[] = [];
+  if (isDirectory(specsRoot)) {
+    walkSpecFiles(specsRoot, discovered);
+  }
+  discovered.sort((left, right) => left.localeCompare(right));
+  if (discovered.length > 0) {
+    return discovered;
+  }
+  return [path.join(specsRoot, changeId, "spec.md")];
+}
+
+function walkSpecFiles(root: string, output: string[]): void {
+  for (const entry of Deno.readDirSync(root)) {
+    const target = path.join(root, entry.name);
+    if (entry.isDirectory) {
+      walkSpecFiles(target, output);
+      continue;
+    }
+    if (!entry.isFile) {
+      continue;
+    }
+    if (entry.name !== "spec.md") {
+      continue;
+    }
+    output.push(target);
+  }
+}
+
+function toStagedArtifactPaths(
+  paths: SpecCreatorArtifactPaths,
+  stagingRoot: string,
+): SpecCreatorArtifactPaths {
+  const deltaSpecPaths = paths.deltaSpecPaths.map((item) =>
+    mapPathToStagingWorkspace(item, stagingRoot)
+  );
+  return {
+    changeId: paths.changeId,
+    changeDir: mapPathToStagingWorkspace(paths.changeDir, stagingRoot),
+    proposalPath: mapPathToStagingWorkspace(paths.proposalPath, stagingRoot),
+    tasksPath: mapPathToStagingWorkspace(paths.tasksPath, stagingRoot),
+    designPath: mapPathToStagingWorkspace(paths.designPath, stagingRoot),
+    codeSummaryPath: mapPathToStagingWorkspace(paths.codeSummaryPath, stagingRoot),
+    deltaSpecPath: mapPathToStagingWorkspace(paths.deltaSpecPath, stagingRoot),
+    deltaSpecPaths,
+  };
+}
+
+function mapPathToStagingWorkspace(absolutePath: string, stagingRoot: string): string {
+  const resolved = path.resolve(absolutePath);
+  const relative = path.relative(Deno.cwd(), resolved);
+  if (
+    relative.length === 0 || relative === "." ||
+    relative.startsWith("..") || path.isAbsolute(relative)
+  ) {
+    throw new Error(`staging path must stay in workspace: ${absolutePath}`);
+  }
+  return path.join(stagingRoot, relative);
+}
+
+function mapPathFromStagingWorkspace(stagedPath: string, stagingRoot: string): string {
+  const resolved = path.resolve(stagedPath);
+  const relative = path.relative(stagingRoot, resolved);
+  if (
+    relative.length === 0 || relative === "." ||
+    relative.startsWith("..") || path.isAbsolute(relative)
+  ) {
+    throw new Error(`invalid staged artifact path: ${stagedPath}`);
+  }
+  return path.resolve(Deno.cwd(), relative);
+}
+
+function resolveStagedOutputPath(outputPath: string, stagingRoot: string): string {
+  const fileName = path.basename(outputPath);
+  const outputDir = path.join(stagingRoot, "task_configs", "spec_creator");
+  Deno.mkdirSync(outputDir, { recursive: true });
+  return path.join(outputDir, fileName);
+}
+
+function prepareSpecCreatorStagingWorkspace(stagingRoot: string): void {
+  copyDirectoryTreeIfExists(
+    path.resolve("openspec"),
+    path.join(stagingRoot, "openspec"),
+  );
+  copyDirectoryTreeIfExists(
+    path.resolve("task_configs"),
+    path.join(stagingRoot, "task_configs"),
+  );
+}
+
+function copyDirectoryTreeIfExists(source: string, destination: string): void {
+  if (!isDirectory(source)) {
+    return;
+  }
+  Deno.mkdirSync(destination, { recursive: true });
+  for (const entry of Deno.readDirSync(source)) {
+    const sourcePath = path.join(source, entry.name);
+    const destinationPath = path.join(destination, entry.name);
+    if (entry.isDirectory) {
+      copyDirectoryTreeIfExists(sourcePath, destinationPath);
+      continue;
+    }
+    if (entry.isFile) {
+      Deno.mkdirSync(path.dirname(destinationPath), { recursive: true });
+      Deno.copyFileSync(sourcePath, destinationPath);
+    }
+  }
+}
+
+function runWithCurrentDirectory<T>(dirPath: string, fn: () => T): T {
+  const original = Deno.cwd();
+  Deno.chdir(dirPath);
+  try {
+    return fn();
+  } finally {
+    Deno.chdir(original);
+  }
+}
+
+function runStagedStrictValidate(changeId: string, workspaceRoot: string): void {
+  const validateResult = new Deno.Command("openspec", {
+    args: ["validate", changeId, "--strict"],
+    stdout: "piped",
+    stderr: "piped",
+    cwd: workspaceRoot,
+  }).outputSync();
+  if (validateResult.code === 0) {
+    return;
+  }
+  const stderr = new TextDecoder().decode(validateResult.stderr).trim();
+  const stdout = new TextDecoder().decode(validateResult.stdout).trim();
+  const detail = stderr || stdout || "openspec validate failed";
+  throw new Error(`spec-creator staged validate failed: ${detail}`);
+}
+
+function applyStagedArtifactsAtomically(
+  options: {
+    stagingRoot: string;
+    stagedPaths: SpecCreatorArtifactPaths;
+    targetPaths: SpecCreatorArtifactPaths;
+    stagedOutputPath: string;
+    outputPath: string;
+    artifactSnapshotBeforeWorkflow: ArtifactSnapshot;
+    outputSnapshotBeforeWorkflow: string | null;
+  },
+): void {
+  const {
+    stagingRoot,
+    stagedPaths,
+    targetPaths,
+    stagedOutputPath,
+    outputPath,
+    artifactSnapshotBeforeWorkflow,
+    outputSnapshotBeforeWorkflow,
+  } = options;
+
+  try {
+    for (const stagedArtifactPath of listSpecCreatorArtifactPaths(stagedPaths)) {
+      const targetArtifactPath = mapPathFromStagingWorkspace(
+        stagedArtifactPath,
+        stagingRoot,
+      );
+      const stagedContent = readArtifactContentOrNull(stagedArtifactPath);
+      restoreSingleFileContent(targetArtifactPath, stagedContent);
+    }
+    const stagedOutputContent = readArtifactContentOrNull(stagedOutputPath);
+    restoreSingleFileContent(outputPath, stagedOutputContent);
+  } catch (error) {
+    restoreArtifactContents(targetPaths, artifactSnapshotBeforeWorkflow);
+    restoreSingleFileContent(outputPath, outputSnapshotBeforeWorkflow);
+    throw error;
+  }
+}
+
+type ArtifactSnapshot = Record<string, string | null>;
+
+function snapshotArtifactContents(paths: SpecCreatorArtifactPaths): ArtifactSnapshot {
+  const snapshot: ArtifactSnapshot = {};
+  for (const artifactPath of listSpecCreatorArtifactPaths(paths)) {
+    snapshot[artifactPath] = readArtifactContentOrNull(artifactPath);
+  }
+  return snapshot;
+}
+
+function readArtifactContentOrNull(artifactPath: string): string | null {
+  try {
+    return Deno.readTextFileSync(artifactPath);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function didArtifactContentsChange(
+  before: ArtifactSnapshot,
+  after: ArtifactSnapshot,
+): boolean {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const key of keys) {
+    if ((before[key] ?? null) !== (after[key] ?? null)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function restoreArtifactContents(
+  paths: SpecCreatorArtifactPaths,
+  snapshot: ArtifactSnapshot,
+): void {
+  for (const artifactPath of listSpecCreatorArtifactPaths(paths)) {
+    restoreSingleFileContent(artifactPath, snapshot[artifactPath] ?? null);
+  }
+}
+
+function restoreSingleFileContent(
+  filePath: string,
+  snapshotValue: string | null,
+): void {
+  if (snapshotValue === null) {
+    try {
+      Deno.removeSync(filePath);
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) {
+        throw error;
+      }
+    }
+    return;
+  }
+  Deno.mkdirSync(path.dirname(filePath), { recursive: true });
+  Deno.writeTextFileSync(filePath, snapshotValue);
+}
+
+function runSpecCreatorPostAuditGate(
+  changeId: string,
+  io: CliIO,
+  workspaceRoot: string = Deno.cwd(),
+): void {
+  io.stdout(
+    `[spec-creator] post-audit revalidate: agent-dock compile-openspec --change-id ${changeId}\n`,
+  );
+  compileChangeToConfig(changeId, {
+    openspecRoot: path.join(workspaceRoot, "openspec"),
+    overridesRoot: path.join(workspaceRoot, "task_configs", "overrides"),
+  });
+
+  io.stdout(
+    `[spec-creator] post-audit revalidate: openspec validate ${changeId} --strict\n`,
+  );
+  const validateResult = new Deno.Command("openspec", {
+    args: ["validate", changeId, "--strict"],
+    stdout: "piped",
+    stderr: "piped",
+    cwd: workspaceRoot,
+  }).outputSync();
+  if (validateResult.code === 0) {
+    return;
+  }
+  const stderr = new TextDecoder().decode(validateResult.stderr).trim();
+  const stdout = new TextDecoder().decode(validateResult.stdout).trim();
+  const detail = stderr || stdout || "openspec validate failed";
+  throw new Error(`spec-creator post-audit gate failed: ${detail}`);
 }
 
 function assertNoForbiddenSpecCreatorCommands(
@@ -1135,6 +1686,7 @@ function buildImplementationMarkdownForSpecCreator(
     description: string;
     depends_on: string[];
     target_paths: string[];
+    related_paths: string[];
     persona_policy: TaskPersonaPolicy | null;
   }>,
   lang: "ja" | "en",
@@ -1147,6 +1699,9 @@ function buildImplementationMarkdownForSpecCreator(
     const targetPaths = task.target_paths.length > 0
       ? task.target_paths.join(", ")
       : "*";
+    const relatedPaths = task.related_paths.length > 0
+      ? task.related_paths.join(", ")
+      : (lang === "ja" ? "なし" : "none");
     const description = compactTaskDescription(task.description);
     const phasePlan = resolvePhasePlanForTemplate(task.persona_policy);
     const phaseAssignments = formatPhaseAssignments(phasePlan);
@@ -1156,12 +1711,14 @@ function buildImplementationMarkdownForSpecCreator(
     if (lang === "ja") {
       lines.push(`  - 依存: ${dependsOn}`);
       lines.push(`  - 対象: ${targetPaths}`);
+      lines.push(`  - 関連許可: ${relatedPaths}`);
       lines.push(`  - フェーズ担当: ${phaseAssignments}`);
       lines.push(`  - persona_policy: ${personaPolicy}`);
       lines.push(`  - 成果物: ${description}`);
     } else {
       lines.push(`  - Depends on: ${dependsOn}`);
       lines.push(`  - Target paths: ${targetPaths}`);
+      lines.push(`  - Related paths: ${relatedPaths}`);
       lines.push(`  - phase assignments: ${phaseAssignments}`);
       lines.push(`  - persona_policy: ${personaPolicy}`);
       lines.push(`  - Description: ${description}`);
@@ -1542,6 +2099,7 @@ function loadTasksPayload(
       title,
       description: asOptionalString(taskRaw.description) ?? "",
       target_paths: asStringArray(taskRaw.target_paths),
+      related_paths: asStringArray(taskRaw.related_paths),
       depends_on: asStringArray(taskRaw.depends_on),
       owner: asOptionalString(taskRaw.owner),
       planner: asOptionalString(taskRaw.planner),
@@ -1692,6 +2250,18 @@ function validateResumeTaskConfigConsistency(
         }, state=${JSON.stringify(stateTargetPaths)})`,
       );
     }
+
+    const configRelatedPaths = normalizeStringList(configTask.related_paths);
+    const stateRelatedPaths = normalizeStringList(stateTask.related_paths);
+    if (
+      JSON.stringify(configRelatedPaths) !== JSON.stringify(stateRelatedPaths)
+    ) {
+      mismatches.push(
+        `${taskId}:related_paths(config=${
+          JSON.stringify(configRelatedPaths)
+        }, state=${JSON.stringify(stateRelatedPaths)})`,
+      );
+    }
   }
 
   if (mismatches.length > 0) {
@@ -1750,6 +2320,14 @@ function findRuntimeFrom(startDir: string): string | null {
 function isFile(filePath: string): boolean {
   try {
     return Deno.statSync(filePath).isFile;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isDirectory(dirPath: string): boolean {
+  try {
+    return Deno.statSync(dirPath).isDirectory;
   } catch (_error) {
     return false;
   }

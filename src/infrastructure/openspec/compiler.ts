@@ -29,6 +29,8 @@ const DEPENDENCY_PATTERN =
   /^\s*-\s*(?:依存|depends?\s*on|depends_on)\s*:\s*(.+?)\s*$/i;
 const TARGET_PATHS_PATTERN =
   /^\s*-\s*(?:対象|target[_\s-]*paths?)\s*:\s*(.+?)\s*$/i;
+const RELATED_PATHS_PATTERN =
+  /^\s*-\s*(?:関連許可|related[_\s-]*paths?|allowed[_\s-]*related[_\s-]*paths?)\s*:\s*(.+?)\s*$/i;
 const DESCRIPTION_PATTERN =
   /^\s*-\s*(?:成果物|説明|description|deliverable|outcome)\s*:\s*(.+?)\s*$/i;
 const PERSONA_DEFAULTS_PATTERN =
@@ -57,6 +59,7 @@ const ALLOWED_TASK_OVERRIDE_KEYS = new Set<string>([
   "title",
   "description",
   "target_paths",
+  "related_paths",
   "depends_on",
   "requires_plan",
   "max_revision_cycles",
@@ -349,6 +352,7 @@ export function parseTasksMarkdown(tasksPath: string): ParseTasksResult {
         title: normalizedTitle,
         description: "",
         target_paths: [],
+        related_paths: [],
         depends_on: [],
         requires_plan: requiresPlan,
       };
@@ -507,6 +511,12 @@ export function parseTasksMarkdown(tasksPath: string): ParseTasksResult {
     const targetMatch = TARGET_PATHS_PATTERN.exec(line);
     if (targetMatch) {
       currentTask.target_paths = parsePathValue(targetMatch[1]);
+      continue;
+    }
+
+    const relatedMatch = RELATED_PATHS_PATTERN.exec(line);
+    if (relatedMatch) {
+      currentTask.related_paths = parsePathValue(relatedMatch[1]);
       continue;
     }
 
@@ -1024,6 +1034,17 @@ function applyOverrides(
           .filter((item) => item.length > 0);
       }
 
+      if ("related_paths" in overrideItem) {
+        if (!Array.isArray(overrideItem.related_paths)) {
+          throw new OpenSpecCompileError(
+            `related_paths override must be list: ${taskId}`,
+          );
+        }
+        task.related_paths = overrideItem.related_paths
+          .map((item) => String(item).trim())
+          .filter((item) => item.length > 0);
+      }
+
       if ("depends_on" in overrideItem) {
         task.depends_on = normalizeDependsOverride(
           taskId,
@@ -1193,6 +1214,13 @@ function validateCompiledPayload(
       autoTargetPathTasks.push(taskId);
     }
     rawTask.target_paths = normalizedPaths;
+
+    const relatedPathsRaw = Array.isArray(rawTask.related_paths)
+      ? rawTask.related_paths
+      : [];
+    rawTask.related_paths = relatedPathsRaw
+      .map((item) => String(item).trim())
+      .filter((item) => item.length > 0);
 
     const dependsOn = rawTask.depends_on ?? [];
     if (!Array.isArray(dependsOn)) {

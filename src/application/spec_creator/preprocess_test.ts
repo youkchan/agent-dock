@@ -42,8 +42,8 @@ function createPromptIo(
 }
 
 Deno.test("normalizeChangeId accepts kebab-case and trims", () => {
-  const normalized = normalizeChangeId("  add-spec-creator  ");
-  if (normalized !== "add-spec-creator") {
+  const normalized = normalizeChangeId("  spec-creator  ");
+  if (normalized !== "spec-creator") {
     throw new Error(`unexpected change id: ${normalized}`);
   }
 });
@@ -53,6 +53,13 @@ Deno.test("normalizeChangeId rejects invalid format", () => {
     () => normalizeChangeId("Add Spec Creator"),
     "kebab-case",
   );
+});
+
+Deno.test("normalizeChangeId accepts leading digits", () => {
+  const normalized = normalizeChangeId("2-spec-creator");
+  if (normalized !== "2-spec-creator") {
+    throw new Error(`unexpected change id: ${normalized}`);
+  }
 });
 
 Deno.test("collectSpecContextInteractive collects required inputs", () => {

@@ -1,3 +1,4 @@
+import path from "node:path";
 import type {
   OrchestratorDecision,
   PhaseJudgment,
@@ -138,6 +139,9 @@ const REVIEWER_STOP_RULE_PATTERNS: Record<string, RegExp[]> = {
     /\btoo verbose\b/iu,
   ],
 };
+
+const ADDITIONAL_EDIT_REASON_PATTERN =
+  /\badditional_edit_reason=[A-Za-z0-9_.:-]+\b/u;
 
 export class OrchestratorConfig {
   leadId: string;
@@ -306,6 +310,7 @@ export class AgentTeamsLikeOrchestrator {
   readonly executionSubjectIds: string[];
   readonly phaseOrder: string[];
   readonly phasePolicies: Record<string, Record<string, string[]>>;
+  readonly workspaceRootCanonical: string;
 
   constructor(options: {
     store: StateStore;
@@ -348,6 +353,13 @@ export class AgentTeamsLikeOrchestrator {
     const controls = this.resolvePhaseControls();
     this.phaseOrder = controls.phaseOrder;
     this.phasePolicies = controls.phasePolicies;
+
+    const workspaceRoot = Deno.cwd();
+    try {
+      this.workspaceRootCanonical = Deno.realPathSync(workspaceRoot);
+    } catch {
+      this.workspaceRootCanonical = workspaceRoot;
+    }
   }
 
   run(): Record<string, unknown> {
@@ -1537,7 +1549,82 @@ export class AgentTeamsLikeOrchestrator {
       };
     }
 
+    const scopeViolation = this.resolveChangedFilesScopeViolation(
+      taskForExecution,
+      executionResult.changed_files,
+    );
+    if (scopeViolation !== null) {
+      const blocked = this.store.markTaskBlocked(
+        task.id,
+        teammateId,
+        this.short(scopeViolation, 180),
+      );
+      this.appendTaskProgressLog(
+        blocked.id,
+        "system",
+        `execution blocked: ${this.short(result, 160)}`,
+      );
+      this.store.sendMessage(
+        teammateId,
+        this.config.leadId,
+        `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        blocked.id,
+      );
+      this.log(
+        `[${teammateId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+      );
+      return {
+        changed: true,
+        events: [
+          this.makeEvent(
+            "Blocked",
+            blocked.id,
+            teammateId,
+            blocked.block_reason ?? "blocked",
+          ),
+        ],
+      };
+    }
+
+    const relatedReasonViolation = this.resolveRelatedEditReasonViolation(
+      taskForExecution,
+      executionResult,
+    );
+    if (relatedReasonViolation !== null) {
+      const blocked = this.store.markTaskBlocked(
+        task.id,
+        teammateId,
+        this.short(relatedReasonViolation, 180),
+      );
+      this.appendTaskProgressLog(
+        blocked.id,
+        "system",
+        `execution blocked: ${this.short(result, 160)}`,
+      );
+      this.store.sendMessage(
+        teammateId,
+        this.config.leadId,
+        `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        blocked.id,
+      );
+      this.log(
+        `[${teammateId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+      );
+      return {
+        changed: true,
+        events: [
+          this.makeEvent(
+            "Blocked",
+            blocked.id,
+            teammateId,
+            blocked.block_reason ?? "blocked",
+          ),
+        ],
+      };
+    }
+
     if (isDecisionTaskPhase(phase)) {
+
       if (
         executionResult.judgment_raw !== null &&
         executionResult.changed_files.length > 0
@@ -2113,6 +2200,78 @@ export class AgentTeamsLikeOrchestrator {
       };
     }
 
+    const scopeViolation = this.resolveChangedFilesScopeViolation(
+      task,
+      executionResult.changed_files,
+    );
+    if (scopeViolation !== null) {
+      const blocked = this.store.markTaskBlocked(
+        task.id,
+        taskOwnerId,
+        this.short(scopeViolation, 180),
+      );
+      this.appendTaskProgressLog(
+        blocked.id,
+        "system",
+        `execution blocked: ${this.short(result, 160)}`,
+      );
+      this.store.sendMessage(
+        executionSubjectId,
+        this.config.leadId,
+        `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        blocked.id,
+      );
+      this.log(
+        `[${executionSubjectId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+      );
+      return {
+        kind: "blocked",
+        summary,
+        event: this.makeEvent(
+          "Blocked",
+          blocked.id,
+          executionSubjectId,
+          blocked.block_reason ?? "blocked",
+        ),
+      };
+    }
+
+    const relatedReasonViolation = this.resolveRelatedEditReasonViolation(
+      task,
+      executionResult,
+    );
+    if (relatedReasonViolation !== null) {
+      const blocked = this.store.markTaskBlocked(
+        task.id,
+        taskOwnerId,
+        this.short(relatedReasonViolation, 180),
+      );
+      this.appendTaskProgressLog(
+        blocked.id,
+        "system",
+        `execution blocked: ${this.short(result, 160)}`,
+      );
+      this.store.sendMessage(
+        executionSubjectId,
+        this.config.leadId,
+        `task blocked task=${blocked.id} reason=${blocked.block_reason}`,
+        blocked.id,
+      );
+      this.log(
+        `[${executionSubjectId}] blocked task=${blocked.id} reason=${blocked.block_reason}`,
+      );
+      return {
+        kind: "blocked",
+        summary,
+        event: this.makeEvent(
+          "Blocked",
+          blocked.id,
+          executionSubjectId,
+          blocked.block_reason ?? "blocked",
+        ),
+      };
+    }
+
     if (executionResult.judgment_raw !== null &&
       executionResult.changed_files.length > 0
     ) {
@@ -2235,6 +2394,180 @@ export class AgentTeamsLikeOrchestrator {
       }`;
     }
     return null;
+  }
+
+  private resolveChangedFilesScopeViolation(
+    task: Task,
+    changedFiles: string[],
+  ): string | null {
+    if (changedFiles.length === 0) {
+      return null;
+    }
+    const allowed = this.collectAllowedEditPaths(task);
+    if (allowed.length === 0) {
+      return null;
+    }
+    if (allowed.includes("*")) {
+      return null;
+    }
+
+    const outOfScope = changedFiles.filter((changedFile) =>
+      !this.isPathAllowed(changedFile, allowed)
+    );
+    if (outOfScope.length === 0) {
+      return null;
+    }
+    return `edited files outside allowed scope: ${outOfScope.join(", ")}`;
+  }
+
+  private resolveRelatedEditReasonViolation(
+    task: Task,
+    executionResult: ParsedExecutionResult,
+  ): string | null {
+    if (executionResult.changed_files.length === 0) {
+      return null;
+    }
+    const related = this.collectRelatedEditPaths(task);
+    if (related.length === 0) {
+      return null;
+    }
+    const touchedRelated = executionResult.changed_files.some((changedFile) =>
+      this.isPathAllowed(changedFile, related)
+    );
+    if (!touchedRelated) {
+      return null;
+    }
+    if (ADDITIONAL_EDIT_REASON_PATTERN.test(executionResult.summary ?? "")) {
+      return null;
+    }
+    return "related_paths edit requires SUMMARY tag: additional_edit_reason=<reason>";
+  }
+
+  private collectAllowedEditPaths(task: Task): string[] {
+    const seen = new Set<string>();
+    const merged = [...task.target_paths, ...task.related_paths];
+    const allowed: string[] = [];
+    for (const pathRaw of merged) {
+      const normalized = this.normalizeScopePath(pathRaw);
+      if (!normalized || seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      allowed.push(normalized);
+    }
+    return allowed;
+  }
+
+  private collectRelatedEditPaths(task: Task): string[] {
+    const seen = new Set<string>();
+    const related: string[] = [];
+    for (const pathRaw of task.related_paths) {
+      const normalized = this.normalizeScopePath(pathRaw);
+      if (!normalized || seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      related.push(normalized);
+    }
+    return related;
+  }
+
+  private isPathAllowed(changedFileRaw: string, allowedPaths: string[]): boolean {
+    const changedFile = this.normalizeScopePath(changedFileRaw);
+    if (!changedFile) {
+      return false;
+    }
+    for (const allowed of allowedPaths) {
+      if (this.matchScopePattern(changedFile, allowed)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private matchScopePattern(changedFile: string, allowed: string): boolean {
+    if (allowed.includes("*")) {
+      const regex = this.compileScopeGlob(allowed);
+      return regex.test(changedFile);
+    }
+    return changedFile === allowed || changedFile.startsWith(`${allowed}/`);
+  }
+
+  private compileScopeGlob(rawPattern: string): RegExp {
+    const escaped = rawPattern.replace(
+      /[.+^${}()|[\]\\]/g,
+      "\\$&",
+    );
+    const withDoubleStar = escaped.replaceAll("**", "__DOUBLE_STAR__");
+    const withSingleStar = withDoubleStar.replaceAll("*", "[^/]*");
+    const source = withSingleStar.replaceAll("__DOUBLE_STAR__", ".*");
+    return new RegExp(`^${source}$`, "u");
+  }
+
+  private normalizeScopePath(rawPath: string): string {
+    const candidate = String(rawPath)
+      .trim()
+      .replaceAll("\\", "/")
+      .replace(/\/+/gu, "/");
+    if (!candidate) {
+      return "";
+    }
+    if (candidate === "*") {
+      return "*";
+    }
+    if (candidate.startsWith("/")) {
+      return "";
+    }
+    if (/^[A-Za-z]:\//u.test(candidate)) {
+      return "";
+    }
+    const segments = candidate.split("/");
+    if (segments.includes("..")) {
+      return "";
+    }
+    const normalized = path.posix.normalize(candidate).replace(/^\.\/+/u, "");
+    if (!normalized) {
+      return "";
+    }
+    if (normalized === "." || normalized === ".." || normalized.startsWith("../")) {
+      return "";
+    }
+    const lexicalNormalized = normalized.replace(/\/$/u, "");
+    const canonical = this.canonicalizeScopePath(lexicalNormalized);
+    if (canonical === null) {
+      return "";
+    }
+    return canonical;
+  }
+
+  private canonicalizeScopePath(normalizedPath: string): string | null {
+    if (normalizedPath.includes("*")) {
+      return normalizedPath;
+    }
+    const absolutePath = path.resolve(this.workspaceRootCanonical, normalizedPath);
+    let realPath: string;
+    try {
+      realPath = Deno.realPathSync(absolutePath);
+    } catch {
+      return normalizedPath;
+    }
+    const relative = path.relative(this.workspaceRootCanonical, realPath)
+      .replaceAll("\\", "/");
+    const normalizedRelative = path.posix.normalize(relative).replace(
+      /^\.\/+/u,
+      "",
+    );
+    if (
+      !normalizedRelative || normalizedRelative === "." ||
+      normalizedRelative === ".." ||
+      normalizedRelative.startsWith("../")
+    ) {
+      return null;
+    }
+    if (normalizedRelative.startsWith("/") || /^[A-Za-z]:\//u.test(normalizedRelative)) {
+      return null;
+    }
+    return normalizedRelative.replace(/\/$/u, "");
   }
 
   private isReviewerExecutionSubject(executionSubjectId: string): boolean {
