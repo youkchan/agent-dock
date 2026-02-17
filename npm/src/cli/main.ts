@@ -1174,7 +1174,6 @@ function runSpecCreatorWorkflow(
         ...(args.resume ? ["--resume"] : []),
         ...(args.personaDir ? [`--persona-dir ${args.personaDir}`] : []),
       ];
-      const artifactSnapshotBeforeRun = snapshotArtifactContents(stagedPaths);
       io.stdout(`[spec-creator] run ${runArgsForLog.join(" ")}\n`);
       const runExitCode = runWithCurrentDirectory(stagingRoot, () =>
         runCommand(runArgs, io)
@@ -1187,15 +1186,7 @@ function runSpecCreatorWorkflow(
       try {
         assertNoForbiddenSpecCreatorCommands(stagedPaths, "post-run");
         assertSpecCreatorSemanticContracts(stagedPaths, "post-run");
-        const artifactSnapshotAfterRun = snapshotArtifactContents(stagedPaths);
-        if (
-          didArtifactContentsChange(
-            artifactSnapshotBeforeRun,
-            artifactSnapshotAfterRun,
-          )
-        ) {
-          runSpecCreatorPostAuditGate(context.change_id, io, stagingRoot);
-        }
+        runSpecCreatorPostAuditGate(context.change_id, io, stagingRoot);
         applyStagedArtifactsAtomically({
           stagingRoot,
           stagedPaths,
@@ -1610,19 +1601,6 @@ function readArtifactContentOrNull(artifactPath: string): string | null {
     }
     throw error;
   }
-}
-
-function didArtifactContentsChange(
-  before: ArtifactSnapshot,
-  after: ArtifactSnapshot,
-): boolean {
-  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
-  for (const key of keys) {
-    if ((before[key] ?? null) !== (after[key] ?? null)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function restoreArtifactContents(

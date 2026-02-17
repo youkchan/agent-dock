@@ -195,14 +195,15 @@ export function createSpecCreatorTaskConfigTemplate(
         depends_on: ["1.2", "1.3", "1.4", "1.5"],
         requires_plan: false,
         persona_policy: createTaskPersonaPolicy({
-          implementPersona: "spec-reviewer",
+          implementPersona: "spec-planner",
+          reviewPersona: "spec-reviewer",
         }),
       },
       {
         id: "1.7",
-        title: "OpenSpec strict validate を実行する",
+        title: "OpenSpec compile + strict validate を実行する",
         description:
-          "openspec validate <change_id> --strict を実行し、失敗時は修正後に再実行する。",
+          "agent-dock compile-openspec --change-id <change_id> と openspec validate <change_id> --strict を実行し、失敗時は修正後に再実行する。",
         target_paths: [...requiredOutputPaths],
         related_paths: [designPath],
         depends_on: ["1.6"],
