@@ -1,11 +1,16 @@
 ## ADDED Requirements
-### Requirement: Spec Creator Polish SHALL perform re-generation for one change in one pass
-The system SHALL accept `agent-dock spec-creator polish <change_id> [--feedback "指示内容"]`, collect all `.md` under `openspec/changes/<change_id>/` as input context, and regenerate target artifacts in a single context pass.
+### Requirement: Spec Creator Polish SHALL perform re-generation with task-scoped multi-pass execution
+The system SHALL accept `agent-dock spec-creator polish <change_id> [--feedback "指示内容"]`, collect all `.md` under `openspec/changes/<change_id>/` as input context, and regenerate target artifacts with one or more Codex calls on task-scoped execution.
 
 #### Scenario: 有効な change-id で polish を実行する
 - **WHEN** user executes `agent-dock spec-creator polish <existing-change-id>`
 - **THEN** the system SHALL collect all `.md` from `openspec/changes/<change-id>/` as input context
-- **AND** the system SHALL include all collected context in one Codex call and return rewritten targets: `proposal.md`, `tasks.md`, `code_summary.md`, `specs/**/spec.md`, and `design.md` only when required
+- **AND** each Codex call SHALL include collected context on a best-effort basis within prompt length limits and return rewritten targets: `proposal.md`, `tasks.md`, `code_summary.md`, `specs/**/spec.md`, and `design.md` only when required
+
+#### Scenario: プロンプト長上限を超える場合
+- **WHEN** serialized prompt exceeds runtime prompt size limit
+- **THEN** the system MAY truncate prompt content and continue execution as best-effort
+- **AND** prompt size visibility (for example prompt_chars logging) SHALL be available for audit and troubleshooting
 
 #### Scenario: CLI サブコマンド契約
 - **WHEN** user executes `agent-dock spec-creator polish` without `<change_id>` or with invalid options
@@ -56,28 +61,23 @@ The system SHALL write rewritten artifacts to a temporary staging area, execute 
 - **THEN** the system SHALL apply staged outputs to target files atomically (all-or-nothing)
 - **AND** final accepted outputs SHALL match staged artifacts
 
-### Requirement: Spec Creator Polish task execution SHALL enforce scope and completion gates
-The system SHALL define per-task required scope (`target_paths`) plus explicitly allowed related scope for minimal additional fixes, and SHALL enforce completion gates for wiring, regression, and semantic consistency.
+### Requirement: Spec Creator Polish task execution SHALL treat scope as guidance and enforce completion gates
+The system SHALL keep per-task scope fields (`target_paths`, `related_paths`) as editing guidance, not hard runtime blockers, and SHALL enforce completion gates for wiring, regression, and semantic consistency.
 
 #### Scenario: 連動修正が必要な場合
 - **WHEN** implementation requires minimal edits outside required scope
-- **THEN** the system SHALL allow edits only within explicitly declared related scope
-- **AND** the run result SHALL include `additional_edit_reason=<reason>` in `SUMMARY`
+- **THEN** the system SHALL allow additional edits required for implementation completion
+- **AND** the run result MAY include additional rationale in `SUMMARY` for auditability
 
 #### Scenario: 最終監査で修正が入る場合
 - **WHEN** whole-change audit introduces any follow-up edits
 - **THEN** the system SHALL rerun `agent-dock compile-openspec --change-id <change_id>` and `openspec validate <change_id> --strict`
 - **AND** completion SHALL be rejected until both checks pass
 
-### Requirement: Scope enforcement SHALL use canonical path comparison
-The system SHALL canonicalize paths before scope checks using lexical normalization and realpath resolution for existing paths, and SHALL reject traversal-style edits.
+### Requirement: Scope declarations SHALL remain available for review guidance
+The system SHALL preserve `target_paths` and `related_paths` in task context so reviewers can evaluate whether extra edits were justified.
 
-#### Scenario: traversal パスの拒否
-- **WHEN** `CHANGED_FILES` contains paths with `..`, absolute paths, or traversal-style expressions
-- **THEN** the system SHALL reject the result as out-of-scope (fail-closed)
-- **AND** only canonicalized repository-relative paths SHALL be eligible for scope matching
-
-#### Scenario: symlink 解決先がワークスペース外
-- **WHEN** a changed path lexically appears in-scope but realpath resolves outside repository root
-- **THEN** the system SHALL reject the result as out-of-scope (fail-closed)
-- **AND** scope matching SHALL use the canonical repository-relative path
+#### Scenario: 実装中に追加ファイルが必要になった場合
+- **WHEN** implementation changes files outside declared scope hints
+- **THEN** the system SHALL continue execution without scope-based runtime blocking
+- **AND** reviewers SHALL judge appropriateness through review/spec_check/test phases

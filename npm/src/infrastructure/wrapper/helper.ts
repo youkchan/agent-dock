@@ -161,6 +161,15 @@ function normalizeListText(value: unknown): string {
   return String(value);
 }
 
+function normalizePathList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => String(item).trim())
+    .filter((item) => item.length > 0);
+}
+
 function buildProgressLogSummary(
   progressLog: unknown[],
   readEnv: EnvReader,
@@ -281,7 +290,8 @@ export function buildPrompt(
   const taskId = String(task.id || "");
   const title = String(task.title || "");
   const description = String(task.description || "");
-  const targetPaths = task.target_paths || [];
+  const targetPaths = normalizePathList(task.target_paths);
+  const relatedPaths = normalizePathList(task.related_paths);
   const dependsOn = task.depends_on || [];
   const requiresPlan = Boolean(task.requires_plan);
   const progressLog = Array.isArray(task.progress_log) ? task.progress_log : [];
@@ -292,6 +302,7 @@ export function buildPrompt(
     violations.push(...collectDotenvHits("title", title));
     violations.push(...collectDotenvHits("description", description));
     violations.push(...collectDotenvHits("target_paths", targetPaths));
+    violations.push(...collectDotenvHits("related_paths", relatedPaths));
     violations.push(...collectDotenvHits("depends_on", dependsOn));
     if (violations.length > 0) {
       const preview = violations.slice(0, 5).join(", ");
@@ -303,6 +314,9 @@ export function buildPrompt(
   }
 
   const targetPathsText = normalizeListText(targetPaths);
+  const relatedPathsText = normalizeListText(relatedPaths);
+  const editablePaths = [...targetPaths, ...relatedPaths];
+  const editablePathsText = normalizeListText(editablePaths);
   const dependsOnText = normalizeListText(dependsOn);
   const progress = buildProgressLogSummary(progressLog, readEnv);
   const requiresPlanText = boolAsPromptBoolText(requiresPlan);
@@ -315,11 +329,12 @@ task_id: ${taskId}
 title: ${title}
 description: ${description}
 target_paths: ${targetPathsText}
+related_paths: ${relatedPathsText}
 depends_on: ${dependsOnText}
 requires_plan: ${requiresPlanText}
 
 Constraints:
-- Do not propose edits outside target_paths
+- Treat editable_paths (target_paths + related_paths) as planning hints, not hard limits
 - Do not read/reference/edit .env or .env.*
 - Keep steps short and concrete
 - Include local verification commands at the end
@@ -391,6 +406,8 @@ task_id: ${taskId}
 title: ${title}
 description: ${description}
 target_paths: ${targetPathsText}
+related_paths: ${relatedPathsText}
+editable_paths: ${editablePathsText}
 depends_on: ${dependsOnText}
 requires_plan: ${requiresPlanText}
 existing_progress_log_count: ${progress.count}
@@ -398,7 +415,7 @@ existing_progress_log_recent:
 ${progress.recent}
 
 Constraints:
-- Do not edit outside target_paths
+- Treat editable_paths (target_paths + related_paths) as implementation hints, not hard limits
 - Do not read/reference/edit .env or .env.*
 - Run required local checks
 ${openSpecValidationConstraint}

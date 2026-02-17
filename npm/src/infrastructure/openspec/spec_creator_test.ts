@@ -3,6 +3,7 @@ import {
   buildCodeSummaryMarkdown,
   buildDeltaSpecMarkdown,
   buildProposalMarkdown,
+  buildSpecCreatorPolishPrompt,
   buildTasksMarkdown,
   checkNonMarkdownConsistency,
   collectChangeFilesRecursively,
@@ -53,6 +54,71 @@ function withTempDir(fn: (root: string) => void): void {
     Deno.removeSync(root, { recursive: true });
   }
 }
+
+Deno.test("buildSpecCreatorPolishPrompt aggregates markdown, feedback, and latest contracts", () => {
+  const prompt = buildSpecCreatorPolishPrompt({
+    changeId: "add-spec-creator-polish-auto-remaster",
+    markdownContexts: [
+      "### proposal.md\n- old proposal",
+      "### tasks.md\n- old task",
+    ],
+    feedback: "既存判定値と transport を再整列",
+  });
+
+  if (prompt.language !== "ja") {
+    throw new Error("prompt language should be ja for Japanese context");
+  }
+
+  if (!prompt.requirementsText.includes("polish target: add-spec-creator-polish-auto-remaster")) {
+    throw new Error("prompt must include polish target");
+  }
+  if (!prompt.requirementsText.includes("feedback: 既存判定値と transport を再整列")) {
+    throw new Error("prompt must include feedback");
+  }
+  if (!prompt.requirementsText.includes("proposal.md")) {
+    throw new Error("prompt must include proposal.md regen target");
+  }
+  if (!prompt.requirementsText.includes("design.md (必要時のみ)")) {
+    throw new Error("prompt must include optional design target");
+  }
+  if (!prompt.requirementsText.includes("5行契約")) {
+    throw new Error("prompt must include latest contract");
+  }
+  if (!prompt.requirementsText.includes("3値")) {
+    throw new Error("prompt must include 3-valued judgment");
+  }
+  if (!prompt.requirementsText.includes("JUDGMENT")) {
+    throw new Error("prompt must include JUDGMENT contract");
+  }
+
+  assertDeepEqual(prompt.requiredRegenerateTargets, [
+    "proposal.md",
+    "tasks.md",
+    "code_summary.md",
+    "specs/**/spec.md",
+  ]);
+  if (prompt.regenerateTargets.includes("design.md")) {
+    throw new Error("design target should be optional unless explicitly enabled");
+  }
+});
+
+Deno.test("buildSpecCreatorPolishPrompt can include design as required regeneration target", () => {
+  const prompt = buildSpecCreatorPolishPrompt({
+    changeId: "foo",
+    markdownContexts: ["# title"],
+    includeDesignTarget: true,
+  });
+
+  if (prompt.language !== "en") {
+    throw new Error("prompt language should be en for ASCII context");
+  }
+  if (!prompt.requirementsText.includes("design.md")) {
+    throw new Error("prompt should include design target when required");
+  }
+  if (!prompt.regenerateTargets.includes("design.md")) {
+    throw new Error("regenerateTargets should include design.md when enabled");
+  }
+});
 
 Deno.test("buildTasksMarkdown preserves fixed template lines and compiles", () => {
   const tasksMarkdown = buildTasksMarkdown({

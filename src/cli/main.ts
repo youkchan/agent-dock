@@ -11,7 +11,6 @@ import {
   buildSpecCreatorTaskConfig,
   collectSpecContextInteractive,
   normalizeChangeId,
-  type SpecCreatorLanguage,
   type SpecContext,
   type SpecCreatorTaskConfig,
 } from "../application/spec_creator/preprocess.ts";
@@ -44,7 +43,8 @@ import {
   writeCompiledConfig,
 } from "../infrastructure/openspec/compiler.ts";
 import {
-  collectChangeFilesRecursively,
+  buildSpecCreatorPolishPrompt,
+  collectSpecCreatorPolishMarkdownContexts,
   writeCodeSummaryMarkdown,
   writeDeltaSpecMarkdown,
   writeProposalMarkdown,
@@ -623,21 +623,17 @@ function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
       continue;
     }
     if (arg === "--output") {
-      parsed.output = requireOptionValue(arg, next);
+      parsed.output = parseSingleArgValue("--output", parsed.output, next);
       index += 1;
       continue;
     }
     if (arg === "--state-dir") {
-      parsed.stateDir = requireOptionValue(arg, next);
+      parsed.stateDir = parseSingleArgValue("--state-dir", parsed.stateDir, next);
       index += 1;
       continue;
     }
     if (arg === "--persona-dir") {
-      parsed.personaDir = parseSingleArgValue(
-        "--persona-dir",
-        parsed.personaDir,
-        next,
-      );
+      parsed.personaDir = parseSingleArgValue("--persona-dir", parsed.personaDir, next);
       index += 1;
       continue;
     }
@@ -948,6 +944,9 @@ const SPEC_CREATOR_FORBIDDEN_COMMAND_EXEMPT_CONTEXT_PATTERNS = [
   /must not use/iu,
 ] as const;
 
+const SPEC_CREATOR_DESIGN_SIGNAL_PATTERN =
+  /設計|design|architecture|アーキテクチャ|migration|移行|trade[\s-]?off|トレードオフ/iu;
+
 function specCreatorCommand(argv: string[], io: CliIO): number {
   const subcommand = argv[0] ?? "";
   if (subcommand === "polish") {
@@ -978,28 +977,16 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
 
 function specCreatorPolishCommand(argv: string[], io: CliIO): number {
   const args = parseSpecCreatorPolishArgs(argv);
-  assertSpecCreatorChangeDirPresent(args.changeId, "spec-creator polish");
   const context = buildSpecCreatorPolishContextFromMarkdown(
     args.changeId,
     args.feedback,
+    "spec-creator polish",
   );
   return runSpecCreatorWorkflow(args, context, io);
 }
 
 function resolveSpecCreatorChangeDir(changeId: string): string {
   return path.resolve("openspec", "changes", changeId);
-}
-
-function assertSpecCreatorChangeDirPresent(
-  changeId: string,
-  commandLabel: string,
-): void {
-  const changeDir = resolveSpecCreatorChangeDir(changeId);
-  if (!isDirectory(changeDir)) {
-    throw new Error(
-      `${commandLabel} requires existing change_id directory: ${changeId}`,
-    );
-  }
 }
 
 function assertSpecCreatorChangeDirAbsent(
@@ -1023,34 +1010,26 @@ const SPEC_CREATOR_POLISH_ACTIVE_PERSONAS = [
 function buildSpecCreatorPolishContextFromMarkdown(
   changeId: string,
   feedbackRaw: string | null,
+  commandLabel: string,
 ): SpecCreatorContextPayload {
-  const changeDir = resolveSpecCreatorChangeDir(changeId);
-  const queue = collectChangeFilesRecursively(changeDir);
-  if (queue.markdownFiles.length === 0) {
-    throw new Error(
-      `spec-creator polish requires at least one markdown file under openspec/changes/${changeId}`,
-    );
-  }
-
-  const markdownContexts = queue.markdownFiles
-    .map((filePath) => {
-      const content = Deno.readTextFileSync(filePath).trim();
-      const relPath = path.relative(Deno.cwd(), filePath) || filePath;
-      return `### ${relPath}\n${content}`;
-    });
-  const requirementsText = [
-    `polish target: ${changeId}`,
-    "source_markdown_context:",
-    markdownContexts.join("\n\n"),
-  ].join("\n\n");
+  const markdownContexts = collectSpecCreatorPolishMarkdownContexts(
+    changeId,
+    commandLabel,
+  );
   const feedback = feedbackRaw?.trim() ?? "";
-  const combinedRequirements = feedback.length > 0
-    ? `${requirementsText}\n\nfeedback: ${feedback}`
-    : requirementsText;
-  const language = detectSpecCreatorLanguage(markdownContexts.join("\n"));
+  const includeDesignTarget = shouldIncludeDesignTargetForPolish(
+    markdownContexts,
+    feedback,
+  );
+  const prompt = buildSpecCreatorPolishPrompt({
+    changeId,
+    markdownContexts,
+    feedback,
+    includeDesignTarget,
+  });
   const specContext: SpecContext = {
-    requirements_text: combinedRequirements,
-    language,
+    requirements_text: prompt.requirementsText,
+    language: prompt.language,
     runtime_stack: "typescript",
     persona_policy: {
       active_personas: [...SPEC_CREATOR_POLISH_ACTIVE_PERSONAS],
@@ -1060,12 +1039,55 @@ function buildSpecCreatorPolishContextFromMarkdown(
   return {
     change_id: changeId,
     spec_context: specContext,
-    task_config: buildSpecCreatorTaskConfig(changeId, specContext),
+    task_config: buildSpecCreatorTaskConfig(changeId, specContext, {
+      includeDesignTarget,
+    }),
+    polish: {
+      includeDesignTarget,
+    },
   };
 }
 
-function detectSpecCreatorLanguage(raw: string): SpecCreatorLanguage {
-  return /[\u3040-\u30ff\u4e00-\u9faf]/u.test(raw) ? "ja" : "en";
+function shouldIncludeDesignTargetForPolish(
+  markdownContexts: string[],
+  feedback: string,
+): boolean {
+  const signalBody = markdownContexts
+    .map(extractPolishSignalBody)
+    .join("\n");
+  return SPEC_CREATOR_DESIGN_SIGNAL_PATTERN.test(
+    `${signalBody}\n${feedback}`,
+  );
+}
+
+function extractPolishSignalBody(markdownContext: string): string {
+  const normalized = markdownContext.replaceAll(/\r\n?/gu, "\n");
+  const [firstLine, ...restLines] = normalized.split("\n");
+  const contextPath = extractPolishContextPath(firstLine ?? "");
+  if (contextPath === null) {
+    return normalized;
+  }
+  if (isIgnoredForDesignSignalContextPath(contextPath)) {
+    return "";
+  }
+  return restLines.join("\n");
+}
+
+function extractPolishContextPath(firstLine: string): string | null {
+  const headerMatch = /^\s*###\s+(.+?)\s*$/u.exec(firstLine);
+  return headerMatch === null ? null : headerMatch[1];
+}
+
+function isIgnoredForDesignSignalContextPath(rawPath: string): boolean {
+  const normalized = rawPath.trim().replaceAll("\\", "/").toLowerCase();
+  return (
+    normalized === "design.md" ||
+    normalized.endsWith("/design.md") ||
+    normalized === "tasks.md" ||
+    normalized.endsWith("/tasks.md") ||
+    normalized === "code_summary.md" ||
+    normalized.endsWith("/code_summary.md")
+  );
 }
 
 function runSpecCreatorWorkflow(
@@ -1200,7 +1222,7 @@ function runSpecCreatorWorkflow(
   }
 }
 
-interface SpecCreatorArtifactPaths {
+export interface SpecCreatorArtifactPaths {
   changeId: string;
   changeDir: string;
   proposalPath: string;
@@ -1215,6 +1237,9 @@ interface SpecCreatorContextPayload {
   change_id: string;
   spec_context: SpecContext;
   task_config: SpecCreatorTaskConfig;
+  polish?: {
+    includeDesignTarget: boolean;
+  };
 }
 
 function resolveSpecCreatorArtifactPaths(changeId: string): SpecCreatorArtifactPaths {
@@ -1316,12 +1341,74 @@ function listSpecCreatorArtifactPaths(paths: SpecCreatorArtifactPaths): string[]
   return unique;
 }
 
+function listSpecCreatorArtifactPathsForApply(
+  paths: SpecCreatorArtifactPaths,
+): string[] {
+  const ordered = [
+    paths.proposalPath,
+    paths.tasksPath,
+    paths.codeSummaryPath,
+    paths.designPath,
+    ...collectDeltaSpecPaths(paths.changeDir, paths.changeId),
+  ];
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const artifactPath of ordered) {
+    const resolved = path.resolve(artifactPath);
+    if (seen.has(resolved)) {
+      continue;
+    }
+    seen.add(resolved);
+    unique.push(resolved);
+  }
+  return unique;
+}
+
+function collectSpecCreatorApplyManifest(
+  targetPaths: SpecCreatorArtifactPaths,
+  stagedPaths: SpecCreatorArtifactPaths,
+  stagingRoot: string,
+): string[] {
+  const seen = new Set<string>();
+  const manifest: string[] = [];
+  const pushPath = (artifactPath: string): void => {
+    const resolved = path.resolve(artifactPath);
+    if (seen.has(resolved)) {
+      return;
+    }
+    seen.add(resolved);
+    manifest.push(resolved);
+  };
+
+  for (const targetArtifactPath of listSpecCreatorArtifactPathsForApply(
+    targetPaths,
+  )) {
+    pushPath(targetArtifactPath);
+  }
+  for (const stagedArtifactPath of listSpecCreatorArtifactPathsForApply(
+    stagedPaths,
+  )) {
+    pushPath(mapPathFromStagingWorkspace(stagedArtifactPath, stagingRoot));
+  }
+  return manifest;
+}
+
+export function collectSpecCreatorApplyManifestForTest(
+  targetPaths: SpecCreatorArtifactPaths,
+  stagedPaths: SpecCreatorArtifactPaths,
+  stagingRoot: string,
+): string[] {
+  return collectSpecCreatorApplyManifest(targetPaths, stagedPaths, stagingRoot);
+}
+
 function shouldGenerateDesignMarkdown(
   context: SpecCreatorContextPayload,
 ): boolean {
+  if (context.polish !== undefined) {
+    return context.polish.includeDesignTarget;
+  }
   const requirements = context.spec_context.requirements_text;
-  return /設計|design|architecture|アーキテクチャ|migration|移行|trade[\s-]?off|トレードオフ/iu
-    .test(requirements);
+  return SPEC_CREATOR_DESIGN_SIGNAL_PATTERN.test(requirements);
 }
 
 function collectDeltaSpecPaths(changeDir: string, changeId: string): string[] {
@@ -1474,17 +1561,22 @@ function applyStagedArtifactsAtomically(
   const {
     stagingRoot,
     stagedPaths,
-    targetPaths,
     stagedOutputPath,
     outputPath,
     artifactSnapshotBeforeWorkflow,
     outputSnapshotBeforeWorkflow,
+    targetPaths,
   } = options;
+  const applyManifest = collectSpecCreatorApplyManifest(
+    targetPaths,
+    stagedPaths,
+    stagingRoot,
+  );
 
   try {
-    for (const stagedArtifactPath of listSpecCreatorArtifactPaths(stagedPaths)) {
-      const targetArtifactPath = mapPathFromStagingWorkspace(
-        stagedArtifactPath,
+    for (const targetArtifactPath of applyManifest) {
+      const stagedArtifactPath = mapPathToStagingWorkspace(
+        targetArtifactPath,
         stagingRoot,
       );
       const stagedContent = readArtifactContentOrNull(stagedArtifactPath);
@@ -1493,7 +1585,7 @@ function applyStagedArtifactsAtomically(
     const stagedOutputContent = readArtifactContentOrNull(stagedOutputPath);
     restoreSingleFileContent(outputPath, stagedOutputContent);
   } catch (error) {
-    restoreArtifactContents(targetPaths, artifactSnapshotBeforeWorkflow);
+    restoreArtifactContents(applyManifest, artifactSnapshotBeforeWorkflow);
     restoreSingleFileContent(outputPath, outputSnapshotBeforeWorkflow);
     throw error;
   }
@@ -1534,10 +1626,10 @@ function didArtifactContentsChange(
 }
 
 function restoreArtifactContents(
-  paths: SpecCreatorArtifactPaths,
+  artifactPaths: string[],
   snapshot: ArtifactSnapshot,
 ): void {
-  for (const artifactPath of listSpecCreatorArtifactPaths(paths)) {
+  for (const artifactPath of artifactPaths) {
     restoreSingleFileContent(artifactPath, snapshot[artifactPath] ?? null);
   }
 }

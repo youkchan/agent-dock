@@ -1,10 +1,16 @@
+import path from "node:path";
 import {
   collectSpecCreatorQualityViolations,
   type SpecCreatorArtifactPaths,
 } from "./spec_creator_quality.ts";
 
+type ArtifactTextOverrides = Partial<Record<
+  "proposalPath" | "tasksPath" | "designPath" | "codeSummaryPath" | "deltaSpecPath",
+  string
+>>;
+
 function withTempArtifacts(
-  files: Partial<Record<keyof SpecCreatorArtifactPaths, string>>,
+  files: ArtifactTextOverrides,
   fn: (paths: SpecCreatorArtifactPaths) => void,
 ): void {
   const root = Deno.makeTempDirSync();
@@ -16,7 +22,10 @@ function withTempArtifacts(
       codeSummaryPath: `${root}/code_summary.md`,
       deltaSpecPath: `${root}/spec.md`,
     };
-    const defaults: Record<keyof SpecCreatorArtifactPaths, string> = {
+    const defaults: Record<
+      "proposalPath" | "tasksPath" | "designPath" | "codeSummaryPath" | "deltaSpecPath",
+      string
+    > = {
       proposalPath: "# proposal\n",
       tasksPath: "## 1. tasks\n- [ ] 1.1 sample\n",
       designPath: "# design\n",
@@ -24,7 +33,63 @@ function withTempArtifacts(
       deltaSpecPath: "## ADDED Requirements\n",
     };
     for (const key of Object.keys(paths) as Array<keyof SpecCreatorArtifactPaths>) {
-      Deno.writeTextFileSync(paths[key], files[key] ?? defaults[key]);
+      if (key === "deltaSpecPaths") {
+        continue;
+      }
+      const fileKey = key as keyof ArtifactTextOverrides;
+      Deno.writeTextFileSync(
+        paths[key] as string,
+        files[fileKey] ?? defaults[fileKey],
+      );
+    }
+    fn(paths);
+  } finally {
+    Deno.removeSync(root, { recursive: true });
+  }
+}
+
+function withTempArtifactsAndExtraSpecs(
+  files: ArtifactTextOverrides,
+  extraSpecs: Record<string, string>,
+  fn: (paths: SpecCreatorArtifactPaths) => void,
+): void {
+  const root = Deno.makeTempDirSync();
+  try {
+    const paths: SpecCreatorArtifactPaths = {
+      proposalPath: `${root}/proposal.md`,
+      tasksPath: `${root}/tasks.md`,
+      designPath: `${root}/design.md`,
+      codeSummaryPath: `${root}/code_summary.md`,
+      deltaSpecPath: `${root}/spec.md`,
+      deltaSpecPaths: [`${root}/spec.md`],
+    };
+    const defaults: Record<
+      "proposalPath" | "tasksPath" | "designPath" | "codeSummaryPath" | "deltaSpecPath",
+      string
+    > = {
+      proposalPath: "# proposal\n",
+      tasksPath: "## 1. tasks\n- [ ] 1.1 sample\n",
+      designPath: "# design\n",
+      codeSummaryPath: "# code_summary\n",
+      deltaSpecPath: "## ADDED Requirements\n",
+    };
+    for (const key of Object.keys(paths) as Array<keyof SpecCreatorArtifactPaths>) {
+      if (key === "deltaSpecPaths") {
+        continue;
+      }
+      const fileKey = key as keyof ArtifactTextOverrides;
+      Deno.writeTextFileSync(
+        paths[key] as string,
+        files[fileKey] ?? defaults[fileKey],
+      );
+    }
+    for (const [relativePath, content] of Object.entries(extraSpecs)) {
+      const specPath = `${root}/${relativePath}`;
+      Deno.mkdirSync(path.dirname(specPath), {
+        recursive: true,
+      });
+      Deno.writeTextFileSync(specPath, content);
+      paths.deltaSpecPaths?.push(specPath);
     }
     fn(paths);
   } finally {
@@ -110,6 +175,20 @@ Deno.test("quality guard detects task 1.5 sendback ambiguity", () => {
   });
 });
 
+Deno.test("quality guard detects proposal contradiction for design generation mode", () => {
+  withTempArtifacts({
+    proposalPath: [
+      "- 再生成対象は `proposal.md` `tasks.md` `code_summary.md` `specs/**/spec.md` とし、`design.md` は必要時のみ生成または更新する。",
+      "- Codex から得た `proposal/design/tasks/code_summary/spec.md` の完成形を一括受領する。",
+    ].join("\n"),
+  }, (paths) => {
+    const violations = collectSpecCreatorQualityViolations(paths);
+    if (!hasRule(violations, "design_generation_mode")) {
+      throw new Error("expected design_generation_mode violation");
+    }
+  });
+});
+
 Deno.test("quality guard detects persona-dir contract gaps and missing custom assignment", () => {
   withTempArtifacts({
     proposalPath: "- use --persona-dir for personas\n",
@@ -171,4 +250,21 @@ Deno.test("quality guard passes for aligned artifacts", () => {
       );
     }
   });
+});
+
+Deno.test("quality guard scans all delta spec files, not only first one", () => {
+  withTempArtifactsAndExtraSpecs(
+    {
+      deltaSpecPath: "## ADDED Requirements\n### Requirement: baseline\n",
+    },
+    {
+      "specs/extra/spec.md": "- GIVEN task_config.review includes [code-reviewer]\n",
+    },
+    (paths) => {
+      const violations = collectSpecCreatorQualityViolations(paths);
+      if (!hasRule(violations, "data_model_key")) {
+        throw new Error("expected data_model_key violation from extra spec");
+      }
+    },
+  );
 });

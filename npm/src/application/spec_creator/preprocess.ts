@@ -41,6 +41,10 @@ export interface SpecCreatorTaskConfig extends SpecCreatorTaskConfigTemplate {
   };
 }
 
+interface BuildSpecCreatorTaskConfigOptions {
+  includeDesignTarget?: boolean;
+}
+
 const DEFAULT_SPEC_CREATOR_PERSONAS = [
   "spec-planner",
   "spec-reviewer",
@@ -58,14 +62,9 @@ const DEFAULT_PROMPT_IO: SpecCreatorPromptIO = {
 
 export function normalizeChangeId(raw: string): string {
   const normalized = raw.trim();
-  if (!/^[a-z][a-z0-9-]*$/u.test(normalized)) {
+  if (!/^[a-z0-9][a-z0-9-]*$/u.test(normalized)) {
     throw new Error(
-      "spec creator requires --change-id in kebab-case (e.g. add-sample-change)",
-    );
-  }
-  if (!normalized.startsWith("add-")) {
-    throw new Error(
-      "spec creator requires --change-id to start with add- (e.g. add-sample-change)",
+      "spec creator requires --change-id in kebab-case (e.g. sample-change)",
     );
   }
   if (normalized.length > 64) {
@@ -121,12 +120,20 @@ export function collectSpecContextInteractive(
 export function buildSpecCreatorTaskConfig(
   changeId: string,
   specContext: SpecContext,
+  options: BuildSpecCreatorTaskConfigOptions = {},
 ): SpecCreatorTaskConfig {
   const template = createSpecCreatorTaskConfigTemplate(changeId);
+  const includeDesignTarget = options.includeDesignTarget !== false;
+  const tasksForScope = scopeSpecCreatorTasksByDesignTarget(
+    template.tasks,
+    changeId,
+    includeDesignTarget,
+  );
   const contextText = buildSpecContextPromptSection(specContext);
-  const tasks = template.tasks.map((task) => ({
+  const tasks = tasksForScope.map((task) => ({
     ...task,
     target_paths: [...task.target_paths],
+    related_paths: [...task.related_paths],
     depends_on: [...task.depends_on],
     persona_policy: task.persona_policy === null
       ? null
@@ -147,22 +154,70 @@ export function buildSpecCreatorTaskConfig(
   };
 }
 
+function scopeSpecCreatorTasksByDesignTarget(
+  tasks: SpecCreatorTaskConfigTemplate["tasks"],
+  changeId: string,
+  includeDesignTarget: boolean,
+): SpecCreatorTaskConfigTemplate["tasks"] {
+  const cloned = tasks.map((task) => ({
+    ...task,
+    target_paths: [...task.target_paths],
+    related_paths: [...task.related_paths],
+    depends_on: [...task.depends_on],
+    persona_policy: task.persona_policy === null
+      ? null
+      : structuredClone(task.persona_policy),
+  }));
+  if (includeDesignTarget) {
+    return cloned;
+  }
+
+  const designPath = `openspec/changes/${changeId}/design.md`;
+  const removedTaskIds = new Set<string>();
+  const withoutDesignPaths = cloned.map((task) => ({
+    ...task,
+    target_paths: task.target_paths.filter((item) => item !== designPath),
+    related_paths: task.related_paths.filter((item) => item !== designPath),
+  }));
+  const keptTasks = withoutDesignPaths.filter((task) => {
+    if (task.target_paths.length > 0) {
+      return true;
+    }
+    removedTaskIds.add(task.id);
+    return false;
+  });
+  if (removedTaskIds.size === 0) {
+    return keptTasks;
+  }
+  return keptTasks.map((task) => ({
+    ...task,
+    depends_on: task.depends_on.filter((dep) => !removedTaskIds.has(dep)),
+  }));
+}
+
 function buildSpecContextPromptSection(specContext: SpecContext): string {
   const activePersonas = specContext.persona_policy.active_personas.length > 0
     ? specContext.persona_policy.active_personas.join(", ")
     : "(none)";
+  const requirementsLines = toPromptMultilineBlock(specContext.requirements_text);
 
   return [
     "spec_context:",
-    `- requirements_text: ${normalizeLine(specContext.requirements_text)}`,
+    "- requirements_text: |",
+    ...requirementsLines.map((line) => `  ${line}`),
     `- language: ${specContext.language}`,
     `- runtime_stack: ${specContext.runtime_stack} (TypeScript-only runtime, use src/**/*.ts)`,
     `- active_personas: ${activePersonas}`,
   ].join("\n");
 }
 
-function normalizeLine(raw: string): string {
-  return raw.replaceAll(/\s+/gu, " ").trim();
+function toPromptMultilineBlock(raw: string): string[] {
+  const normalized = raw.replaceAll(/\r\n?/gu, "\n");
+  const lines = normalized.split("\n");
+  while (lines.length > 1 && lines[lines.length - 1].trim().length === 0) {
+    lines.pop();
+  }
+  return lines.length > 0 ? lines : [""];
 }
 
 function promptRequired(io: SpecCreatorPromptIO, label: string): string {
@@ -242,7 +297,6 @@ function proposeChangeIdFromCodex(requirementsText: string): string {
     "Constraints:",
     "- one line only",
     "- kebab-case only",
-    "- must start with add-",
     "- max 64 chars",
     "",
     `requirements_text: ${requirementsText}`,
@@ -330,10 +384,10 @@ function proposeChangeIdLocal(requirementsText: string): string {
   }
   const body = uniqueTokens.slice(0, 4).join("-");
   if (!body) {
-    return "add-change";
+    return "change";
   }
-  const candidate = `add-${body}`.slice(0, 64).replace(/-+$/u, "");
-  return candidate || "add-change";
+  const candidate = body.slice(0, 64).replace(/-+$/u, "");
+  return candidate || "change";
 }
 
 function confirmSpecContext(

@@ -11,6 +11,7 @@ const TASK_HEADER_PATTERN = /^\s*-\s*\[[ xX]\]\s*(.+?)\s*$/;
 const TASK_ID_PREFIX_PATTERN =
   /^(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*)/i;
 const CHECKBOX_ITEM_PATTERN = /^\s*-\s*\[[ xX]\]\s*.+$/m;
+const SPEC_CREATOR_CHANGE_ROOT = path.join("openspec", "changes");
 
 const REVIEWER_STOP_BULLETS_BY_LANG: Record<SupportedTemplateLang, string[]> = {
   ja: [
@@ -132,6 +133,91 @@ export interface SpecCreatorPolishSummary {
   ruleCounts: MarkdownPolishRuleCounts;
 }
 
+export type SpecCreatorPolishLanguage = "ja" | "en";
+
+const SPEC_CREATOR_POLISH_REGENERATE_TARGETS = [
+  "proposal.md",
+  "tasks.md",
+  "code_summary.md",
+  "specs/**/spec.md",
+] as const;
+
+export const SPEC_CREATOR_POLISH_DESIGN_TARGET = "design.md";
+
+export interface BuildSpecCreatorPolishPromptOptions {
+  changeId: string;
+  markdownContexts: string[];
+  feedback?: string | null;
+  includeDesignTarget?: boolean;
+}
+
+export interface BuildSpecCreatorPolishPromptResult {
+  language: SpecCreatorPolishLanguage;
+  requirementsText: string;
+  requiredRegenerateTargets: string[];
+  regenerateTargets: string[];
+}
+
+export function buildSpecCreatorPolishPrompt(
+  options: BuildSpecCreatorPolishPromptOptions,
+): BuildSpecCreatorPolishPromptResult {
+  const changeId = normalizeText(options.changeId, "");
+  if (changeId.length === 0) {
+    throw new Error("spec-creator polish requires change_id");
+  }
+
+  const markdownContexts = options.markdownContexts;
+  if (markdownContexts.length === 0) {
+    throw new Error(
+      "spec-creator polish requires at least one markdown context",
+    );
+  }
+
+  const feedback = normalizeText(options.feedback, "");
+  const languageSource = feedback.length > 0
+    ? `${markdownContexts.join("\n")}\nfeedback: ${feedback}`
+    : markdownContexts.join("\n");
+  const language = detectSpecCreatorLanguage(languageSource);
+  const includeDesignTarget = options.includeDesignTarget === true;
+  const requiredRegenerateTargets = [...SPEC_CREATOR_POLISH_REGENERATE_TARGETS];
+  const regenerateTargets = includeDesignTarget
+    ? [...requiredRegenerateTargets, SPEC_CREATOR_POLISH_DESIGN_TARGET]
+    : [...requiredRegenerateTargets];
+
+  const requirementsText = [
+    `polish target: ${changeId}`,
+    "source_markdown_context:",
+    ...markdownContexts,
+    "",
+  ];
+
+  if (feedback.length > 0) {
+    requirementsText.push(`feedback: ${feedback}`, "");
+  }
+
+  const designTargetLine = includeDesignTarget
+    ? `- ${SPEC_CREATOR_POLISH_DESIGN_TARGET}`
+    : `- ${SPEC_CREATOR_POLISH_DESIGN_TARGET} (${
+      language === "ja" ? "必要時のみ" : "when needed"
+    })`;
+
+  requirementsText.push(
+    "regenerate targets:",
+    ...requiredRegenerateTargets.map((target) => `- ${target}`),
+    designTargetLine,
+    "",
+    "latest contract (5 lines + judgment):",
+    ...latestContractLines(language),
+  );
+
+  return {
+    language,
+    requirementsText: requirementsText.join("\n"),
+    requiredRegenerateTargets,
+    regenerateTargets,
+  };
+}
+
 const PROPOSAL_TEMPLATE_BY_LANG: Record<
   SupportedTemplateLang,
   {
@@ -172,6 +258,7 @@ const PROPOSAL_TEMPLATE_BY_LANG: Record<
   },
 };
 
+
 export function collectChangeFilesRecursively(
   changeRootPath: string,
 ): ChangeFileQueue {
@@ -205,6 +292,32 @@ export function collectChangeFilesRecursively(
     nonMarkdownFiles,
     processingQueue,
   };
+}
+
+export function collectSpecCreatorPolishMarkdownContexts(
+  changeId: string,
+  commandLabel = "spec-creator polish",
+): string[] {
+  const changeDir = path.resolve(SPEC_CREATOR_CHANGE_ROOT, changeId);
+  const changeDirStat = safeStat(changeDir);
+  if (!changeDirStat?.isDirectory) {
+    throw new Error(
+      `${commandLabel} requires existing change_id directory: ${changeId}`,
+    );
+  }
+
+  const queue = collectChangeFilesRecursively(changeDir);
+  if (queue.markdownFiles.length === 0) {
+    throw new Error(
+      `spec-creator polish requires at least one markdown file under openspec/changes/${changeId}`,
+    );
+  }
+
+  return queue.markdownFiles.map((filePath) => {
+    const content = safeReadTextFile(filePath).trim();
+    const relPath = path.relative(Deno.cwd(), filePath) || filePath;
+    return `### ${relPath}\n${content}`;
+  });
 }
 
 export function polishMarkdownFiles(
@@ -668,6 +781,26 @@ function appendLineIfMissing(body: string, line: string): string {
   return `${body}\n${line}`;
 }
 
+function latestContractLines(lang: SpecCreatorPolishLanguage): string[] {
+  if (lang === "ja") {
+    return [
+      "- review/spec_check/test の完了出力は `5行契約`（RESULT, SUMMARY, CHANGED_FILES, CHECKS, JUDGMENT）を必須とする。",
+      "- `JUDGMENT` は必須行で、値は `pass` / `changes_required` / `blocked` のみ許容する。",
+      "- 判定は3値化（pass / changes_required / blocked）を前提とする。",
+    ];
+  }
+
+  return [
+    "- review/spec_check/test must require a 5-line contract (RESULT, SUMMARY, CHANGED_FILES, CHECKS, JUDGMENT).",
+    "- JUDGMENT is mandatory and must be one of pass | changes_required | blocked.",
+    "- Keep judgment as three-valued (pass / changes_required / blocked).",
+  ];
+}
+
+function detectSpecCreatorLanguage(raw: string): SpecCreatorPolishLanguage {
+  return /[\u3040-\u30ff\u4e00-\u9fff]/u.test(raw) ? "ja" : "en";
+}
+
 function normalizeSectionBody(
   raw: string | undefined,
   fallback: string,
@@ -845,6 +978,14 @@ function safeReadBinaryFile(filePath: string): Uint8Array {
 
 function isFenceLine(line: string): boolean {
   return /^\s*(?:```|~~~)/u.test(line);
+}
+
+function isDirectory(filePath: string): boolean {
+  try {
+    return Deno.statSync(filePath).isDirectory;
+  } catch {
+    return false;
+  }
 }
 
 function walkDirectoryRecursively(rootPath: string, output: string[]): void {

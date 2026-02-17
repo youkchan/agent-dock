@@ -8,6 +8,7 @@ export interface SpecCreatorArtifactPaths {
   designPath: string;
   codeSummaryPath: string;
   deltaSpecPath: string;
+  deltaSpecPaths?: string[];
 }
 
 export interface SpecCreatorQualityViolation {
@@ -22,7 +23,7 @@ interface LoadedArtifacts {
   tasks: string;
   design: string;
   codeSummary: string;
-  spec: string;
+  specs: Array<{ path: string; text: string }>;
 }
 
 interface TaskSection {
@@ -36,6 +37,13 @@ const PERSONA_DIR_PATTERN = /--persona-dir/iu;
 const BLOCKED_IMMEDIATE_PATTERN = /即時\s*blocked|immediate(?:ly)?\s+blocked/iu;
 const BLOCKED_WAIT_ALL_PATTERN =
   /(?:全員|全件|全担当).*(?:結果).*(?:取得|回収)|wait(?:s|ing)?\s+for\s+all\s+results/iu;
+const DESIGN_OPTIONAL_PATTERN =
+  /design\.md.*(?:必要時|必要な場合|必要に応じて|only when|required|as needed)/iu;
+const DESIGN_BATCH_TARGET_PATTERN =
+  /proposal(?:\.md)?[^。\n]*design(?:\.md)?[^。\n]*tasks(?:\.md)?[^。\n]*code_summary(?:\.md)?/iu;
+const DESIGN_BATCH_ACTION_PATTERN =
+  /一括(?:受領|生成|再生成|更新)|single context pass|all target artifacts|complete rewritten files/iu;
+const DESIGN_BATCH_SHORTCUT_PATTERN = /proposal\/design\/tasks\/code_summary\/spec\.md/iu;
 
 export function assertSpecCreatorSemanticContracts(
   paths: SpecCreatorArtifactPaths,
@@ -58,19 +66,23 @@ export function collectSpecCreatorQualityViolations(
 ): SpecCreatorQualityViolation[] {
   const artifacts = loadArtifacts(paths);
   const violations: SpecCreatorQualityViolation[] = [];
+  const allSpecText = artifacts.specs.map((item) => item.text).join("\n");
   const combined = [
     artifacts.proposal,
     artifacts.tasks,
     artifacts.design,
     artifacts.codeSummary,
-    artifacts.spec,
+    allSpecText,
   ].join("\n");
 
-  pushRunConfigCompileConflict(violations, paths.deltaSpecPath, artifacts.spec);
-  pushBlockedTimingConflict(violations, paths.deltaSpecPath, artifacts.spec);
-  pushWrongTaskConfigKey(violations, paths.deltaSpecPath, artifacts.spec);
+  for (const specArtifact of artifacts.specs) {
+    pushRunConfigCompileConflict(violations, specArtifact.path, specArtifact.text);
+    pushBlockedTimingConflict(violations, specArtifact.path, specArtifact.text);
+    pushWrongTaskConfigKey(violations, specArtifact.path, specArtifact.text);
+  }
   pushTask14BlockedTestConflict(violations, paths.tasksPath, artifacts.tasks);
   pushTask15SendbackAmbiguity(violations, paths.tasksPath, artifacts.tasks);
+  pushDesignGenerationConsistency(violations, paths.proposalPath, artifacts.proposal);
 
   if (PERSONA_DIR_PATTERN.test(combined)) {
     pushRunSpecCreatorCoverage(violations, paths, artifacts);
@@ -79,6 +91,36 @@ export function collectSpecCreatorQualityViolations(
   }
 
   return violations;
+}
+
+function pushDesignGenerationConsistency(
+  violations: SpecCreatorQualityViolation[],
+  proposalPath: string,
+  proposalText: string,
+): void {
+  if (!DESIGN_OPTIONAL_PATTERN.test(proposalText)) {
+    return;
+  }
+  const lines = proposalText.split(/\r?\n/u);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const hasBatchTarget = DESIGN_BATCH_TARGET_PATTERN.test(line) ||
+      DESIGN_BATCH_SHORTCUT_PATTERN.test(line);
+    if (!hasBatchTarget) {
+      continue;
+    }
+    if (!DESIGN_BATCH_ACTION_PATTERN.test(line)) {
+      continue;
+    }
+    violations.push({
+      rule_id: "design_generation_mode",
+      file: proposalPath,
+      line: index + 1,
+      message:
+        "proposal must not mix `design.md required-only` with always-included batch regeneration wording",
+    });
+    return;
+  }
 }
 
 function pushRunSpecCreatorCoverage(
@@ -150,7 +192,9 @@ function pushPersonaDirFormatContract(
   paths: SpecCreatorArtifactPaths,
   artifacts: LoadedArtifacts,
 ): void {
-  const scope = `${artifacts.spec}\n${artifacts.design}`;
+  const scope = `${artifacts.specs.map((item) => item.text).join("\n")}\n${
+    artifacts.design
+  }`;
   const hasPersonasJson = /personas\.json/iu.test(scope);
   const hasArraySchema = /JSON配列|json array/iu.test(scope);
   const hasMissingContract = /不在|missing|not found/iu.test(scope);
@@ -167,8 +211,8 @@ function pushPersonaDirFormatContract(
   }
   violations.push({
     rule_id: "input_contract",
-    file: paths.deltaSpecPath,
-    line: firstMatchLine(artifacts.spec, PERSONA_DIR_PATTERN) ?? 1,
+    file: firstDeltaSpecPath(paths),
+    line: firstMatchLine(scope, PERSONA_DIR_PATTERN) ?? 1,
     message:
       "persona-dir contract must fix file path, schema, and fail-closed conditions",
   });
@@ -249,7 +293,9 @@ function pushCustomPersonaAssignmentCoverage(
   paths: SpecCreatorArtifactPaths,
   artifacts: LoadedArtifacts,
 ): void {
-  const scope = `${artifacts.spec}\n${artifacts.tasks}`;
+  const scope = `${artifacts.specs.map((item) => item.text).join("\n")}\n${
+    artifacts.tasks
+  }`;
   const hasCustomPersona = /custom-reviewer|custom persona|カスタムペルソナ/iu.test(
     scope,
   );
@@ -259,27 +305,58 @@ function pushCustomPersonaAssignmentCoverage(
   }
   violations.push({
     rule_id: "assignment_coverage",
-    file: paths.deltaSpecPath,
-    line: firstMatchLine(artifacts.spec, PERSONA_DIR_PATTERN) ?? 1,
+    file: firstDeltaSpecPath(paths),
+    line: firstMatchLine(scope, PERSONA_DIR_PATTERN) ?? 1,
     message:
       "requirements must include custom persona assignment acceptance scenario",
   });
 }
 
 function loadArtifacts(paths: SpecCreatorArtifactPaths): LoadedArtifacts {
+  const specs = allDeltaSpecPaths(paths).map((specPath) => ({
+    path: specPath,
+    text: readText(specPath),
+  }));
   return {
     proposal: readText(paths.proposalPath),
     tasks: readText(paths.tasksPath),
-    design: readText(paths.designPath),
+    design: readTextOptional(paths.designPath),
     codeSummary: readText(paths.codeSummaryPath),
-    spec: readText(paths.deltaSpecPath),
+    specs,
   };
+}
+
+function allDeltaSpecPaths(paths: SpecCreatorArtifactPaths): string[] {
+  const merged = [
+    ...(Array.isArray(paths.deltaSpecPaths) ? paths.deltaSpecPaths : []),
+    paths.deltaSpecPath,
+  ];
+  const unique = [...new Set(merged.filter((item) => item.length > 0))];
+  unique.sort((left, right) => left.localeCompare(right));
+  return unique;
+}
+
+function firstDeltaSpecPath(paths: SpecCreatorArtifactPaths): string {
+  const all = allDeltaSpecPaths(paths);
+  return all[0] ?? paths.deltaSpecPath;
 }
 
 function readText(filePath: string): string {
   try {
     return Deno.readTextFileSync(filePath);
   } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`failed to read artifact ${filePath}: ${reason}`);
+  }
+}
+
+function readTextOptional(filePath: string): string {
+  try {
+    return Deno.readTextFileSync(filePath);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return "";
+    }
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`failed to read artifact ${filePath}: ${reason}`);
   }

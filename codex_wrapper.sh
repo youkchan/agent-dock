@@ -150,9 +150,11 @@ fi
 
 CMD+=("-")
 
+echo "[codex_wrapper] prompt_chars=${#PROMPT}" >&2
+
 if [[ "${CODEX_WRAPPER_DEBUG:-0}" == "1" ]]; then
   printf '%s' "$PROMPT" > "$TMP_PROMPT_LOG" || true
-  echo "[codex_wrapper] prompt_chars=${#PROMPT} prompt_log=$TMP_PROMPT_LOG" >&2
+  echo "[codex_wrapper] prompt_log=$TMP_PROMPT_LOG" >&2
   echo "[codex_wrapper] prompt_stdin=$TMP_PROMPT_FILE" >&2
   printf '[codex_wrapper] cmd=' >&2
   printf '%q ' "${CMD[@]}" >&2

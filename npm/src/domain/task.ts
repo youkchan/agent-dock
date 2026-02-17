@@ -47,6 +47,7 @@ export interface Task {
   title: string;
   description: string;
   target_paths: string[];
+  related_paths: string[];
   depends_on: string[];
   owner: string | null;
   planner: string | null;
@@ -72,6 +73,7 @@ export interface TaskInit {
   title: string;
   description?: string;
   target_paths?: string[];
+  related_paths?: string[];
   depends_on?: string[];
   owner?: string | null;
   planner?: string | null;
@@ -107,6 +109,7 @@ export function createTask(input: TaskInit): Task {
     title: input.title,
     description: input.description ?? "",
     target_paths: [...(input.target_paths ?? [])],
+    related_paths: [...(input.related_paths ?? [])],
     depends_on: [...(input.depends_on ?? [])],
     owner: input.owner ?? null,
     planner: input.planner ?? null,
@@ -134,6 +137,7 @@ export function taskToRecord(task: Task): Record<string, unknown> {
     title: task.title,
     description: task.description,
     target_paths: [...task.target_paths],
+    related_paths: [...task.related_paths],
     depends_on: [...task.depends_on],
     owner: task.owner,
     planner: task.planner,
@@ -172,6 +176,7 @@ export function taskFromRecord(raw: Record<string, unknown>): Task {
     title: String(raw.title),
     description: asOptionalString(raw.description) ?? "",
     target_paths: asStringArray(raw.target_paths),
+    related_paths: asStringArray(raw.related_paths),
     depends_on: asStringArray(raw.depends_on),
     owner: asOptionalString(raw.owner),
     planner: asOptionalString(raw.planner),

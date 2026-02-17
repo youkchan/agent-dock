@@ -1,6 +1,8 @@
 import {
+  buildSpecCreatorTaskConfig,
   collectSpecContextInteractive,
   normalizeChangeId,
+  type SpecContext,
 } from "./preprocess.ts";
 
 function assertThrowsMessage(fn: () => void, messagePart: string): void {
@@ -197,5 +199,65 @@ Deno.test("collectSpecContextInteractive allows overriding proposed change_id", 
 
   if (result.change_id !== "add-custom-change-id") {
     throw new Error(`unexpected change_id: ${result.change_id}`);
+  }
+});
+
+Deno.test("buildSpecCreatorTaskConfig excludes design targets when includeDesignTarget is false", () => {
+  const changeId = "add-spec-creator";
+  const designPath = `openspec/changes/${changeId}/design.md`;
+  const specContext: SpecContext = {
+    requirements_text: "polish requirements",
+    language: "ja",
+    runtime_stack: "typescript",
+    persona_policy: {
+      active_personas: ["spec-planner", "spec-reviewer", "spec-code-creator"],
+    },
+  };
+
+  const config = buildSpecCreatorTaskConfig(changeId, specContext, {
+    includeDesignTarget: false,
+  });
+
+  if (config.tasks.some((task) => task.id === "1.4")) {
+    throw new Error("task 1.4 should be removed when design target is disabled");
+  }
+  for (const task of config.tasks) {
+    if (task.target_paths.includes(designPath)) {
+      throw new Error(`target_paths should exclude design.md for ${task.id}`);
+    }
+    if (task.related_paths.includes(designPath)) {
+      throw new Error(`related_paths should exclude design.md for ${task.id}`);
+    }
+  }
+
+  const task16 = config.tasks.find((task) => task.id === "1.6");
+  if (!task16) {
+    throw new Error("task 1.6 should exist");
+  }
+  if (task16.depends_on.includes("1.4")) {
+    throw new Error("task 1.6 should not depend on removed task 1.4");
+  }
+});
+
+Deno.test("buildSpecCreatorTaskConfig keeps multiline requirements_text in task description", () => {
+  const specContext: SpecContext = {
+    requirements_text: [
+      "line 1",
+      "line 2",
+      "line 3",
+    ].join("\n"),
+    language: "ja",
+    runtime_stack: "typescript",
+    persona_policy: {
+      active_personas: ["spec-planner"],
+    },
+  };
+  const config = buildSpecCreatorTaskConfig("add-spec-creator", specContext);
+  const description = config.tasks[0]?.description ?? "";
+  if (!description.includes("- requirements_text: |")) {
+    throw new Error("requirements_text block marker should be present");
+  }
+  if (!description.includes("  line 1\n  line 2\n  line 3")) {
+    throw new Error("multiline requirements_text should be preserved");
   }
 });

@@ -461,6 +461,10 @@ function normalizeTaskFromLegacyPayload(payload: RuntimePayload): RuntimePayload
     task.target_paths = payload.target_paths;
   }
 
+  if ("related_paths" in payload) {
+    task.related_paths = payload.related_paths;
+  }
+
   if ("depends_on" in payload) {
     task.depends_on = payload.depends_on;
   }
@@ -739,6 +743,7 @@ function maybeEmitRuntimeDebug(
   promptPath: string,
   command: string[],
 ): void {
+  console.error(`[codex_wrapper] prompt_chars=${prompt.length}`);
   if (env.codexWrapperDebug !== "1") {
     return;
   }
@@ -747,9 +752,7 @@ function maybeEmitRuntimeDebug(
   } catch (_error) {
     // keep execution flow; debug logging is best-effort
   }
-  console.error(
-    `[codex_wrapper] prompt_chars=${prompt.length} prompt_log=${env.codexPromptLogPath}`,
-  );
+  console.error(`[codex_wrapper] prompt_log=${env.codexPromptLogPath}`);
   console.error(`[codex_wrapper] prompt_stdin=${promptPath}`);
   console.error(`[codex_wrapper] cmd=${renderCommandForDebug(command)}`);
 }

@@ -152,15 +152,9 @@ Deno.test("buildPrompt includes related_paths and editable_paths scope", () => {
   );
   assert(
     prompt.includes(
-      "Do not edit outside editable_paths (target_paths + related_paths)",
+      "Treat editable_paths (target_paths + related_paths) as implementation hints, not hard limits",
     ),
-    "prompt should enforce editable scope",
-  );
-  assert(
-    prompt.includes(
-      "If CHANGED_FILES includes related_paths, SUMMARY must include additional_edit_reason=<reason>",
-    ),
-    "prompt should require reason tag when related_paths are edited",
+    "prompt should include editable scope guidance",
   );
 });
 
@@ -280,7 +274,7 @@ Deno.test("golden contract has zero diff for fixed payload, prompt, stream and r
     "- [1771247093.362] system: execution started persona=implementer phase=implement",
     "",
     "Constraints:",
-    "- Do not edit outside editable_paths (target_paths + related_paths)",
+    "- Treat editable_paths (target_paths + related_paths) as implementation hints, not hard limits",
     "- Do not read/reference/edit .env or .env.*",
     "- Run required local checks",
     "- OpenSpec change_id: add-codex-wrapper-step1-contract-first-golden-compat",
@@ -289,7 +283,6 @@ Deno.test("golden contract has zero diff for fixed payload, prompt, stream and r
     "- Do not use `agent-dock openspec ...` or `./node_modules/.bin/openspec ...`",
     "- For `deno test`, use `--allow-read --allow-write --allow-env --allow-run` by default",
     "- If failed, provide a short root cause",
-    "",
     "",
     "",
     "",

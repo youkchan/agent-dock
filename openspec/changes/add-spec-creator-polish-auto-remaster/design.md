@@ -3,12 +3,12 @@
 ## Context
 `spec-creator polish` は既存 change の markdown 群をコンテキストとして再設計し、
 openspec の最新規約（implement 必須、5行契約、3値判定）へ一括整合する機能。
-入力コンテキストは `openspec/changes/<change_id>/` 配下の全 `.md` とする。
+入力コンテキストは `openspec/changes/<change_id>/` 配下の全 `.md` を収集する。
 再生成対象は `proposal.md` `tasks.md` `code_summary.md` `specs/**/spec.md` とし、`design.md` は必要時のみ対象に含める。
 今回の要件は、`design.md` は必要時のみ作成・更新する判定を導入する点が核心。
 
 ## Goals
-- 指定 change 配下の全 `.md` を入力として読み取り、Codex により再生成対象（`proposal.md` `tasks.md` `code_summary.md` `specs/**/spec.md` + 必要時 `design.md`）の全体整合を再設計する。
+- 指定 change 配下の全 `.md` を入力候補として収集し、Codex にはプロンプト長上限内でベストエフォート投入した上で、再生成対象（`proposal.md` `tasks.md` `code_summary.md` `specs/**/spec.md` + 必要時 `design.md`）の全体整合を再設計する。
 - `design.md` は、技術的な判断が必要な場合のみ生成（既存があり判断不要なら維持、存在しないなら生成）する。
 - `--feedback` を反映し、`openspec validate <change_id> --strict` の通過を担保する。
 
@@ -31,7 +31,7 @@ openspec の最新規約（implement 必須、5行契約、3値判定）へ一�
 上記以外では `design.md` は再生成しない。新規変更で既存が存在せず、かつ条件を満たす場合のみ新規作成する。
 
 ### 3) 実行フロー
-単発の Codex 呼び出しで「既存コンテキスト + 最新基準 + ユーザー feedback」を入力し、多ファイル再設計を行う。
+Codex 呼び出しはタスク単位で1回以上（複数回）を許容する。既存コンテキスト（対象 change 配下の全 `.md`）は一度収集し、各呼び出しではプロンプト長上限内でベストエフォート投入する。最新基準とユーザー feedback をあわせて入力し、多ファイル再設計を行う。
 候補出力は一時領域へ書き出し、openspec strict validate は一時領域に対して実行する。
 strict validate 成功時のみ本体ファイルへ反映し、失敗時は一時領域を破棄して本体ファイルを不変に保つ。
 反映単位は対象ファイル全体で atomic（all-or-nothing）とし、逐次反映は行わない。
@@ -42,8 +42,8 @@ strict validate 成功時のみ本体ファイルへ反映し、失敗時は一�
 判定値 `pass | changes_required | blocked` を満たさせることを最優先条件とする。
 
 ### 5) 実装スコープと完了ゲート
-各実装タスクは `target_paths` を必須対象（実処理に直結）として持ち、
-最小追加修正は `関連許可` に定義した範囲のみ許可する。
+各実装タスクは `target_paths` と `related_paths` を編集ヒントとして持つ。
+実装中に追加で必要になったファイルの編集は許可し、`target_paths/related_paths` は実行時ブロック条件に使わない。
 完了判定は次の3ゲートで行う。
 - 配線ゲート: 実装内容が実実行経路に接続されていること
 - 回帰ゲート: compile/test/validate の必須チェックが通ること
@@ -58,11 +58,8 @@ strict validate 成功時のみ本体ファイルへ反映し、失敗時は一�
 未知サブコマンド・`polish` の引数不正は fail-closed で拒否する。
 
 ### 7) scope 判定の正規化
-許可範囲判定は canonical path 比較で行う。
-`..` を含む相対パス、絶対パス、traversal を reject し、
-`target_paths` と `related_paths` の比較前に同一正規化規則を適用する。
-正規化規則は lexical normalization を基本とし、実在パスは realpath で canonical 化する。
-canonical 解決結果がリポジトリ外へ出る場合（例: symlink 経由）は fail-closed で reject する。
+`target_paths` と `related_paths` は実行時制約ではなく、タスク分解とレビュー時のヒントとして扱う。
+編集可否の機械判定は scope ではなく、最終成果物の仕様整合・テスト結果・review 判定で担保する。
 
 ## Risks and Trade-offs
 - リスク: 判定条件が不足し、必要な design 更新を見逃す可能性

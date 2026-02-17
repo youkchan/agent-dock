@@ -26,6 +26,7 @@ export interface SpecCreatorConfigTask {
   title: string;
   description: string;
   target_paths: string[];
+  related_paths: string[];
   depends_on: SpecCreatorChangeTaskId[];
   requires_plan: boolean;
   persona_policy: TaskPersonaPolicy | null;
@@ -46,13 +47,12 @@ export function createSpecCreatorTaskConfigTemplate(
   const tasksPath = `${changeDir}/tasks.md`;
   const designPath = `${changeDir}/design.md`;
   const codeSummaryPath = `${changeDir}/code_summary.md`;
-  const deltaSpecPath = `${changeDir}/specs/${changeId}/spec.md`;
-  const allOutputPaths = [
+  const deltaSpecGlobPath = `${changeDir}/specs/**/spec.md`;
+  const requiredOutputPaths = [
     proposalPath,
     tasksPath,
-    designPath,
     codeSummaryPath,
-    deltaSpecPath,
+    deltaSpecGlobPath,
   ];
 
   return {
@@ -121,7 +121,8 @@ export function createSpecCreatorTaskConfigTemplate(
         title: "要件をOpenSpec要素へ正規化する",
         description:
           "requirements_text を整理し、change の最小スコープを定義する。",
-        target_paths: [...allOutputPaths],
+        target_paths: [...requiredOutputPaths],
+        related_paths: [designPath],
         depends_on: [],
         requires_plan: false,
         persona_policy: createTaskPersonaPolicy({
@@ -134,6 +135,7 @@ export function createSpecCreatorTaskConfigTemplate(
         title: "proposal.md を生成する",
         description: "変更理由、変更内容、影響範囲を proposal.md に記述する。",
         target_paths: [proposalPath],
+        related_paths: [designPath],
         depends_on: ["1.1"],
         requires_plan: false,
         persona_policy: createTaskPersonaPolicy({
@@ -147,6 +149,7 @@ export function createSpecCreatorTaskConfigTemplate(
         description:
           "print-openspec-template の固定行を維持し、実装タスクを checklist 形式で定義する。",
         target_paths: [tasksPath],
+        related_paths: [designPath],
         depends_on: ["1.2"],
         requires_plan: false,
         persona_policy: createTaskPersonaPolicy({
@@ -160,6 +163,7 @@ export function createSpecCreatorTaskConfigTemplate(
         description:
           "設計上の判断が必要な場合のみ design.md を作成し、意思決定とトレードオフを記述する。",
         target_paths: [designPath],
+        related_paths: [],
         depends_on: ["1.2"],
         requires_plan: false,
         persona_policy: createTaskPersonaPolicy({
@@ -173,6 +177,7 @@ export function createSpecCreatorTaskConfigTemplate(
         description:
           "tasks.md の task_id と code unit の対応を code_summary.md に記述する。",
         target_paths: [codeSummaryPath],
+        related_paths: [designPath],
         depends_on: ["1.3"],
         requires_plan: false,
         persona_policy: createTaskPersonaPolicy({
@@ -185,7 +190,8 @@ export function createSpecCreatorTaskConfigTemplate(
         title: "生成成果物の整合性をレビューする",
         description:
           "proposal/tasks/design/code_summary の整合、要件逸脱、過剰修正、冗長化を検証する。実行経路、段階責務、判定時系列、入力契約、テスト整合、データモデルキー整合、遷移条件、利用可能性(定義だけでなく割当/実行可能)を確認する。",
-        target_paths: [...allOutputPaths],
+        target_paths: [...requiredOutputPaths],
+        related_paths: [designPath],
         depends_on: ["1.2", "1.3", "1.4", "1.5"],
         requires_plan: false,
         persona_policy: createTaskPersonaPolicy({
@@ -197,7 +203,8 @@ export function createSpecCreatorTaskConfigTemplate(
         title: "OpenSpec strict validate を実行する",
         description:
           "openspec validate <change_id> --strict を実行し、失敗時は修正後に再実行する。",
-        target_paths: [...allOutputPaths],
+        target_paths: [...requiredOutputPaths],
+        related_paths: [designPath],
         depends_on: ["1.6"],
         requires_plan: false,
         persona_policy: createTaskPersonaPolicy({

@@ -334,7 +334,7 @@ depends_on: ${dependsOnText}
 requires_plan: ${requiresPlanText}
 
 Constraints:
-- Do not propose edits outside editable_paths (target_paths + related_paths)
+- Treat editable_paths (target_paths + related_paths) as planning hints, not hard limits
 - Do not read/reference/edit .env or .env.*
 - Keep steps short and concrete
 - Include local verification commands at the end
@@ -353,9 +353,6 @@ Keep total output within 12 lines.`;
     const requiresJudgment = isDecisionTaskPhase(taskPhase);
     const changedFilesConstraint = taskPhase !== null && taskPhase !== "implement"
       ? "- In non-implement phases, CHANGED_FILES must be (none)"
-      : "";
-    const relatedReasonConstraint = relatedPaths.length > 0
-      ? "- If CHANGED_FILES includes related_paths, SUMMARY must include additional_edit_reason=<reason>"
       : "";
     const decisionReviewConstraint = requiresJudgment
       ? [
@@ -418,7 +415,7 @@ existing_progress_log_recent:
 ${progress.recent}
 
 Constraints:
-- Do not edit outside editable_paths (target_paths + related_paths)
+- Treat editable_paths (target_paths + related_paths) as implementation hints, not hard limits
 - Do not read/reference/edit .env or .env.*
 - Run required local checks
 ${openSpecValidationConstraint}
@@ -426,7 +423,6 @@ ${openSpecValidationConstraint}
 - For \`deno test\`, use \`--allow-read --allow-write --allow-env --allow-run\` by default
 - If failed, provide a short root cause
 ${changedFilesConstraint ? `${changedFilesConstraint}\n` : ""}
-${relatedReasonConstraint ? `${relatedReasonConstraint}\n` : ""}
 ${decisionReviewConstraint ? `${decisionReviewConstraint}\n` : ""}
 ${qualityIssueConstraint ? `${qualityIssueConstraint}\n` : ""}
 

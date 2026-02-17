@@ -126,6 +126,38 @@ Deno.test("buildPrompt keeps prompt bool text for requires_plan", () => {
   );
 });
 
+Deno.test("buildPrompt includes related_paths and editable_paths scope", () => {
+  const payload = {
+    mode: "execute",
+    teammate_id: "tm-1",
+    task: {
+      id: "2.8",
+      title: "title",
+      description: "desc",
+      target_paths: ["src/main.ts"],
+      related_paths: ["src/main_test.ts"],
+      depends_on: [],
+      requires_plan: false,
+      progress_log: [],
+    },
+  };
+  const prompt = buildPrompt(payload, makeEnv({ CODEX_DENY_DOTENV: "1" }));
+  assert(
+    prompt.includes("related_paths: src/main_test.ts"),
+    "prompt should include related_paths",
+  );
+  assert(
+    prompt.includes("editable_paths: src/main.ts, src/main_test.ts"),
+    "prompt should include editable_paths",
+  );
+  assert(
+    prompt.includes(
+      "Treat editable_paths (target_paths + related_paths) as implementation hints, not hard limits",
+    ),
+    "prompt should include editable scope guidance",
+  );
+});
+
 Deno.test("buildPrompt injects concrete openspec validate command when change id is provided", () => {
   const payload = {
     mode: "execute",
@@ -233,6 +265,8 @@ Deno.test("golden contract has zero diff for fixed payload, prompt, stream and r
     "title: add golden parity check",
     "description: Verify fixed payload/prompt/stream/result block parity",
     "target_paths: src/infrastructure/wrapper/helper.ts, src/infrastructure/wrapper/helper_test.ts",
+    "related_paths: (none)",
+    "editable_paths: src/infrastructure/wrapper/helper.ts, src/infrastructure/wrapper/helper_test.ts",
     "depends_on: 1.6",
     "requires_plan: False",
     "existing_progress_log_count: 1",
@@ -240,7 +274,7 @@ Deno.test("golden contract has zero diff for fixed payload, prompt, stream and r
     "- [1771247093.362] system: execution started persona=implementer phase=implement",
     "",
     "Constraints:",
-    "- Do not edit outside target_paths",
+    "- Treat editable_paths (target_paths + related_paths) as implementation hints, not hard limits",
     "- Do not read/reference/edit .env or .env.*",
     "- Run required local checks",
     "- OpenSpec change_id: add-codex-wrapper-step1-contract-first-golden-compat",

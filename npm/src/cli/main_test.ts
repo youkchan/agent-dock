@@ -1,8 +1,10 @@
 import {
   buildTeammateAdapter,
+  collectSpecCreatorApplyManifestForTest,
   defaultTeammateCommand,
   main,
   parseTeammatesArg,
+  type SpecCreatorArtifactPaths,
 } from "./main.ts";
 import {
   SubprocessCodexAdapter,
@@ -40,6 +42,40 @@ function withTempDir(fn: (root: string) => void): void {
   }
 }
 
+function withTempCwd(fn: (root: string) => void): void {
+  withTempDir((root) => {
+    const original = Deno.cwd();
+    Deno.chdir(root);
+    try {
+      fn(root);
+    } finally {
+      Deno.chdir(original);
+    }
+  });
+}
+
+function fileExists(filePath: string): boolean {
+  try {
+    return Deno.statSync(filePath).isFile;
+  } catch {
+    return false;
+  }
+}
+
+function uniqueChangeId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+}
+
+function withTemporaryChangeDir(changeId: string, fn: () => void): void {
+  const dirPath = `openspec/changes/${changeId}`;
+  Deno.mkdirSync(dirPath, { recursive: true });
+  try {
+    fn();
+  } finally {
+    Deno.removeSync(dirPath, { recursive: true });
+  }
+}
+
 function withEnv(name: string, value: string, run: () => void): void {
   const original = Deno.env.get(name);
   Deno.env.set(name, value);
@@ -66,6 +102,29 @@ function withEnvValue<T>(name: string, value: string, run: () => T): T {
       Deno.env.set(name, original);
     }
   }
+}
+
+function withFakeOpenSpecValidate(
+  mode: "fail" | "pass",
+  run: () => void,
+): void {
+  const scriptExit = mode === "pass" ? "exit 0" : "echo openspec validate failed >&2\nexit 1";
+  withTempDir((root) => {
+    const commandPath = `${root}/openspec`;
+    Deno.writeTextFileSync(
+      commandPath,
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "validate" ] && [ "$3" = "--strict" ]; then',
+        `  ${scriptExit}`,
+        "fi",
+        'echo "unexpected openspec args: $*" >&2',
+        "exit 2",
+      ].join("\n"),
+    );
+    Deno.chmodSync(commandPath, 0o755);
+    withEnvValue("PATH", root, () => run());
+  });
 }
 
 function assertThrowsMessage(fn: () => void, messagePart: string): void {
@@ -1170,6 +1229,414 @@ Deno.test("main spec-creator rejects duplicate --persona-dir", () => {
     }
     if (!buffer.state.stderr.includes("can only be used once")) {
       throw new Error(`stderr should include duplication error: ${buffer.state.stderr}`);
+    }
+  });
+});
+
+Deno.test("main spec-creator rejects unknown subcommand", () => {
+  const buffer = createIoBuffer();
+  const exitCode = main(["spec-creator", "unknown-subcommand"], buffer.io);
+  if (exitCode !== 1) {
+    throw new Error("spec-creator should reject unknown subcommand");
+  }
+  if (!buffer.state.stderr.includes("unrecognized spec-creator subcommand")) {
+    throw new Error(`stderr should include subcommand error: ${buffer.state.stderr}`);
+  }
+});
+
+Deno.test("main spec-creator polish requires positional change_id", () => {
+  const buffer = createIoBuffer();
+  const exitCode = main(["spec-creator", "polish"], buffer.io);
+  if (exitCode !== 1) {
+    throw new Error("spec-creator polish should require change_id");
+  }
+  if (!buffer.state.stderr.includes("requires positional <change_id>")) {
+    throw new Error(`stderr should include missing change_id error: ${buffer.state.stderr}`);
+  }
+});
+
+Deno.test("main spec-creator polish rejects unknown polish option", () => {
+  const buffer = createIoBuffer();
+  const exitCode = main(
+    ["spec-creator", "polish", "sample-change-id", "--unknown-option"],
+    buffer.io,
+  );
+  if (exitCode !== 1) {
+    throw new Error("spec-creator polish should reject unknown option");
+  }
+  if (!buffer.state.stderr.includes("unrecognized argument: --unknown-option")) {
+    throw new Error(`stderr should include polish option error: ${buffer.state.stderr}`);
+  }
+});
+
+Deno.test("main spec-creator polish rejects duplicated --feedback", () => {
+  const buffer = createIoBuffer();
+  const exitCode = main([
+    "spec-creator",
+    "polish",
+    "sample-change-id",
+    "--feedback",
+    "first",
+    "--feedback",
+    "second",
+  ], buffer.io);
+  if (exitCode !== 1) {
+    throw new Error("spec-creator polish should reject duplicate feedback");
+  }
+  if (!buffer.state.stderr.includes("can only be used once")) {
+    throw new Error(`stderr should include duplicate option error: ${buffer.state.stderr}`);
+  }
+});
+
+Deno.test("main spec-creator polish rejects --feedback without value", () => {
+  const buffer = createIoBuffer();
+  const exitCode = main(
+    ["spec-creator", "polish", "sample-change-id", "--feedback"],
+    buffer.io,
+  );
+  if (exitCode !== 1) {
+    throw new Error("spec-creator polish should reject missing feedback value");
+  }
+  if (!buffer.state.stderr.includes("expected one argument")) {
+    throw new Error(`stderr should include option value error: ${buffer.state.stderr}`);
+  }
+});
+
+Deno.test("main spec-creator polish uses existing markdown context without interactive TTY", () => {
+  const changeId = uniqueChangeId("update-polish-context");
+  const changeDir = `openspec/changes/${changeId}`;
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  Deno.mkdirSync(changeDir, { recursive: true });
+  Deno.writeTextFileSync(
+    `${changeDir}/README.md`,
+    "# polish context\n- this file is used as source markdown context\n",
+  );
+
+  try {
+    const buffer = createIoBuffer();
+    withFakeOpenSpecValidate("pass", () => {
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        changeId,
+        "--no-run",
+        "--output",
+        outputPath,
+      ], buffer.io);
+
+      if (exitCode !== 0) {
+        throw new Error(`spec-creator polish should succeed: ${buffer.state.stderr}`);
+      }
+    });
+
+    if (buffer.state.stderr.includes("interactive TTY")) {
+      throw new Error(`polish should not require interactive TTY: ${buffer.state.stderr}`);
+    }
+    if (!fileExists(outputPath)) {
+      throw new Error("spec-creator polish should produce task_config output");
+    }
+    const taskConfig = JSON.parse(Deno.readTextFileSync(outputPath)) as {
+      tasks?: Array<Record<string, unknown>>;
+    };
+    if (!Array.isArray(taskConfig.tasks)) {
+      throw new Error("task_config should include tasks");
+    }
+    const designPath = `openspec/changes/${changeId}/design.md`;
+    for (const task of taskConfig.tasks) {
+      const targetPaths = Array.isArray(task.target_paths)
+        ? task.target_paths.map((item) => String(item))
+        : [];
+      const relatedPaths = Array.isArray(task.related_paths)
+        ? task.related_paths.map((item) => String(item))
+        : [];
+      if (targetPaths.includes(designPath)) {
+        throw new Error("design.md should not appear in target_paths when not required");
+      }
+      if (relatedPaths.includes(designPath)) {
+        throw new Error("design.md should not appear in related_paths when not required");
+      }
+    }
+    if (taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
+      throw new Error("task 1.4 should be omitted when design target is not required");
+    }
+  } finally {
+    try {
+      Deno.removeSync(changeDir, { recursive: true });
+    } catch {
+      // noop
+    }
+    try {
+      Deno.removeSync(outputPath);
+    } catch {
+      // noop
+    }
+  }
+});
+
+Deno.test("main spec-creator polish does not force design target only because design.md exists", () => {
+  const changeId = uniqueChangeId("update-polish-design-optional");
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  withTemporaryChangeDir(changeId, () => {
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/README.md`,
+      "# polish context\n- neutral content only\n",
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/design.md`,
+      "# notes\n- existing file only\n",
+    );
+
+    const buffer = createIoBuffer();
+    withFakeOpenSpecValidate("pass", () => {
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        changeId,
+        "--no-run",
+        "--output",
+        outputPath,
+      ], buffer.io);
+      if (exitCode !== 0) {
+        throw new Error(`spec-creator polish should succeed: ${buffer.state.stderr}`);
+      }
+    });
+
+    if (!fileExists(outputPath)) {
+      throw new Error("spec-creator polish should produce task_config output");
+    }
+    const taskConfig = JSON.parse(Deno.readTextFileSync(outputPath)) as {
+      tasks?: Array<Record<string, unknown>>;
+    };
+    if (!Array.isArray(taskConfig.tasks)) {
+      throw new Error("task_config should include tasks");
+    }
+
+    const designPath = `openspec/changes/${changeId}/design.md`;
+    for (const task of taskConfig.tasks) {
+      const targetPaths = Array.isArray(task.target_paths)
+        ? task.target_paths.map((item) => String(item))
+        : [];
+      const relatedPaths = Array.isArray(task.related_paths)
+        ? task.related_paths.map((item) => String(item))
+        : [];
+      if (targetPaths.includes(designPath)) {
+        throw new Error("design.md should not appear in target_paths when not required");
+      }
+      if (relatedPaths.includes(designPath)) {
+        throw new Error("design.md should not appear in related_paths when not required");
+      }
+    }
+    if (taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
+      throw new Error("task 1.4 should be omitted when design target is not required");
+    }
+
+    try {
+      Deno.removeSync(outputPath);
+    } catch {
+      // noop
+    }
+  });
+});
+
+Deno.test("main spec-creator polish ignores design keyword noise in tasks and code_summary", () => {
+  const changeId = uniqueChangeId("update-polish-design-signal-noise");
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  withTemporaryChangeDir(changeId, () => {
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/tasks.md`,
+      [
+        "## notes",
+        "design.md は必要時のみ生成",
+      ].join("\n"),
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/code_summary.md`,
+      "- 再生成対象: proposal.md / tasks.md / code_summary.md / (必要時)design.md\n",
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/README.md`,
+      "# neutral context\nno extra signal\n",
+    );
+
+    const buffer = createIoBuffer();
+    withFakeOpenSpecValidate("pass", () => {
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        changeId,
+        "--no-run",
+        "--output",
+        outputPath,
+      ], buffer.io);
+      if (exitCode !== 0) {
+        throw new Error(`spec-creator polish should succeed: ${buffer.state.stderr}`);
+      }
+    });
+
+    const taskConfig = JSON.parse(Deno.readTextFileSync(outputPath)) as {
+      tasks?: Array<Record<string, unknown>>;
+    };
+    if (!Array.isArray(taskConfig.tasks)) {
+      throw new Error("task_config should include tasks");
+    }
+    if (taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
+      throw new Error("task 1.4 should not be included from tasks/code_summary noise only");
+    }
+
+    try {
+      Deno.removeSync(outputPath, { recursive: false });
+    } catch {
+      // noop
+    }
+  });
+});
+
+Deno.test("collectSpecCreatorApplyManifestForTest keeps target-only deleted spec paths", () => {
+  withTempCwd(() => {
+    const changeId = "sample-change";
+    const targetChangeDir = `openspec/changes/${changeId}`;
+    const stagingRoot = "staging";
+    const stagedChangeDir = `${stagingRoot}/openspec/changes/${changeId}`;
+    Deno.mkdirSync(`${targetChangeDir}/specs/a`, { recursive: true });
+    Deno.mkdirSync(`${targetChangeDir}/specs/b`, { recursive: true });
+    Deno.mkdirSync(`${stagedChangeDir}/specs/b`, { recursive: true });
+    Deno.writeTextFileSync(`${targetChangeDir}/proposal.md`, "# proposal\n");
+    Deno.writeTextFileSync(`${targetChangeDir}/tasks.md`, "## tasks\n");
+    Deno.writeTextFileSync(`${targetChangeDir}/code_summary.md`, "# summary\n");
+    Deno.writeTextFileSync(`${targetChangeDir}/design.md`, "# design\n");
+    Deno.writeTextFileSync(`${targetChangeDir}/specs/a/spec.md`, "a\n");
+    Deno.writeTextFileSync(`${targetChangeDir}/specs/b/spec.md`, "b\n");
+    Deno.writeTextFileSync(`${stagedChangeDir}/proposal.md`, "# proposal\n");
+    Deno.writeTextFileSync(`${stagedChangeDir}/tasks.md`, "## tasks\n");
+    Deno.writeTextFileSync(`${stagedChangeDir}/code_summary.md`, "# summary\n");
+    Deno.writeTextFileSync(`${stagedChangeDir}/design.md`, "# design\n");
+    Deno.writeTextFileSync(`${stagedChangeDir}/specs/b/spec.md`, "b-new\n");
+
+    const targetPaths: SpecCreatorArtifactPaths = {
+      changeId,
+      changeDir: `${Deno.cwd()}/${targetChangeDir}`,
+      proposalPath: `${Deno.cwd()}/${targetChangeDir}/proposal.md`,
+      tasksPath: `${Deno.cwd()}/${targetChangeDir}/tasks.md`,
+      designPath: `${Deno.cwd()}/${targetChangeDir}/design.md`,
+      codeSummaryPath: `${Deno.cwd()}/${targetChangeDir}/code_summary.md`,
+      deltaSpecPath: `${Deno.cwd()}/${targetChangeDir}/specs/a/spec.md`,
+      deltaSpecPaths: [
+        `${Deno.cwd()}/${targetChangeDir}/specs/a/spec.md`,
+        `${Deno.cwd()}/${targetChangeDir}/specs/b/spec.md`,
+      ],
+    };
+    const stagedPaths: SpecCreatorArtifactPaths = {
+      changeId,
+      changeDir: `${Deno.cwd()}/${stagedChangeDir}`,
+      proposalPath: `${Deno.cwd()}/${stagedChangeDir}/proposal.md`,
+      tasksPath: `${Deno.cwd()}/${stagedChangeDir}/tasks.md`,
+      designPath: `${Deno.cwd()}/${stagedChangeDir}/design.md`,
+      codeSummaryPath: `${Deno.cwd()}/${stagedChangeDir}/code_summary.md`,
+      deltaSpecPath: `${Deno.cwd()}/${stagedChangeDir}/specs/b/spec.md`,
+      deltaSpecPaths: [
+        `${Deno.cwd()}/${stagedChangeDir}/specs/b/spec.md`,
+      ],
+    };
+
+    const manifest = collectSpecCreatorApplyManifestForTest(
+      targetPaths,
+      stagedPaths,
+      `${Deno.cwd()}/${stagingRoot}`,
+    );
+    const deletedSpecPath = `${Deno.cwd()}/${targetChangeDir}/specs/a/spec.md`;
+    if (!manifest.includes(deletedSpecPath)) {
+      throw new Error(
+        "apply manifest should include target-only spec path deleted from staging",
+      );
+    }
+  });
+});
+
+Deno.test("main spec-creator direct mode is deprecated", () => {
+  const buffer = createIoBuffer();
+  const changeId = uniqueChangeId("legacy-spec-creator");
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  const exitCode = main([
+    "spec-creator",
+    "--change-id",
+    changeId,
+    "--output",
+    outputPath,
+    "--no-run",
+  ], buffer.io);
+  if (exitCode !== 1) {
+    throw new Error("legacy spec-creator should be rejected in non-interactive context");
+  }
+  if (!buffer.state.stderr.includes("legacy direct mode is deprecated")) {
+    throw new Error(
+      `stderr should include deprecation warning: ${buffer.state.stderr}`,
+    );
+  }
+});
+
+Deno.test("main spec-creator polish --no-run still requires strict validate", () => {
+  const changeId = uniqueChangeId("update-polish-no-run-validate");
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  withTemporaryChangeDir(changeId, () => {
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/README.md`,
+      "# polish context\n- markdown source\n",
+    );
+    const buffer = createIoBuffer();
+    withEnv("PATH", "", () => {
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        changeId,
+        "--no-run",
+        "--output",
+        outputPath,
+      ], buffer.io);
+      if (exitCode !== 1) {
+        throw new Error("spec-creator polish --no-run should fail when strict validate cannot run");
+      }
+    });
+    if (!buffer.state.stderr.includes("openspec")) {
+      throw new Error(`stderr should include openspec validate failure: ${buffer.state.stderr}`);
+    }
+    if (fileExists(outputPath)) {
+      throw new Error("output should not be committed when staged validate fails");
+    }
+  });
+});
+
+Deno.test("main spec-creator polish requires existing change directory", () => {
+  const buffer = createIoBuffer();
+  const missingChangeId = uniqueChangeId("update-spec-creator");
+  const exitCode = main(
+    ["spec-creator", "polish", missingChangeId],
+    buffer.io,
+  );
+  if (exitCode !== 1) {
+    throw new Error("spec-creator polish should fail for missing change directory");
+  }
+  if (!buffer.state.stderr.includes("requires existing change_id directory")) {
+    throw new Error(
+      `stderr should include missing change directory error: ${buffer.state.stderr}`,
+    );
+  }
+});
+
+Deno.test("main spec-creator legacy create rejects existing change_id", () => {
+  const existingChangeId = uniqueChangeId("update-spec-creator");
+  withTemporaryChangeDir(existingChangeId, () => {
+    const buffer = createIoBuffer();
+    const exitCode = main(
+      ["spec-creator", "--change-id", existingChangeId],
+      buffer.io,
+    );
+    if (exitCode !== 1) {
+      throw new Error("spec-creator should fail when change directory already exists");
+    }
+    if (!buffer.state.stderr.includes("requires non-existing change_id")) {
+      throw new Error(
+        `stderr should include existing change directory error: ${buffer.state.stderr}`,
+      );
     }
   });
 });

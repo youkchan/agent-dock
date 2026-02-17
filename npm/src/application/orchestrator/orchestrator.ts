@@ -306,6 +306,7 @@ export class AgentTeamsLikeOrchestrator {
   readonly executionSubjectIds: string[];
   readonly phaseOrder: string[];
   readonly phasePolicies: Record<string, Record<string, string[]>>;
+  readonly workspaceRootCanonical: string;
 
   constructor(options: {
     store: StateStore;
@@ -348,6 +349,13 @@ export class AgentTeamsLikeOrchestrator {
     const controls = this.resolvePhaseControls();
     this.phaseOrder = controls.phaseOrder;
     this.phasePolicies = controls.phasePolicies;
+
+    const workspaceRoot = Deno.cwd();
+    try {
+      this.workspaceRootCanonical = Deno.realPathSync(workspaceRoot);
+    } catch {
+      this.workspaceRootCanonical = workspaceRoot;
+    }
   }
 
   run(): Record<string, unknown> {
@@ -1538,6 +1546,7 @@ export class AgentTeamsLikeOrchestrator {
     }
 
     if (isDecisionTaskPhase(phase)) {
+
       if (
         executionResult.judgment_raw !== null &&
         executionResult.changed_files.length > 0
@@ -2236,6 +2245,7 @@ export class AgentTeamsLikeOrchestrator {
     }
     return null;
   }
+
 
   private isReviewerExecutionSubject(executionSubjectId: string): boolean {
     const persona = this.personaById.get(executionSubjectId);

@@ -287,17 +287,19 @@ export class StateStore {
       if (!StateStore.isExecutionReady(pendingTask, tasksRaw)) {
         continue;
       }
-      if (pendingTask.target_paths.length === 0) {
+      const pendingScopePaths = StateStore.executionScopePaths(pendingTask);
+      if (pendingScopePaths.length === 0) {
         continue;
       }
 
-      const pendingTargets = new Set(pendingTask.target_paths);
+      const pendingTargets = new Set(pendingScopePaths);
       for (const runningTask of active) {
-        if (runningTask.target_paths.length === 0) {
+        const runningScopePaths = StateStore.executionScopePaths(runningTask);
+        if (runningScopePaths.length === 0) {
           continue;
         }
         if (
-          hasIntersection(pendingTargets, new Set(runningTask.target_paths))
+          hasIntersection(pendingTargets, new Set(runningScopePaths))
         ) {
           collisions.push({
             waiting_task_id: pendingTask.id,
@@ -777,11 +779,12 @@ export class StateStore {
     task: Task,
     tasks: Record<string, Record<string, unknown>>,
   ): boolean {
-    if (task.target_paths.length === 0) {
+    const scopePaths = StateStore.executionScopePaths(task);
+    if (scopePaths.length === 0) {
       return false;
     }
 
-    const taskTargets = new Set(task.target_paths);
+    const taskTargets = new Set(scopePaths);
     for (const otherRaw of Object.values(tasks)) {
       const other = taskFromRecord(otherRaw);
       if (other.id === task.id) {
@@ -790,14 +793,30 @@ export class StateStore {
       if (other.status !== "in_progress") {
         continue;
       }
-      if (other.target_paths.length === 0) {
+      const otherScopePaths = StateStore.executionScopePaths(other);
+      if (otherScopePaths.length === 0) {
         continue;
       }
-      if (hasIntersection(taskTargets, new Set(other.target_paths))) {
+      if (hasIntersection(taskTargets, new Set(otherScopePaths))) {
         return true;
       }
     }
     return false;
+  }
+
+  private static executionScopePaths(task: Task): string[] {
+    const merged = [...task.target_paths, ...task.related_paths];
+    const normalized: string[] = [];
+    const seen = new Set<string>();
+    for (const rawPath of merged) {
+      const item = String(rawPath).trim();
+      if (!item || seen.has(item)) {
+        continue;
+      }
+      seen.add(item);
+      normalized.push(item);
+    }
+    return normalized;
   }
 
   private static isExecutionReady(

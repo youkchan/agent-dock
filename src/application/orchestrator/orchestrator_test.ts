@@ -1480,7 +1480,7 @@ Deno.test("orchestrator test phase blocks on JUDGMENT blocked", () => {
   });
 });
 
-Deno.test("orchestrator implement phase blocks when CHANGED_FILES is outside allowed scope", () => {
+Deno.test("orchestrator implement phase does not block CHANGED_FILES outside declared hint scope", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
     store.bootstrapTasks([
@@ -1506,14 +1506,11 @@ Deno.test("orchestrator implement phase blocks when CHANGED_FILES is outside all
       }),
     });
 
-    orchestrator.run();
+    const result = orchestrator.run();
+    assertEqual(result.stop_reason, "all_tasks_completed", "stop reason");
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
-    assertEqual(task.status, "blocked", "task status");
-    assert(
-      String(task.block_reason).includes("outside allowed scope"),
-      "block reason should include scope violation",
-    );
+    assertEqual(task.status, "completed", "task status");
   });
 });
 
@@ -1555,7 +1552,7 @@ Deno.test("orchestrator implement phase allows CHANGED_FILES in related_paths", 
   });
 });
 
-Deno.test("orchestrator implement phase blocks related_paths edit without summary reason tag", () => {
+Deno.test("orchestrator implement phase allows related_paths edit without summary reason tag", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
     store.bootstrapTasks([
@@ -1582,18 +1579,15 @@ Deno.test("orchestrator implement phase blocks related_paths edit without summar
       }),
     });
 
-    orchestrator.run();
+    const result = orchestrator.run();
+    assertEqual(result.stop_reason, "all_tasks_completed", "stop reason");
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
-    assertEqual(task.status, "blocked", "task status");
-    assert(
-      String(task.block_reason).includes("additional_edit_reason"),
-      "block reason should include missing additional_edit_reason",
-    );
+    assertEqual(task.status, "completed", "task status");
   });
 });
 
-Deno.test("orchestrator blocks traversal-like CHANGED_FILES paths", () => {
+Deno.test("orchestrator implement phase accepts traversal-like CHANGED_FILES as non-binding scope hint", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
     store.bootstrapTasks([
@@ -1619,18 +1613,15 @@ Deno.test("orchestrator blocks traversal-like CHANGED_FILES paths", () => {
       }),
     });
 
-    orchestrator.run();
+    const result = orchestrator.run();
+    assertEqual(result.stop_reason, "all_tasks_completed", "stop reason");
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
-    assertEqual(task.status, "blocked", "task status");
-    assert(
-      String(task.block_reason).includes("outside allowed scope"),
-      "block reason should include scope violation",
-    );
+    assertEqual(task.status, "completed", "task status");
   });
 });
 
-Deno.test("orchestrator blocks symlink CHANGED_FILES that resolves outside workspace", () => {
+Deno.test("orchestrator implement phase accepts symlink CHANGED_FILES outside workspace when scope hints are non-binding", () => {
   if (Deno.build.os === "windows") {
     return;
   }
@@ -1665,14 +1656,56 @@ Deno.test("orchestrator blocks symlink CHANGED_FILES that resolves outside works
         }),
       });
 
-      orchestrator.run();
+      const result = orchestrator.run();
+      assertEqual(result.stop_reason, "all_tasks_completed", "stop reason");
       const task = store.getTask("T1");
       assert(task !== null, "task should exist");
-      assertEqual(task.status, "blocked", "task status");
-      assert(
-        String(task.block_reason).includes("outside allowed scope"),
-        "block reason should include scope violation",
-      );
+      assertEqual(task.status, "completed", "task status");
+    } finally {
+      Deno.removeSync(outsideDir, { recursive: true });
+    }
+  });
+});
+
+Deno.test("orchestrator implement phase accepts symlink CHANGED_FILES with non-existing leaf when scope hints are non-binding", () => {
+  if (Deno.build.os === "windows") {
+    return;
+  }
+  withTempCwd((dir) => {
+    const outsideDir = Deno.makeTempDirSync();
+    try {
+      Deno.mkdirSync("src", { recursive: true });
+      Deno.symlinkSync(outsideDir, "src/outside-link");
+
+      const store = new StateStore(`${dir}/state`);
+      store.bootstrapTasks([
+        createTask({
+          id: "T1",
+          title: "implement task",
+          target_paths: ["src"],
+        }),
+      ]);
+
+      const orchestrator = new AgentTeamsLikeOrchestrator({
+        store,
+        adapter: new FixedResultAdapter(
+          completedResult("implemented", "src/outside-link/new.ts"),
+        ),
+        provider: new MockOrchestratorProvider(),
+        config: new OrchestratorConfig({
+          maxRounds: 3,
+          maxIdleRounds: 1,
+          maxIdleSeconds: 60,
+          teammateIds: ["tm-1"],
+          personas: [],
+        }),
+      });
+
+      const result = orchestrator.run();
+      assertEqual(result.stop_reason, "all_tasks_completed", "stop reason");
+      const task = store.getTask("T1");
+      assert(task !== null, "task should exist");
+      assertEqual(task.status, "completed", "task status");
     } finally {
       Deno.removeSync(outsideDir, { recursive: true });
     }
