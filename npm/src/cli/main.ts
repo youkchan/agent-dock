@@ -54,6 +54,7 @@ import {
 import {
   assertSpecCreatorSemanticContracts,
   collectSpecCreatorQualityViolations,
+  REQUIRED_REVIEW_CONTRACT_IDS,
   type SpecCreatorQualityViolation,
 } from "../infrastructure/openspec/spec_creator_quality.ts";
 import {
@@ -1131,6 +1132,11 @@ function runSpecCreatorWorkflow(
       paths: stagedPaths,
       outputPath: stagedOutputPath,
     });
+    normalizeSpecCreatorReviewContractCoverage(
+      stagedPaths,
+      "post-generate",
+      io,
+    );
     assertNoForbiddenSpecCreatorCommands(stagedPaths, "post-generate");
     assertSpecCreatorSemanticContracts(stagedPaths, "post-generate");
     runStagedStrictValidate(context.change_id, stagingRoot);
@@ -1199,6 +1205,7 @@ function runSpecCreatorWorkflow(
       }
 
       try {
+        normalizeSpecCreatorReviewContractCoverage(stagedPaths, "post-run", io);
         assertNoForbiddenSpecCreatorCommands(stagedPaths, "post-run");
         assertSpecCreatorSemanticContracts(stagedPaths, "post-run");
         runSpecCreatorPostAuditGate(context.change_id, io, stagingRoot);
@@ -1327,6 +1334,249 @@ function writeSpecCreatorArtifacts(
   }
 
   writeTaskConfigFile(context.task_config, outputPath);
+}
+
+export function normalizeSpecCreatorReviewContractCoverageForTest(
+  paths: SpecCreatorArtifactPaths,
+): void {
+  normalizeSpecCreatorReviewContractCoverage(paths, "post-run", null);
+}
+
+function normalizeSpecCreatorReviewContractCoverage(
+  paths: SpecCreatorArtifactPaths,
+  phase: "post-generate" | "post-run",
+  io: CliIO | null,
+): void {
+  const tasksResult = normalizeTasksReviewContractCoverage(paths.tasksPath);
+  const specsResult = normalizeDeltaSpecReviewContractCoverage(
+    paths,
+    tasksResult.language,
+  );
+  if (!tasksResult.changed && !specsResult.changed) {
+    return;
+  }
+  io?.stdout(
+    `[spec-creator] normalize_review_contract phase=${phase} tasks_changed=${
+      tasksResult.changed ? 1 : 0
+    } specs_changed=${specsResult.changed ? 1 : 0}\n`,
+  );
+}
+
+function normalizeTasksReviewContractCoverage(
+  tasksPath: string,
+): { changed: boolean; language: "ja" | "en" } {
+  const original = Deno.readTextFileSync(tasksPath);
+  const language = detectReviewContractLanguage(original);
+  const lines = original.split(/\r?\n/u);
+  let changed = false;
+
+  let sectionRange = findTaskSectionRange(lines, "1.3");
+  if (sectionRange === null) {
+    const insertionIndex = findImplementationSectionEnd(lines);
+    lines.splice(
+      insertionIndex,
+      0,
+      buildTask13HeaderLine(language),
+      ...buildTaskReviewContractLines(
+        [...REQUIRED_REVIEW_CONTRACT_IDS],
+        language,
+      ),
+    );
+    changed = true;
+    sectionRange = findTaskSectionRange(lines, "1.3");
+  }
+
+  if (sectionRange === null) {
+    throw new Error(
+      `failed to normalize review contract coverage: missing task 1.3 section in ${tasksPath}`,
+    );
+  }
+
+  const sectionText = lines.slice(sectionRange.start, sectionRange.end).join(
+    "\n",
+  );
+  const missingIds = REQUIRED_REVIEW_CONTRACT_IDS.filter((id) =>
+    !sectionText.includes(id)
+  );
+  if (missingIds.length > 0) {
+    lines.splice(
+      sectionRange.end,
+      0,
+      ...buildTaskReviewContractLines(missingIds, language),
+    );
+    changed = true;
+  }
+
+  if (!changed) {
+    return { changed: false, language };
+  }
+  Deno.writeTextFileSync(tasksPath, ensureTrailingNewline(lines.join("\n")));
+  return { changed: true, language };
+}
+
+function normalizeDeltaSpecReviewContractCoverage(
+  paths: SpecCreatorArtifactPaths,
+  language: "ja" | "en",
+): { changed: boolean } {
+  const deltaSpecPaths = collectAllDeltaSpecPaths(paths);
+  if (deltaSpecPaths.length === 0) {
+    return { changed: false };
+  }
+
+  const mergedSpecText = deltaSpecPaths
+    .map((specPath) => readTextFileOrEmpty(specPath))
+    .join("\n");
+  const missingIds = REQUIRED_REVIEW_CONTRACT_IDS.filter((id) =>
+    !mergedSpecText.includes(id)
+  );
+  if (missingIds.length === 0) {
+    return { changed: false };
+  }
+
+  const primarySpecPath = deltaSpecPaths[0];
+  const base = readTextFileOrEmpty(primarySpecPath).trimEnd();
+  const prefixedBase = base.length > 0
+    ? `${base}\n\n`
+    : "## ADDED Requirements\n\n";
+  const appended = missingIds.map((id) =>
+    buildSpecReviewContractBlock(id, language)
+  ).join("\n\n");
+  Deno.mkdirSync(path.dirname(primarySpecPath), { recursive: true });
+  Deno.writeTextFileSync(
+    primarySpecPath,
+    ensureTrailingNewline(`${prefixedBase}${appended}`),
+  );
+  return { changed: true };
+}
+
+function collectAllDeltaSpecPaths(paths: SpecCreatorArtifactPaths): string[] {
+  const merged = [
+    ...(Array.isArray(paths.deltaSpecPaths) ? paths.deltaSpecPaths : []),
+    paths.deltaSpecPath,
+  ].filter((item): item is string =>
+    typeof item === "string" && item.length > 0
+  );
+  const unique = [...new Set(merged.map((item) => path.resolve(item)))];
+  unique.sort((left, right) => left.localeCompare(right));
+  return unique;
+}
+
+function readTextFileOrEmpty(filePath: string): string {
+  try {
+    return Deno.readTextFileSync(filePath);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return "";
+    }
+    throw error;
+  }
+}
+
+function detectReviewContractLanguage(text: string): "ja" | "en" {
+  if (
+    text.includes("## 1. 実装タスク") || /[ぁ-ゖァ-ヺ一-龯]/u.test(text)
+  ) {
+    return "ja";
+  }
+  return "en";
+}
+
+function findTaskSectionRange(
+  lines: string[],
+  taskId: string,
+): { start: number; end: number } | null {
+  const startPattern = new RegExp(
+    `^\\s*-\\s*\\[[ xX]\\]\\s*${escapeRegex(taskId)}\\b`,
+    "u",
+  );
+  const taskPattern = /^\s*-\s*\[[ xX]\]\s*\S+/u;
+  const headingPattern = /^##\s+/u;
+  let start = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (startPattern.test(lines[index])) {
+      start = index;
+      break;
+    }
+  }
+  if (start < 0) {
+    return null;
+  }
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (taskPattern.test(lines[index]) || headingPattern.test(lines[index])) {
+      end = index;
+      break;
+    }
+  }
+  return { start, end };
+}
+
+function findImplementationSectionEnd(lines: string[]): number {
+  const implementationHeadingPattern = /^##\s+1\./u;
+  const headingPattern = /^##\s+/u;
+  const headingIndex = lines.findIndex((line) =>
+    implementationHeadingPattern.test(line)
+  );
+  if (headingIndex < 0) {
+    return lines.length;
+  }
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    if (headingPattern.test(lines[index])) {
+      return index;
+    }
+  }
+  return lines.length;
+}
+
+function buildTask13HeaderLine(language: "ja" | "en"): string {
+  return language === "ja"
+    ? "- [ ] 1.3 実行結果レビュー契約（RC-01..RC-12）を明示する"
+    : "- [ ] 1.3 Document execution-result review contract (RC-01..RC-12)";
+}
+
+function buildTaskReviewContractLines(
+  ids: readonly string[],
+  language: "ja" | "en",
+): string[] {
+  return ids.map((id) =>
+    language === "ja"
+      ? `  - ${id}: tasks.md(1.3) と specs/**/spec.md に同義で明記し、経路テストと fail-closed 拒否テストを定義する。`
+      : `  - ${id}: mirror in tasks.md(1.3) and specs/**/spec.md with path test and fail-closed rejection test.`
+  );
+}
+
+function buildSpecReviewContractBlock(
+  id: string,
+  language: "ja" | "en",
+): string {
+  if (language === "ja") {
+    return [
+      `### Requirement (${id}): レビュー契約を明示すること`,
+      `システムは ${id} を tasks.md(1.3) と specs/**/spec.md の双方に明示しなければならない（SHALL）。`,
+      "",
+      `#### Scenario: ${id} が成果物に反映される`,
+      "- **WHEN** spec-creator が成果物を再生成する",
+      `- **THEN** tasks.md の task 1.3 に ${id} が含まれる`,
+      `- **AND** specs/**/spec.md に ${id} が含まれる`,
+    ].join("\n");
+  }
+  return [
+    `### Requirement (${id}): review contract coverage`,
+    `The system SHALL explicitly include ${id} in tasks.md(1.3) and specs/**/spec.md.`,
+    "",
+    `#### Scenario: ${id} is mirrored in generated artifacts`,
+    "- **WHEN** spec-creator regenerates artifacts",
+    `- **THEN** tasks.md task 1.3 includes ${id}`,
+    `- **AND** specs/**/spec.md includes ${id}`,
+  ].join("\n");
+}
+
+function escapeRegex(text: string): string {
+  return text.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function ensureTrailingNewline(text: string): string {
+  return text.endsWith("\n") ? text : `${text}\n`;
 }
 
 function listSpecCreatorArtifactPaths(

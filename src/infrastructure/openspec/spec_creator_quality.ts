@@ -45,7 +45,7 @@ const DESIGN_BATCH_ACTION_PATTERN =
   /一括(?:受領|生成|再生成|更新)|single context pass|all target artifacts|complete rewritten files/iu;
 const DESIGN_BATCH_SHORTCUT_PATTERN =
   /proposal\/design\/tasks\/code_summary\/spec\.md/iu;
-const REQUIRED_REVIEW_CONTRACT_IDS = [
+export const REQUIRED_REVIEW_CONTRACT_IDS = [
   "RC-01",
   "RC-02",
   "RC-03",

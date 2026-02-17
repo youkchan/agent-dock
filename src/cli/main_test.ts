@@ -3,6 +3,7 @@ import {
   collectSpecCreatorApplyManifestForTest,
   defaultTeammateCommand,
   main,
+  normalizeSpecCreatorReviewContractCoverageForTest,
   parseTeammatesArg,
   type SpecCreatorArtifactPaths,
 } from "./main.ts";
@@ -66,6 +67,21 @@ function uniqueChangeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 }
 
+const REVIEW_CONTRACT_IDS = [
+  "RC-01",
+  "RC-02",
+  "RC-03",
+  "RC-04",
+  "RC-05",
+  "RC-06",
+  "RC-07",
+  "RC-08",
+  "RC-09",
+  "RC-10",
+  "RC-11",
+  "RC-12",
+] as const;
+
 function withTemporaryChangeDir(changeId: string, fn: () => void): void {
   const dirPath = `openspec/changes/${changeId}`;
   Deno.mkdirSync(dirPath, { recursive: true });
@@ -108,7 +124,9 @@ function withFakeOpenSpecValidate(
   mode: "fail" | "pass",
   run: () => void,
 ): void {
-  const scriptExit = mode === "pass" ? "exit 0" : "echo openspec validate failed >&2\nexit 1";
+  const scriptExit = mode === "pass"
+    ? "exit 0"
+    : "echo openspec validate failed >&2\nexit 1";
   withTempDir((root) => {
     const commandPath = `${root}/openspec`;
     Deno.writeTextFileSync(
@@ -232,7 +250,9 @@ Deno.test("buildTeammateAdapter uses runtime next to executable by default", () 
     const runtimePath = `${fakeBin}/src/infrastructure/wrapper/runtime.ts`;
 
     Deno.writeTextFileSync(fakeExec, "#!/usr/bin/env bash\n");
-    Deno.mkdirSync(`${fakeBin}/src/infrastructure/wrapper`, { recursive: true });
+    Deno.mkdirSync(`${fakeBin}/src/infrastructure/wrapper`, {
+      recursive: true,
+    });
     Deno.writeTextFileSync(runtimePath, "export {};\n");
 
     const adapter = withEnvValue("CODEX_WRAPPER_RUNTIME", "ts", () => {
@@ -380,12 +400,14 @@ Deno.test("buildTeammateAdapter keeps explicit teammate command above wrapper ru
       throw new Error("expected SubprocessCodexAdapter");
     }
     if (
-      JSON.stringify(adapter.planCommand) !== JSON.stringify(["echo", "explicit"])
+      JSON.stringify(adapter.planCommand) !==
+        JSON.stringify(["echo", "explicit"])
     ) {
       throw new Error("plan command should use explicit teammate command");
     }
     if (
-      JSON.stringify(adapter.executeCommand) !== JSON.stringify(["echo", "explicit"])
+      JSON.stringify(adapter.executeCommand) !==
+        JSON.stringify(["echo", "explicit"])
     ) {
       throw new Error("execute command should use explicit teammate command");
     }
@@ -404,7 +426,8 @@ Deno.test("buildTeammateAdapter default teammate command uses ts runtime", () =>
 
     withEnv("CODEX_WRAPPER_RUNTIME", "ts", () => {
       const command = defaultTeammateCommand(fakeExec);
-      const expected = `deno run --no-prompt --allow-read --allow-write --allow-env --allow-run ${runtimePath}`;
+      const expected =
+        `deno run --no-prompt --allow-read --allow-write --allow-env --allow-run ${runtimePath}`;
       if (command !== expected) {
         throw new Error(`unexpected default command: ${command}`);
       }
@@ -873,7 +896,9 @@ Deno.test("main run keeps task max_revision_cycles from config", () => {
     }
     if (task.max_revision_cycles !== 9) {
       throw new Error(
-        `expected max_revision_cycles=9, got ${String(task.max_revision_cycles)}`,
+        `expected max_revision_cycles=9, got ${
+          String(task.max_revision_cycles)
+        }`,
       );
     }
   });
@@ -1070,11 +1095,15 @@ Deno.test("main run loads personas from --persona-dir", () => {
         "20",
       ], bufferWith.io);
       if (exitWith !== 0) {
-        throw new Error(`run should return 0 with persona-dir: ${bufferWith.state.stderr}`);
+        throw new Error(
+          `run should return 0 with persona-dir: ${bufferWith.state.stderr}`,
+        );
       }
     });
 
-    if (!bufferWith.state.stdout.includes('"stop_reason": "all_tasks_completed"')) {
+    if (
+      !bufferWith.state.stdout.includes('"stop_reason": "all_tasks_completed"')
+    ) {
       throw new Error("stdout should include successful stop reason");
     }
   });
@@ -1206,7 +1235,9 @@ Deno.test("main run rejects duplicate --persona-dir", () => {
       throw new Error("run should reject duplicate --persona-dir");
     }
     if (!buffer.state.stderr.includes("can only be used once")) {
-      throw new Error(`stderr should include duplication error: ${buffer.state.stderr}`);
+      throw new Error(
+        `stderr should include duplication error: ${buffer.state.stderr}`,
+      );
     }
   });
 });
@@ -1228,7 +1259,9 @@ Deno.test("main spec-creator rejects duplicate --persona-dir", () => {
       throw new Error("spec-creator should reject duplicate --persona-dir");
     }
     if (!buffer.state.stderr.includes("can only be used once")) {
-      throw new Error(`stderr should include duplication error: ${buffer.state.stderr}`);
+      throw new Error(
+        `stderr should include duplication error: ${buffer.state.stderr}`,
+      );
     }
   });
 });
@@ -1240,7 +1273,9 @@ Deno.test("main spec-creator rejects unknown subcommand", () => {
     throw new Error("spec-creator should reject unknown subcommand");
   }
   if (!buffer.state.stderr.includes("unrecognized spec-creator subcommand")) {
-    throw new Error(`stderr should include subcommand error: ${buffer.state.stderr}`);
+    throw new Error(
+      `stderr should include subcommand error: ${buffer.state.stderr}`,
+    );
   }
 });
 
@@ -1251,7 +1286,9 @@ Deno.test("main spec-creator polish requires positional change_id", () => {
     throw new Error("spec-creator polish should require change_id");
   }
   if (!buffer.state.stderr.includes("requires positional <change_id>")) {
-    throw new Error(`stderr should include missing change_id error: ${buffer.state.stderr}`);
+    throw new Error(
+      `stderr should include missing change_id error: ${buffer.state.stderr}`,
+    );
   }
 });
 
@@ -1264,8 +1301,12 @@ Deno.test("main spec-creator polish rejects unknown polish option", () => {
   if (exitCode !== 1) {
     throw new Error("spec-creator polish should reject unknown option");
   }
-  if (!buffer.state.stderr.includes("unrecognized argument: --unknown-option")) {
-    throw new Error(`stderr should include polish option error: ${buffer.state.stderr}`);
+  if (
+    !buffer.state.stderr.includes("unrecognized argument: --unknown-option")
+  ) {
+    throw new Error(
+      `stderr should include polish option error: ${buffer.state.stderr}`,
+    );
   }
 });
 
@@ -1284,7 +1325,9 @@ Deno.test("main spec-creator polish rejects duplicated --feedback", () => {
     throw new Error("spec-creator polish should reject duplicate feedback");
   }
   if (!buffer.state.stderr.includes("can only be used once")) {
-    throw new Error(`stderr should include duplicate option error: ${buffer.state.stderr}`);
+    throw new Error(
+      `stderr should include duplicate option error: ${buffer.state.stderr}`,
+    );
   }
 });
 
@@ -1298,7 +1341,9 @@ Deno.test("main spec-creator polish rejects --feedback without value", () => {
     throw new Error("spec-creator polish should reject missing feedback value");
   }
   if (!buffer.state.stderr.includes("expected one argument")) {
-    throw new Error(`stderr should include option value error: ${buffer.state.stderr}`);
+    throw new Error(
+      `stderr should include option value error: ${buffer.state.stderr}`,
+    );
   }
 });
 
@@ -1325,12 +1370,16 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
       ], buffer.io);
 
       if (exitCode !== 0) {
-        throw new Error(`spec-creator polish should succeed: ${buffer.state.stderr}`);
+        throw new Error(
+          `spec-creator polish should succeed: ${buffer.state.stderr}`,
+        );
       }
     });
 
     if (buffer.state.stderr.includes("interactive TTY")) {
-      throw new Error(`polish should not require interactive TTY: ${buffer.state.stderr}`);
+      throw new Error(
+        `polish should not require interactive TTY: ${buffer.state.stderr}`,
+      );
     }
     if (!fileExists(outputPath)) {
       throw new Error("spec-creator polish should produce task_config output");
@@ -1350,14 +1399,20 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
         ? task.related_paths.map((item) => String(item))
         : [];
       if (targetPaths.includes(designPath)) {
-        throw new Error("design.md should not appear in target_paths when not required");
+        throw new Error(
+          "design.md should not appear in target_paths when not required",
+        );
       }
       if (relatedPaths.includes(designPath)) {
-        throw new Error("design.md should not appear in related_paths when not required");
+        throw new Error(
+          "design.md should not appear in related_paths when not required",
+        );
       }
     }
     if (taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
-      throw new Error("task 1.4 should be omitted when design target is not required");
+      throw new Error(
+        "task 1.4 should be omitted when design target is not required",
+      );
     }
   } finally {
     try {
@@ -1400,7 +1455,9 @@ Deno.test("main spec-creator polish quotes checklist lines in human notes", () =
         outputPath,
       ], buffer.io);
       if (exitCode !== 0) {
-        throw new Error(`spec-creator polish should succeed: ${buffer.state.stderr}`);
+        throw new Error(
+          `spec-creator polish should succeed: ${buffer.state.stderr}`,
+        );
       }
     });
 
@@ -1412,7 +1469,9 @@ Deno.test("main spec-creator polish quotes checklist lines in human notes", () =
       `openspec/changes/${changeId}/tasks.md`,
     );
     if (!generatedTasks.includes("  > - [x] 1.1 既存タスク")) {
-      throw new Error("requirements memo checklist lines should be blockquoted");
+      throw new Error(
+        "requirements memo checklist lines should be blockquoted",
+      );
     }
     const generatedLines = generatedTasks.split(/\r?\n/u);
     const humanNotesHeadingIndex = generatedLines.findIndex((line) =>
@@ -1461,7 +1520,9 @@ Deno.test("main spec-creator polish does not force design target only because de
         outputPath,
       ], buffer.io);
       if (exitCode !== 0) {
-        throw new Error(`spec-creator polish should succeed: ${buffer.state.stderr}`);
+        throw new Error(
+          `spec-creator polish should succeed: ${buffer.state.stderr}`,
+        );
       }
     });
 
@@ -1484,14 +1545,20 @@ Deno.test("main spec-creator polish does not force design target only because de
         ? task.related_paths.map((item) => String(item))
         : [];
       if (targetPaths.includes(designPath)) {
-        throw new Error("design.md should not appear in target_paths when not required");
+        throw new Error(
+          "design.md should not appear in target_paths when not required",
+        );
       }
       if (relatedPaths.includes(designPath)) {
-        throw new Error("design.md should not appear in related_paths when not required");
+        throw new Error(
+          "design.md should not appear in related_paths when not required",
+        );
       }
     }
     if (taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
-      throw new Error("task 1.4 should be omitted when design target is not required");
+      throw new Error(
+        "task 1.4 should be omitted when design target is not required",
+      );
     }
 
     try {
@@ -1533,7 +1600,9 @@ Deno.test("main spec-creator polish ignores design keyword noise in tasks and co
         outputPath,
       ], buffer.io);
       if (exitCode !== 0) {
-        throw new Error(`spec-creator polish should succeed: ${buffer.state.stderr}`);
+        throw new Error(
+          `spec-creator polish should succeed: ${buffer.state.stderr}`,
+        );
       }
     });
 
@@ -1544,7 +1613,9 @@ Deno.test("main spec-creator polish ignores design keyword noise in tasks and co
       throw new Error("task_config should include tasks");
     }
     if (taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
-      throw new Error("task 1.4 should not be included from tasks/code_summary noise only");
+      throw new Error(
+        "task 1.4 should not be included from tasks/code_summary noise only",
+      );
     }
 
     try {
@@ -1616,6 +1687,133 @@ Deno.test("collectSpecCreatorApplyManifestForTest keeps target-only deleted spec
   });
 });
 
+Deno.test("normalizeSpecCreatorReviewContractCoverageForTest backfills missing RC contracts", () => {
+  withTempCwd(() => {
+    const changeId = "sample-change";
+    const changeDir = `openspec/changes/${changeId}`;
+    Deno.mkdirSync(`${changeDir}/specs/sample-change`, { recursive: true });
+    Deno.writeTextFileSync(
+      `${changeDir}/tasks.md`,
+      [
+        "## 0. Persona Defaults",
+        "- persona_defaults.phase_order: implement, review",
+        "",
+        "## 1. 実装タスク",
+        "- [ ] 1.2 既存タスク",
+        "- [ ] 1.3 実行結果パーサを共通化する",
+        "  - 成果物: src/domain/execution_result.ts",
+        "- [ ] 1.4 検証",
+      ].join("\n"),
+    );
+    Deno.writeTextFileSync(
+      `${changeDir}/specs/sample-change/spec.md`,
+      [
+        "## ADDED Requirements",
+        "### Requirement: baseline",
+        "The system SHALL keep artifacts aligned.",
+      ].join("\n"),
+    );
+
+    const paths: SpecCreatorArtifactPaths = {
+      changeId,
+      changeDir: `${Deno.cwd()}/${changeDir}`,
+      proposalPath: `${Deno.cwd()}/${changeDir}/proposal.md`,
+      tasksPath: `${Deno.cwd()}/${changeDir}/tasks.md`,
+      designPath: `${Deno.cwd()}/${changeDir}/design.md`,
+      codeSummaryPath: `${Deno.cwd()}/${changeDir}/code_summary.md`,
+      deltaSpecPath: `${Deno.cwd()}/${changeDir}/specs/sample-change/spec.md`,
+      deltaSpecPaths: [
+        `${Deno.cwd()}/${changeDir}/specs/sample-change/spec.md`,
+      ],
+    };
+
+    normalizeSpecCreatorReviewContractCoverageForTest(paths);
+
+    const tasksText = Deno.readTextFileSync(paths.tasksPath);
+    const sectionMatch =
+      /-\s*\[[ xX]\]\s*1\.3[\s\S]*?(?=\n-\s*\[[ xX]\]\s*\S+|\n##\s+|\s*$)/u
+        .exec(
+          tasksText,
+        );
+    if (sectionMatch === null) {
+      throw new Error("task 1.3 section should exist after normalization");
+    }
+    for (const id of REVIEW_CONTRACT_IDS) {
+      if (!sectionMatch[0].includes(id)) {
+        throw new Error(`task 1.3 should include ${id}`);
+      }
+    }
+
+    const specText = Deno.readTextFileSync(paths.deltaSpecPath);
+    for (const id of REVIEW_CONTRACT_IDS) {
+      if (!specText.includes(`### Requirement (${id})`)) {
+        throw new Error(`spec should include Requirement (${id})`);
+      }
+    }
+  });
+});
+
+Deno.test("normalizeSpecCreatorReviewContractCoverageForTest is idempotent", () => {
+  withTempCwd(() => {
+    const changeId = "sample-change";
+    const changeDir = `openspec/changes/${changeId}`;
+    Deno.mkdirSync(`${changeDir}/specs/sample-change`, { recursive: true });
+    Deno.writeTextFileSync(
+      `${changeDir}/tasks.md`,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 1.3 実行結果レビュー契約",
+        ...REVIEW_CONTRACT_IDS.map((id) => `  - ${id}: already included`),
+      ].join("\n"),
+    );
+    Deno.writeTextFileSync(
+      `${changeDir}/specs/sample-change/spec.md`,
+      [
+        "## ADDED Requirements",
+        ...REVIEW_CONTRACT_IDS.flatMap((id) => [
+          `### Requirement (${id}): preset`,
+          "The system SHALL keep preset requirement.",
+          "",
+          `#### Scenario: ${id} preset`,
+          `- **THEN** ${id} exists`,
+          "",
+        ]),
+      ].join("\n"),
+    );
+
+    const paths: SpecCreatorArtifactPaths = {
+      changeId,
+      changeDir: `${Deno.cwd()}/${changeDir}`,
+      proposalPath: `${Deno.cwd()}/${changeDir}/proposal.md`,
+      tasksPath: `${Deno.cwd()}/${changeDir}/tasks.md`,
+      designPath: `${Deno.cwd()}/${changeDir}/design.md`,
+      codeSummaryPath: `${Deno.cwd()}/${changeDir}/code_summary.md`,
+      deltaSpecPath: `${Deno.cwd()}/${changeDir}/specs/sample-change/spec.md`,
+      deltaSpecPaths: [
+        `${Deno.cwd()}/${changeDir}/specs/sample-change/spec.md`,
+      ],
+    };
+
+    normalizeSpecCreatorReviewContractCoverageForTest(paths);
+    normalizeSpecCreatorReviewContractCoverageForTest(paths);
+
+    const tasksText = Deno.readTextFileSync(paths.tasksPath);
+    const specText = Deno.readTextFileSync(paths.deltaSpecPath);
+    for (const id of REVIEW_CONTRACT_IDS) {
+      const taskMatches = tasksText.match(new RegExp(id, "g")) ?? [];
+      if (taskMatches.length !== 1) {
+        throw new Error(`task should contain ${id} exactly once`);
+      }
+      const specMatches = specText.match(
+        new RegExp(`### Requirement \\(${id}\\)`, "g"),
+      ) ?? [];
+      if (specMatches.length !== 1) {
+        throw new Error(`spec should contain Requirement (${id}) exactly once`);
+      }
+    }
+  });
+});
+
 Deno.test("main spec-creator direct mode is deprecated", () => {
   const buffer = createIoBuffer();
   const changeId = uniqueChangeId("legacy-spec-creator");
@@ -1629,7 +1827,9 @@ Deno.test("main spec-creator direct mode is deprecated", () => {
     "--no-run",
   ], buffer.io);
   if (exitCode !== 1) {
-    throw new Error("legacy spec-creator should be rejected in non-interactive context");
+    throw new Error(
+      "legacy spec-creator should be rejected in non-interactive context",
+    );
   }
   if (!buffer.state.stderr.includes("legacy direct mode is deprecated")) {
     throw new Error(
@@ -1657,14 +1857,20 @@ Deno.test("main spec-creator polish --no-run still requires strict validate", ()
         outputPath,
       ], buffer.io);
       if (exitCode !== 1) {
-        throw new Error("spec-creator polish --no-run should fail when strict validate cannot run");
+        throw new Error(
+          "spec-creator polish --no-run should fail when strict validate cannot run",
+        );
       }
     });
     if (!buffer.state.stderr.includes("openspec")) {
-      throw new Error(`stderr should include openspec validate failure: ${buffer.state.stderr}`);
+      throw new Error(
+        `stderr should include openspec validate failure: ${buffer.state.stderr}`,
+      );
     }
     if (fileExists(outputPath)) {
-      throw new Error("output should not be committed when staged validate fails");
+      throw new Error(
+        "output should not be committed when staged validate fails",
+      );
     }
   });
 });
@@ -1677,7 +1883,9 @@ Deno.test("main spec-creator polish requires existing change directory", () => {
     buffer.io,
   );
   if (exitCode !== 1) {
-    throw new Error("spec-creator polish should fail for missing change directory");
+    throw new Error(
+      "spec-creator polish should fail for missing change directory",
+    );
   }
   if (!buffer.state.stderr.includes("requires existing change_id directory")) {
     throw new Error(
@@ -1695,7 +1903,9 @@ Deno.test("main spec-creator legacy create rejects existing change_id", () => {
       buffer.io,
     );
     if (exitCode !== 1) {
-      throw new Error("spec-creator should fail when change directory already exists");
+      throw new Error(
+        "spec-creator should fail when change directory already exists",
+      );
     }
     if (!buffer.state.stderr.includes("requires non-existing change_id")) {
       throw new Error(
