@@ -1373,6 +1373,70 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
   }
 });
 
+Deno.test("main spec-creator polish quotes checklist lines in human notes", () => {
+  const changeId = uniqueChangeId("update-polish-quote-checklist");
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  withTemporaryChangeDir(changeId, () => {
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/tasks.md`,
+      [
+        "## 1. 実装タスク",
+        "- [x] 1.1 既存タスク",
+        "- [ ] 1.2 次タスク",
+        "",
+        "## 2. 人間向けメモ（コンパイラ非対象）",
+        "- メモ: sample",
+      ].join("\n"),
+    );
+
+    const buffer = createIoBuffer();
+    withFakeOpenSpecValidate("pass", () => {
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        changeId,
+        "--no-run",
+        "--output",
+        outputPath,
+      ], buffer.io);
+      if (exitCode !== 0) {
+        throw new Error(`spec-creator polish should succeed: ${buffer.state.stderr}`);
+      }
+    });
+
+    if (!fileExists(outputPath)) {
+      throw new Error("spec-creator polish should produce task_config output");
+    }
+
+    const generatedTasks = Deno.readTextFileSync(
+      `openspec/changes/${changeId}/tasks.md`,
+    );
+    if (!generatedTasks.includes("  > - [x] 1.1 既存タスク")) {
+      throw new Error("requirements memo checklist lines should be blockquoted");
+    }
+    const generatedLines = generatedTasks.split(/\r?\n/u);
+    const humanNotesHeadingIndex = generatedLines.findIndex((line) =>
+      line.trim() === "## 2. 人間向けメモ（コンパイラ非対象）"
+    );
+    if (humanNotesHeadingIndex < 0) {
+      throw new Error("tasks.md should include human notes section");
+    }
+    const humanNotesBody = generatedLines.slice(humanNotesHeadingIndex + 1)
+      .join("\n");
+    if (/^\s*-\s*\[[ xX]\]\s*1\.1\b/m.test(humanNotesBody)) {
+      throw new Error(
+        "human notes should not include top-level checklist items parsed as task ids",
+      );
+    }
+
+    try {
+      Deno.removeSync(outputPath);
+    } catch {
+      // noop
+    }
+  });
+});
+
 Deno.test("main spec-creator polish does not force design target only because design.md exists", () => {
   const changeId = uniqueChangeId("update-polish-design-optional");
   const outputPath = `task_configs/spec_creator/${changeId}.json`;

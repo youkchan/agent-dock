@@ -51,6 +51,55 @@ const DEFAULT_SPEC_CREATOR_PERSONAS = [
   "spec-code-creator",
 ];
 
+const REQUIRED_REVIEW_CONTRACT_IDS = [
+  "RC-01",
+  "RC-02",
+  "RC-03",
+  "RC-04",
+  "RC-05",
+  "RC-06",
+  "RC-07",
+  "RC-08",
+  "RC-09",
+  "RC-10",
+  "RC-11",
+  "RC-12",
+] as const;
+
+const REQUIRED_REVIEW_CONTRACT_ITEMS_BY_LANG: Record<
+  SpecCreatorLanguage,
+  string[]
+> = {
+  ja: [
+    "RC-01 RESULT: 最終 result block 抽出と completed|blocked 正規化を定義する",
+    "RC-02 SUMMARY: 抽出・必須・要約用途を定義する",
+    "RC-03 CHANGED_FILES: 正規化し、非implementフェーズでは (none) を必須化する",
+    "RC-04 CHECKS: 抽出・必須・禁止コマンド検査を定義する",
+    "RC-05 JUDGMENT: decision phase 必須、pass|changes_required|blocked 正規化を定義する",
+    "RC-06 判定時系列: blocked 即停止 / changes_required sendback / pass 前進を定義する",
+    "RC-07 reviewer stop: REVIEWER_STOP:requirement_drift|over_editing|verbosity を明記する",
+    "RC-08 実行経路対象: run と spec-creator の両方を対象にする",
+    "RC-09 段階責務: compile と runtime の責務分離を明記する",
+    "RC-10 入力契約キー: task_config.persona_policy.phase_overrides.<phase>.executor_personas を明記する",
+    "RC-11 遷移条件: sendback 条件に blocked=false 前提を明記する",
+    "RC-12 テスト契約: MUST/SHALL ごとに経路テストと fail-closed拒否テストを要求する",
+  ],
+  en: [
+    "RC-01 RESULT: define last result block extraction and completed|blocked normalization",
+    "RC-02 SUMMARY: define extraction, requiredness, and summary use",
+    "RC-03 CHANGED_FILES: define normalization and require (none) in non-implement phases",
+    "RC-04 CHECKS: define extraction, requiredness, and forbidden-command checks",
+    "RC-05 JUDGMENT: define decision-phase requiredness and pass|changes_required|blocked normalization",
+    "RC-06 decision timeline: blocked immediate stop / changes_required sendback / pass advance",
+    "RC-07 reviewer stop: include REVIEWER_STOP:requirement_drift|over_editing|verbosity",
+    "RC-08 path scope: cover both run and spec-creator paths",
+    "RC-09 stage responsibility: separate compile and runtime responsibilities",
+    "RC-10 input contract key: task_config.persona_policy.phase_overrides.<phase>.executor_personas",
+    "RC-11 transition condition: sendback requires blocked=false precondition",
+    "RC-12 test contract: require path test and fail-closed rejection test for each MUST/SHALL",
+  ],
+};
+
 const DEFAULT_PROMPT_IO: SpecCreatorPromptIO = {
   prompt(message: string): string | null {
     return prompt(message);
@@ -101,14 +150,14 @@ export function collectSpecContextInteractive(
     );
   }
 
-  const specContext: SpecContext = {
+  const specContext = normalizeSpecContextForReviewContract({
     requirements_text: requirementsText,
     language,
     runtime_stack: "typescript",
     persona_policy: {
       active_personas: [...DEFAULT_SPEC_CREATOR_PERSONAS],
     },
-  };
+  });
 
   return {
     change_id: changeId,
@@ -122,6 +171,9 @@ export function buildSpecCreatorTaskConfig(
   specContext: SpecContext,
   options: BuildSpecCreatorTaskConfigOptions = {},
 ): SpecCreatorTaskConfig {
+  const normalizedSpecContext = normalizeSpecContextForReviewContract(
+    specContext,
+  );
   const template = createSpecCreatorTaskConfigTemplate(changeId);
   const includeDesignTarget = options.includeDesignTarget !== false;
   const tasksForScope = scopeSpecCreatorTasksByDesignTarget(
@@ -129,7 +181,7 @@ export function buildSpecCreatorTaskConfig(
     changeId,
     includeDesignTarget,
   );
-  const contextText = buildSpecContextPromptSection(specContext);
+  const contextText = buildSpecContextPromptSection(normalizedSpecContext);
   const tasks = tasksForScope.map((task) => ({
     ...task,
     target_paths: [...task.target_paths],
@@ -138,7 +190,13 @@ export function buildSpecCreatorTaskConfig(
     persona_policy: task.persona_policy === null
       ? null
       : structuredClone(task.persona_policy),
-    description: `${task.description}\n\n${contextText}`,
+    description: `${
+      withTaskReviewContractDescription(
+        task.id,
+        task.description,
+        normalizedSpecContext.language,
+      )
+    }\n\n${contextText}`,
   }));
 
   return {
@@ -149,9 +207,47 @@ export function buildSpecCreatorTaskConfig(
     meta: {
       source_change_id: changeId,
       generated_by: "spec-creator-preprocess",
-      spec_context: structuredClone(specContext),
+      spec_context: structuredClone(normalizedSpecContext),
     },
   };
+}
+
+export function normalizeSpecContextForReviewContract(
+  specContext: SpecContext,
+): SpecContext {
+  return {
+    requirements_text: ensureRequiredReviewContractInRequirementsText(
+      specContext.requirements_text,
+      specContext.language,
+    ),
+    language: specContext.language,
+    runtime_stack: specContext.runtime_stack,
+    persona_policy: {
+      active_personas: [...specContext.persona_policy.active_personas],
+    },
+  };
+}
+
+export function ensureRequiredReviewContractInRequirementsText(
+  requirementsText: string,
+  language: SpecCreatorLanguage,
+): string {
+  const normalized = requirementsText.trim();
+  if (
+    REQUIRED_REVIEW_CONTRACT_IDS.every((id) => normalized.includes(id))
+  ) {
+    return normalized;
+  }
+  const heading = language === "ja"
+    ? "必須レビュー契約（RC-01..RC-12）:"
+    : "Required review contract (RC-01..RC-12):";
+  const lines = REQUIRED_REVIEW_CONTRACT_ITEMS_BY_LANG[language];
+  return [
+    normalized,
+    "",
+    heading,
+    ...lines.map((line) => `- ${line}`),
+  ].join("\n").trim();
 }
 
 function scopeSpecCreatorTasksByDesignTarget(
@@ -199,16 +295,42 @@ function buildSpecContextPromptSection(specContext: SpecContext): string {
   const activePersonas = specContext.persona_policy.active_personas.length > 0
     ? specContext.persona_policy.active_personas.join(", ")
     : "(none)";
-  const requirementsLines = toPromptMultilineBlock(specContext.requirements_text);
+  const requirementsLines = toPromptMultilineBlock(
+    specContext.requirements_text,
+  );
+  const contractLines = REQUIRED_REVIEW_CONTRACT_ITEMS_BY_LANG[
+    specContext.language
+  ];
 
   return [
     "spec_context:",
     "- requirements_text: |",
     ...requirementsLines.map((line) => `  ${line}`),
+    "- required_review_contract: |",
+    ...contractLines.map((line) => `  - ${line}`),
     `- language: ${specContext.language}`,
     `- runtime_stack: ${specContext.runtime_stack} (TypeScript-only runtime, use src/**/*.ts)`,
     `- active_personas: ${activePersonas}`,
   ].join("\n");
+}
+
+function withTaskReviewContractDescription(
+  taskId: string,
+  description: string,
+  language: SpecCreatorLanguage,
+): string {
+  if (taskId !== "1.3") {
+    return description;
+  }
+  if (/\bRC-01\b/u.test(description) && /\bRC-12\b/u.test(description)) {
+    return description;
+  }
+  const summary = language === "ja"
+    ? "RC-01..RC-12 を tasks.md(1.3) と specs/**/spec.md の両方へ同義で反映し、欠落は fail-closed とする。"
+    : "Mirror RC-01..RC-12 in both tasks.md (1.3) and specs/**/spec.md, and fail-closed on any omission.";
+  const items = REQUIRED_REVIEW_CONTRACT_ITEMS_BY_LANG[language]
+    .map((line) => `- ${line}`);
+  return [description.trim(), summary, ...items].join("\n");
 }
 
 function toPromptMultilineBlock(raw: string): string[] {

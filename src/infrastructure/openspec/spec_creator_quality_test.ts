@@ -4,10 +4,47 @@ import {
   type SpecCreatorArtifactPaths,
 } from "./spec_creator_quality.ts";
 
-type ArtifactTextOverrides = Partial<Record<
-  "proposalPath" | "tasksPath" | "designPath" | "codeSummaryPath" | "deltaSpecPath",
-  string
->>;
+const REQUIRED_REVIEW_CONTRACT_IDS = [
+  "RC-01",
+  "RC-02",
+  "RC-03",
+  "RC-04",
+  "RC-05",
+  "RC-06",
+  "RC-07",
+  "RC-08",
+  "RC-09",
+  "RC-10",
+  "RC-11",
+  "RC-12",
+];
+const REQUIRED_REVIEW_CONTRACT_IDS_TEXT = REQUIRED_REVIEW_CONTRACT_IDS.join(
+  ", ",
+);
+const DEFAULT_TASKS_TEXT = [
+  "## 1. tasks",
+  "- [ ] 1.3 result parser commonization",
+  `  - outcome: ${REQUIRED_REVIEW_CONTRACT_IDS_TEXT}`,
+].join("\n");
+const DEFAULT_DELTA_SPEC_TEXT = [
+  "## ADDED Requirements",
+  "### Requirement: baseline",
+  "The system SHALL keep generated artifacts aligned.",
+  "",
+  "#### Scenario: baseline coverage",
+  `- **THEN** ${REQUIRED_REVIEW_CONTRACT_IDS_TEXT}`,
+].join("\n");
+
+type ArtifactTextOverrides = Partial<
+  Record<
+    | "proposalPath"
+    | "tasksPath"
+    | "designPath"
+    | "codeSummaryPath"
+    | "deltaSpecPath",
+    string
+  >
+>;
 
 function withTempArtifacts(
   files: ArtifactTextOverrides,
@@ -23,16 +60,22 @@ function withTempArtifacts(
       deltaSpecPath: `${root}/spec.md`,
     };
     const defaults: Record<
-      "proposalPath" | "tasksPath" | "designPath" | "codeSummaryPath" | "deltaSpecPath",
+      | "proposalPath"
+      | "tasksPath"
+      | "designPath"
+      | "codeSummaryPath"
+      | "deltaSpecPath",
       string
     > = {
       proposalPath: "# proposal\n",
-      tasksPath: "## 1. tasks\n- [ ] 1.1 sample\n",
+      tasksPath: DEFAULT_TASKS_TEXT,
       designPath: "# design\n",
       codeSummaryPath: "# code_summary\n",
-      deltaSpecPath: "## ADDED Requirements\n",
+      deltaSpecPath: DEFAULT_DELTA_SPEC_TEXT,
     };
-    for (const key of Object.keys(paths) as Array<keyof SpecCreatorArtifactPaths>) {
+    for (
+      const key of Object.keys(paths) as Array<keyof SpecCreatorArtifactPaths>
+    ) {
       if (key === "deltaSpecPaths") {
         continue;
       }
@@ -64,16 +107,22 @@ function withTempArtifactsAndExtraSpecs(
       deltaSpecPaths: [`${root}/spec.md`],
     };
     const defaults: Record<
-      "proposalPath" | "tasksPath" | "designPath" | "codeSummaryPath" | "deltaSpecPath",
+      | "proposalPath"
+      | "tasksPath"
+      | "designPath"
+      | "codeSummaryPath"
+      | "deltaSpecPath",
       string
     > = {
       proposalPath: "# proposal\n",
-      tasksPath: "## 1. tasks\n- [ ] 1.1 sample\n",
+      tasksPath: DEFAULT_TASKS_TEXT,
       designPath: "# design\n",
       codeSummaryPath: "# code_summary\n",
-      deltaSpecPath: "## ADDED Requirements\n",
+      deltaSpecPath: DEFAULT_DELTA_SPEC_TEXT,
     };
-    for (const key of Object.keys(paths) as Array<keyof SpecCreatorArtifactPaths>) {
+    for (
+      const key of Object.keys(paths) as Array<keyof SpecCreatorArtifactPaths>
+    ) {
       if (key === "deltaSpecPaths") {
         continue;
       }
@@ -133,6 +182,8 @@ Deno.test("quality guard detects wrong task_config.review key", () => {
 Deno.test("quality guard detects blocked timing contradiction", () => {
   withTempArtifacts({
     deltaSpecPath: [
+      DEFAULT_DELTA_SPEC_TEXT,
+      "",
       "system waits for all results before deciding blocked",
       "blocked is immediate blocked when one reviewer returns blocked",
     ].join("\n"),
@@ -148,6 +199,8 @@ Deno.test("quality guard detects task 1.4 blocked test conflict", () => {
   withTempArtifacts({
     tasksPath: [
       "## 1. tasks",
+      "- [ ] 1.3 review contract",
+      `  - outcome: ${REQUIRED_REVIEW_CONTRACT_IDS_TEXT}`,
       "- [ ] 1.4 review flow",
       "  - outcome: immediate blocked",
       "  - test: 1 blocked/1 changes_required/1 pass in one round",
@@ -164,6 +217,8 @@ Deno.test("quality guard detects task 1.5 sendback ambiguity", () => {
   withTempArtifacts({
     tasksPath: [
       "## 1. tasks",
+      "- [ ] 1.3 review contract",
+      `  - outcome: ${REQUIRED_REVIEW_CONTRACT_IDS_TEXT}`,
       "- [ ] 1.5 sendback",
       "  - outcome: phase 結果全件回収後に sendBack する",
     ].join("\n"),
@@ -208,6 +263,22 @@ Deno.test("quality guard detects persona-dir contract gaps and missing custom as
   });
 });
 
+Deno.test("quality guard detects review contract gaps between tasks 1.3 and spec", () => {
+  withTempArtifacts({
+    tasksPath: [
+      "## 1. tasks",
+      "- [ ] 1.3 review contract",
+      "  - outcome: RC-01, RC-02",
+    ].join("\n"),
+    deltaSpecPath: DEFAULT_DELTA_SPEC_TEXT,
+  }, (paths) => {
+    const violations = collectSpecCreatorQualityViolations(paths);
+    if (!hasRule(violations, "review_contract_coverage")) {
+      throw new Error("expected review_contract_coverage violation");
+    }
+  });
+});
+
 Deno.test("quality guard passes for aligned artifacts", () => {
   withTempArtifacts({
     proposalPath: [
@@ -222,6 +293,8 @@ Deno.test("quality guard passes for aligned artifacts", () => {
     ].join("\n"),
     tasksPath: [
       "## 1. tasks",
+      "- [ ] 1.3 review contract",
+      `  - outcome: ${REQUIRED_REVIEW_CONTRACT_IDS_TEXT}`,
       "- [ ] 1.4 review flow",
       "  - outcome: immediate blocked",
       "  - test: blocked at reviewer 2 and reviewer 3 is not executed",
@@ -239,6 +312,8 @@ Deno.test("quality guard passes for aligned artifacts", () => {
       "- THEN review executes in order",
       "#### Scenario: blocked",
       "- THEN immediate blocked",
+      "#### Scenario: review contract",
+      `- **THEN** ${REQUIRED_REVIEW_CONTRACT_IDS_TEXT}`,
     ].join("\n"),
   }, (paths) => {
     const violations = collectSpecCreatorQualityViolations(paths);
@@ -258,7 +333,8 @@ Deno.test("quality guard scans all delta spec files, not only first one", () => 
       deltaSpecPath: "## ADDED Requirements\n### Requirement: baseline\n",
     },
     {
-      "specs/extra/spec.md": "- GIVEN task_config.review includes [code-reviewer]\n",
+      "specs/extra/spec.md":
+        "- GIVEN task_config.review includes [code-reviewer]\n",
     },
     (paths) => {
       const violations = collectSpecCreatorQualityViolations(paths);

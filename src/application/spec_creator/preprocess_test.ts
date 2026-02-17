@@ -99,6 +99,12 @@ Deno.test("collectSpecContextInteractive collects required inputs", () => {
   ) {
     throw new Error("spec_context should be injected to task descriptions");
   }
+  if (!result.spec_context.requirements_text.includes("RC-01")) {
+    throw new Error("requirements_text should include review contract RC-01");
+  }
+  if (!result.spec_context.requirements_text.includes("RC-12")) {
+    throw new Error("requirements_text should include review contract RC-12");
+  }
   if (result.task_config.meta.source_change_id !== "add-spec-creator") {
     throw new Error("meta.source_change_id mismatch");
   }
@@ -219,7 +225,9 @@ Deno.test("buildSpecCreatorTaskConfig excludes design targets when includeDesign
   });
 
   if (config.tasks.some((task) => task.id === "1.4")) {
-    throw new Error("task 1.4 should be removed when design target is disabled");
+    throw new Error(
+      "task 1.4 should be removed when design target is disabled",
+    );
   }
   for (const task of config.tasks) {
     if (task.target_paths.includes(designPath)) {
@@ -259,5 +267,28 @@ Deno.test("buildSpecCreatorTaskConfig keeps multiline requirements_text in task 
   }
   if (!description.includes("  line 1\n  line 2\n  line 3")) {
     throw new Error("multiline requirements_text should be preserved");
+  }
+});
+
+Deno.test("buildSpecCreatorTaskConfig injects review contract into task 1.3 description", () => {
+  const specContext: SpecContext = {
+    requirements_text: "result parser commonization",
+    language: "ja",
+    runtime_stack: "typescript",
+    persona_policy: {
+      active_personas: ["spec-planner", "spec-reviewer", "spec-code-creator"],
+    },
+  };
+
+  const config = buildSpecCreatorTaskConfig("add-spec-creator", specContext);
+  const task13 = config.tasks.find((task) => task.id === "1.3");
+  if (!task13) {
+    throw new Error("task 1.3 should exist");
+  }
+  if (!task13.description.includes("RC-01")) {
+    throw new Error("task 1.3 description should include RC-01");
+  }
+  if (!task13.description.includes("RC-12")) {
+    throw new Error("task 1.3 description should include RC-12");
   }
 });

@@ -43,7 +43,23 @@ const DESIGN_BATCH_TARGET_PATTERN =
   /proposal(?:\.md)?[^。\n]*design(?:\.md)?[^。\n]*tasks(?:\.md)?[^。\n]*code_summary(?:\.md)?/iu;
 const DESIGN_BATCH_ACTION_PATTERN =
   /一括(?:受領|生成|再生成|更新)|single context pass|all target artifacts|complete rewritten files/iu;
-const DESIGN_BATCH_SHORTCUT_PATTERN = /proposal\/design\/tasks\/code_summary\/spec\.md/iu;
+const DESIGN_BATCH_SHORTCUT_PATTERN =
+  /proposal\/design\/tasks\/code_summary\/spec\.md/iu;
+const REQUIRED_REVIEW_CONTRACT_IDS = [
+  "RC-01",
+  "RC-02",
+  "RC-03",
+  "RC-04",
+  "RC-05",
+  "RC-06",
+  "RC-07",
+  "RC-08",
+  "RC-09",
+  "RC-10",
+  "RC-11",
+  "RC-12",
+] as const;
+const REVIEW_CONTRACT_ID_PATTERN = /\bRC-(?:0[1-9]|1[0-2])\b/gu;
 
 export function assertSpecCreatorSemanticContracts(
   paths: SpecCreatorArtifactPaths,
@@ -55,7 +71,9 @@ export function assertSpecCreatorSemanticContracts(
   }
   const details = violations
     .map((violation) =>
-      `${toRelativePath(violation.file)}:${violation.line}:${violation.rule_id}:${violation.message}`
+      `${
+        toRelativePath(violation.file)
+      }:${violation.line}:${violation.rule_id}:${violation.message}`
     )
     .join("; ");
   throw new Error(`spec-creator ${phase} semantic guard failed (${details})`);
@@ -76,13 +94,22 @@ export function collectSpecCreatorQualityViolations(
   ].join("\n");
 
   for (const specArtifact of artifacts.specs) {
-    pushRunConfigCompileConflict(violations, specArtifact.path, specArtifact.text);
+    pushRunConfigCompileConflict(
+      violations,
+      specArtifact.path,
+      specArtifact.text,
+    );
     pushBlockedTimingConflict(violations, specArtifact.path, specArtifact.text);
     pushWrongTaskConfigKey(violations, specArtifact.path, specArtifact.text);
   }
   pushTask14BlockedTestConflict(violations, paths.tasksPath, artifacts.tasks);
   pushTask15SendbackAmbiguity(violations, paths.tasksPath, artifacts.tasks);
-  pushDesignGenerationConsistency(violations, paths.proposalPath, artifacts.proposal);
+  pushDesignGenerationConsistency(
+    violations,
+    paths.proposalPath,
+    artifacts.proposal,
+  );
+  pushRequiredReviewContractCoverage(violations, paths, artifacts);
 
   if (PERSONA_DIR_PATTERN.test(combined)) {
     pushRunSpecCreatorCoverage(violations, paths, artifacts);
@@ -128,7 +155,8 @@ function pushRunSpecCreatorCoverage(
   paths: SpecCreatorArtifactPaths,
   artifacts: LoadedArtifacts,
 ): void {
-  const scope = `${artifacts.proposal}\n${artifacts.design}\n${artifacts.tasks}`;
+  const scope =
+    `${artifacts.proposal}\n${artifacts.design}\n${artifacts.tasks}`;
   const hasRun = /\brun\b/iu.test(scope);
   const hasSpecCreator = /spec-creator/iu.test(scope);
   if (hasRun && hasSpecCreator) {
@@ -138,7 +166,8 @@ function pushRunSpecCreatorCoverage(
     rule_id: "path_coverage",
     file: paths.proposalPath,
     line: firstMatchLine(artifacts.proposal, PERSONA_DIR_PATTERN) ?? 1,
-    message: "requirements must explicitly cover both run and spec-creator paths",
+    message:
+      "requirements must explicitly cover both run and spec-creator paths",
   });
 }
 
@@ -192,9 +221,9 @@ function pushPersonaDirFormatContract(
   paths: SpecCreatorArtifactPaths,
   artifacts: LoadedArtifacts,
 ): void {
-  const scope = `${artifacts.specs.map((item) => item.text).join("\n")}\n${
-    artifacts.design
-  }`;
+  const scope = `${
+    artifacts.specs.map((item) => item.text).join("\n")
+  }\n${artifacts.design}`;
   const hasPersonasJson = /personas\.json/iu.test(scope);
   const hasArraySchema = /JSON配列|json array/iu.test(scope);
   const hasMissingContract = /不在|missing|not found/iu.test(scope);
@@ -270,11 +299,11 @@ function pushTask15SendbackAmbiguity(
   if (section === null) {
     return;
   }
-  const hasWaitAllWording = /全件回収|全担当.*回収|all.*results.*collect/iu.test(
-    section.text,
-  );
-  const hasBlockedGuard =
-    /blocked\s*=\s*false/iu.test(section.text) ||
+  const hasWaitAllWording = /全件回収|全担当.*回収|all.*results.*collect/iu
+    .test(
+      section.text,
+    );
+  const hasBlockedGuard = /blocked\s*=\s*false/iu.test(section.text) ||
     /blocked\s*がない/u.test(section.text) ||
     /blocked\s*なし/u.test(section.text);
   if (!hasWaitAllWording || hasBlockedGuard) {
@@ -293,12 +322,13 @@ function pushCustomPersonaAssignmentCoverage(
   paths: SpecCreatorArtifactPaths,
   artifacts: LoadedArtifacts,
 ): void {
-  const scope = `${artifacts.specs.map((item) => item.text).join("\n")}\n${
-    artifacts.tasks
-  }`;
-  const hasCustomPersona = /custom-reviewer|custom persona|カスタムペルソナ/iu.test(
-    scope,
-  );
+  const scope = `${
+    artifacts.specs.map((item) => item.text).join("\n")
+  }\n${artifacts.tasks}`;
+  const hasCustomPersona = /custom-reviewer|custom persona|カスタムペルソナ/iu
+    .test(
+      scope,
+    );
   const hasAssignment = /executor_personas/iu.test(scope);
   if (hasCustomPersona && hasAssignment) {
     return;
@@ -309,6 +339,61 @@ function pushCustomPersonaAssignmentCoverage(
     line: firstMatchLine(scope, PERSONA_DIR_PATTERN) ?? 1,
     message:
       "requirements must include custom persona assignment acceptance scenario",
+  });
+}
+
+function pushRequiredReviewContractCoverage(
+  violations: SpecCreatorQualityViolation[],
+  paths: SpecCreatorArtifactPaths,
+  artifacts: LoadedArtifacts,
+): void {
+  const task13Section = findTaskSection(artifacts.tasks, "1.3");
+  if (task13Section === null) {
+    violations.push({
+      rule_id: "review_contract_coverage",
+      file: paths.tasksPath,
+      line: 1,
+      message:
+        "tasks.md must include task 1.3 and mirror RC-01..RC-12 with spec.md",
+    });
+    return;
+  }
+
+  const taskContractIds = collectReviewContractIds(task13Section.text);
+  const specsMergedText = artifacts.specs.map((item) => item.text).join("\n");
+  const specContractIds = collectReviewContractIds(specsMergedText);
+  const missingInTasks = REQUIRED_REVIEW_CONTRACT_IDS.filter((id) =>
+    !taskContractIds.has(id)
+  );
+  const missingInSpecs = REQUIRED_REVIEW_CONTRACT_IDS.filter((id) =>
+    !specContractIds.has(id)
+  );
+
+  if (missingInTasks.length === 0 && missingInSpecs.length === 0) {
+    return;
+  }
+
+  const messageParts: string[] = [];
+  if (missingInTasks.length > 0) {
+    messageParts.push(
+      `missing in tasks.md task 1.3: ${missingInTasks.join(", ")}`,
+    );
+  }
+  if (missingInSpecs.length > 0) {
+    messageParts.push(
+      `missing in specs: ${missingInSpecs.join(", ")}`,
+    );
+  }
+
+  const primaryMissingInTasks = missingInTasks.length > 0;
+  violations.push({
+    rule_id: "review_contract_coverage",
+    file: primaryMissingInTasks ? paths.tasksPath : firstDeltaSpecPath(paths),
+    line: primaryMissingInTasks ? task13Section.startLine : 1,
+    message:
+      `RC-01..RC-12 must be mirrored in tasks.md(1.3) and specs/**/spec.md (${
+        messageParts.join("; ")
+      })`,
   });
 }
 
@@ -409,4 +494,13 @@ function toRelativePath(filePath: string): string {
 
 function escapeRegExp(input: string): string {
   return input.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function collectReviewContractIds(text: string): Set<string> {
+  const ids = new Set<string>();
+  const matches = text.matchAll(REVIEW_CONTRACT_ID_PATTERN);
+  for (const match of matches) {
+    ids.add(match[0]);
+  }
+  return ids;
 }

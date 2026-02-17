@@ -11,6 +11,7 @@ import {
   buildSpecCreatorTaskConfig,
   collectSpecContextInteractive,
   normalizeChangeId,
+  normalizeSpecContextForReviewContract,
   type SpecContext,
   type SpecCreatorTaskConfig,
 } from "../application/spec_creator/preprocess.ts";
@@ -60,9 +61,7 @@ import {
   getOpenSpecTasksTemplate,
   SUPPORTED_TEMPLATE_LANGS,
 } from "../infrastructure/openspec/template.ts";
-import {
-  loadPersonasFromPayload,
-} from "../infrastructure/persona/catalog.ts";
+import { loadPersonasFromPayload } from "../infrastructure/persona/catalog.ts";
 import { buildProviderFromEnv } from "../infrastructure/provider/mod.ts";
 import { StateStore } from "../infrastructure/state/store.ts";
 import { createInfrastructureModule } from "../infrastructure/mod.ts";
@@ -618,7 +617,11 @@ function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
     const next = argv[index + 1];
 
     if (arg === "--feedback") {
-      parsed.feedback = parseSingleArgValue("--feedback", parsed.feedback, next);
+      parsed.feedback = parseSingleArgValue(
+        "--feedback",
+        parsed.feedback,
+        next,
+      );
       index += 1;
       continue;
     }
@@ -628,12 +631,20 @@ function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
       continue;
     }
     if (arg === "--state-dir") {
-      parsed.stateDir = parseSingleArgValue("--state-dir", parsed.stateDir, next);
+      parsed.stateDir = parseSingleArgValue(
+        "--state-dir",
+        parsed.stateDir,
+        next,
+      );
       index += 1;
       continue;
     }
     if (arg === "--persona-dir") {
-      parsed.personaDir = parseSingleArgValue("--persona-dir", parsed.personaDir, next);
+      parsed.personaDir = parseSingleArgValue(
+        "--persona-dir",
+        parsed.personaDir,
+        next,
+      );
       index += 1;
       continue;
     }
@@ -1027,14 +1038,14 @@ function buildSpecCreatorPolishContextFromMarkdown(
     feedback,
     includeDesignTarget,
   });
-  const specContext: SpecContext = {
+  const specContext = normalizeSpecContextForReviewContract({
     requirements_text: prompt.requirementsText,
     language: prompt.language,
     runtime_stack: "typescript",
     persona_policy: {
       active_personas: [...SPEC_CREATOR_POLISH_ACTIVE_PERSONAS],
     },
-  };
+  });
 
   return {
     change_id: changeId,
@@ -1145,7 +1156,10 @@ function runSpecCreatorWorkflow(
       ? path.resolve(args.stateDir)
       : path.resolve(defaultSpecCreatorStateDir(context.change_id));
 
-    const maxQualityRetriesRaw = safeIntEnv("SPEC_CREATOR_QUALITY_MAX_RETRIES", 1);
+    const maxQualityRetriesRaw = safeIntEnv(
+      "SPEC_CREATOR_QUALITY_MAX_RETRIES",
+      1,
+    );
     const maxQualityRetries = Math.max(0, Math.min(3, maxQualityRetriesRaw));
     let attempt = 0;
     while (true) {
@@ -1175,8 +1189,9 @@ function runSpecCreatorWorkflow(
         ...(args.personaDir ? [`--persona-dir ${args.personaDir}`] : []),
       ];
       io.stdout(`[spec-creator] run ${runArgsForLog.join(" ")}\n`);
-      const runExitCode = runWithCurrentDirectory(stagingRoot, () =>
-        runCommand(runArgs, io)
+      const runExitCode = runWithCurrentDirectory(
+        stagingRoot,
+        () => runCommand(runArgs, io),
       );
       Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
       if (runExitCode !== 0) {
@@ -1233,7 +1248,9 @@ interface SpecCreatorContextPayload {
   };
 }
 
-function resolveSpecCreatorArtifactPaths(changeId: string): SpecCreatorArtifactPaths {
+function resolveSpecCreatorArtifactPaths(
+  changeId: string,
+): SpecCreatorArtifactPaths {
   const changeDir = path.resolve("openspec", "changes", changeId);
   const deltaSpecPaths = collectDeltaSpecPaths(changeDir, changeId);
   return {
@@ -1312,7 +1329,9 @@ function writeSpecCreatorArtifacts(
   writeTaskConfigFile(context.task_config, outputPath);
 }
 
-function listSpecCreatorArtifactPaths(paths: SpecCreatorArtifactPaths): string[] {
+function listSpecCreatorArtifactPaths(
+  paths: SpecCreatorArtifactPaths,
+): string[] {
   const ordered = [
     paths.proposalPath,
     paths.tasksPath,
@@ -1371,14 +1390,18 @@ function collectSpecCreatorApplyManifest(
     manifest.push(resolved);
   };
 
-  for (const targetArtifactPath of listSpecCreatorArtifactPathsForApply(
-    targetPaths,
-  )) {
+  for (
+    const targetArtifactPath of listSpecCreatorArtifactPathsForApply(
+      targetPaths,
+    )
+  ) {
     pushPath(targetArtifactPath);
   }
-  for (const stagedArtifactPath of listSpecCreatorArtifactPathsForApply(
-    stagedPaths,
-  )) {
+  for (
+    const stagedArtifactPath of listSpecCreatorArtifactPathsForApply(
+      stagedPaths,
+    )
+  ) {
     pushPath(mapPathFromStagingWorkspace(stagedArtifactPath, stagingRoot));
   }
   return manifest;
@@ -1445,13 +1468,19 @@ function toStagedArtifactPaths(
     proposalPath: mapPathToStagingWorkspace(paths.proposalPath, stagingRoot),
     tasksPath: mapPathToStagingWorkspace(paths.tasksPath, stagingRoot),
     designPath: mapPathToStagingWorkspace(paths.designPath, stagingRoot),
-    codeSummaryPath: mapPathToStagingWorkspace(paths.codeSummaryPath, stagingRoot),
+    codeSummaryPath: mapPathToStagingWorkspace(
+      paths.codeSummaryPath,
+      stagingRoot,
+    ),
     deltaSpecPath: mapPathToStagingWorkspace(paths.deltaSpecPath, stagingRoot),
     deltaSpecPaths,
   };
 }
 
-function mapPathToStagingWorkspace(absolutePath: string, stagingRoot: string): string {
+function mapPathToStagingWorkspace(
+  absolutePath: string,
+  stagingRoot: string,
+): string {
   const resolved = path.resolve(absolutePath);
   const relative = path.relative(Deno.cwd(), resolved);
   if (
@@ -1463,7 +1492,10 @@ function mapPathToStagingWorkspace(absolutePath: string, stagingRoot: string): s
   return path.join(stagingRoot, relative);
 }
 
-function mapPathFromStagingWorkspace(stagedPath: string, stagingRoot: string): string {
+function mapPathFromStagingWorkspace(
+  stagedPath: string,
+  stagingRoot: string,
+): string {
   const resolved = path.resolve(stagedPath);
   const relative = path.relative(stagingRoot, resolved);
   if (
@@ -1475,7 +1507,10 @@ function mapPathFromStagingWorkspace(stagedPath: string, stagingRoot: string): s
   return path.resolve(Deno.cwd(), relative);
 }
 
-function resolveStagedOutputPath(outputPath: string, stagingRoot: string): string {
+function resolveStagedOutputPath(
+  outputPath: string,
+  stagingRoot: string,
+): string {
   const fileName = path.basename(outputPath);
   const outputDir = path.join(stagingRoot, "task_configs", "spec_creator");
   Deno.mkdirSync(outputDir, { recursive: true });
@@ -1522,7 +1557,10 @@ function runWithCurrentDirectory<T>(dirPath: string, fn: () => T): T {
   }
 }
 
-function runStagedStrictValidate(changeId: string, workspaceRoot: string): void {
+function runStagedStrictValidate(
+  changeId: string,
+  workspaceRoot: string,
+): void {
   const validateResult = new Deno.Command("openspec", {
     args: ["validate", changeId, "--strict"],
     stdout: "piped",
@@ -1584,7 +1622,9 @@ function applyStagedArtifactsAtomically(
 
 type ArtifactSnapshot = Record<string, string | null>;
 
-function snapshotArtifactContents(paths: SpecCreatorArtifactPaths): ArtifactSnapshot {
+function snapshotArtifactContents(
+  paths: SpecCreatorArtifactPaths,
+): ArtifactSnapshot {
   const snapshot: ArtifactSnapshot = {};
   for (const artifactPath of listSpecCreatorArtifactPaths(paths)) {
     snapshot[artifactPath] = readArtifactContentOrNull(artifactPath);
@@ -1696,13 +1736,17 @@ function assertNoForbiddenSpecCreatorCommands(
 
   if (violations.length > 0) {
     throw new Error(
-      `spec-creator ${phase} guard failed: forbidden OpenSpec command detected (${violations.join("; ")})`,
+      `spec-creator ${phase} guard failed: forbidden OpenSpec command detected (${
+        violations.join("; ")
+      })`,
     );
   }
 }
 
 function isForbiddenCommandExemptContext(line: string): boolean {
-  for (const pattern of SPEC_CREATOR_FORBIDDEN_COMMAND_EXEMPT_CONTEXT_PATTERNS) {
+  for (
+    const pattern of SPEC_CREATOR_FORBIDDEN_COMMAND_EXEMPT_CONTEXT_PATTERNS
+  ) {
     if (pattern.test(line)) {
       return true;
     }
@@ -1714,7 +1758,9 @@ function formatSpecCreatorQualityIssues(
   violations: SpecCreatorQualityViolation[],
 ): string {
   const lines = violations.map((violation) =>
-    `${toRelativePath(violation.file)}:${violation.line}:${violation.rule_id}:${violation.message}`
+    `${
+      toRelativePath(violation.file)
+    }:${violation.line}:${violation.rule_id}:${violation.message}`
   );
   const joined = lines.join("\n");
   if (joined.length <= 4000) {
@@ -1925,7 +1971,10 @@ function normalizePhaseExecutorForTemplate(
   ) {
     return normalizedExecutor;
   }
-  if (normalizedExecutor === "spec-planner" || normalizedExecutor === "spec-code-creator") {
+  if (
+    normalizedExecutor === "spec-planner" ||
+    normalizedExecutor === "spec-code-creator"
+  ) {
     return "implementer";
   }
   if (normalizedExecutor === "spec-reviewer") {
@@ -1949,14 +1998,27 @@ function buildHumanNotesMarkdownForSpecCreator(
   },
   lang: "ja" | "en",
 ): string {
+  const quotedRequirements = toBlockquoteLinesForHumanNotes(
+    specContext.requirements_text,
+  );
   if (lang === "ja") {
     return [
-      `- 要件メモ: ${specContext.requirements_text}`,
+      "- 要件メモ:",
+      ...quotedRequirements,
     ].join("\n");
   }
   return [
-    `- Requirement memo: ${specContext.requirements_text}`,
+    "- Requirement memo:",
+    ...quotedRequirements,
   ].join("\n");
+}
+
+function toBlockquoteLinesForHumanNotes(raw: string): string[] {
+  const normalized = raw.replaceAll(/\r\n?/gu, "\n").trim();
+  if (normalized.length === 0) {
+    return ["  > (none)"];
+  }
+  return normalized.split("\n").map((line) => `  > ${line}`);
 }
 
 function writeDesignMarkdownStub(options: {
@@ -2437,7 +2499,8 @@ function asOptionalNonNegativeInteger(
     return undefined;
   }
   if (
-    typeof raw !== "number" || !Number.isFinite(raw) || !Number.isInteger(raw) ||
+    typeof raw !== "number" || !Number.isFinite(raw) ||
+    !Number.isInteger(raw) ||
     raw < 0
   ) {
     throw new Error(
