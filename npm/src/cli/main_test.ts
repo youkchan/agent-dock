@@ -821,6 +821,7 @@ Deno.test({
           "  echo 'SUMMARY: ok'",
           "  echo 'CHANGED_FILES: src/a.ts'",
           "  echo 'CHECKS: deno test -A src'",
+          "  echo 'JUDGMENT: pass'",
           "fi",
           "echo '[wrapper] progress' >&2",
         ].join("\n"),
@@ -1973,6 +1974,112 @@ Deno.test("main spec-creator polish --no-run still requires strict validate", ()
   });
 });
 
+Deno.test({
+  name:
+    "main spec-creator polish run path applies missing_judgment validation code",
+  ignore: !hasBashRunPermission,
+  fn: () => {
+    const changeId = uniqueChangeId("update-polish-run-validation");
+    const outputPath = `task_configs/spec_creator/${changeId}.json`;
+    const workerRoot = Deno.makeTempDirSync();
+    const workerPath = `${workerRoot}/missing_judgment_worker.sh`;
+    const stateDir = `${workerRoot}/state`;
+    Deno.writeTextFileSync(
+      workerPath,
+      [
+        "#!/bin/sh",
+        "set -eu",
+        "echo 'RESULT: completed'",
+        "echo 'SUMMARY: missing judgment on purpose'",
+        "echo 'CHANGED_FILES: src/a.ts'",
+        "echo 'CHECKS: deno test src'",
+      ].join("\n"),
+    );
+    Deno.chmodSync(workerPath, 0o755);
+
+    const buffer = createIoBuffer();
+    try {
+      withTemporaryChangeDir(changeId, () => {
+        Deno.writeTextFileSync(
+          `openspec/changes/${changeId}/README.md`,
+          "# polish context\n- markdown source\n",
+        );
+
+        withFakeOpenSpecValidate("pass", () => {
+          withEnvValue("ORCHESTRATOR_PROVIDER", "mock", () => {
+            withEnvValue("ORCHESTRATOR_VALIDATION_MAX_RETRY", "1", () => {
+              withEnvValue("TEAMMATE_ADAPTER", "subprocess", () => {
+                withEnvValue(
+                  "TEAMMATE_COMMAND",
+                  `/bin/sh '${workerPath}'`,
+                  () => {
+                    const exitCode = main([
+                      "spec-creator",
+                      "polish",
+                      changeId,
+                      "--output",
+                      outputPath,
+                      "--state-dir",
+                      stateDir,
+                    ], buffer.io);
+                    if (exitCode !== 0) {
+                      throw new Error(
+                        `spec-creator polish run path should succeed: ${buffer.state.stderr}`,
+                      );
+                    }
+                  },
+                );
+              });
+            });
+          });
+        });
+
+        if (!buffer.state.stdout.includes("code=missing_judgment")) {
+          throw new Error(
+            `stdout should include missing_judgment validation code: ${buffer.state.stdout}`,
+          );
+        }
+        if (
+          !buffer.state.stdout.includes(
+            "validation_retry_exhausted:missing_judgment",
+          )
+        ) {
+          throw new Error(
+            `stdout should include missing_judgment retry exhausted reason: ${buffer.state.stdout}`,
+          );
+        }
+
+        const state = JSON.parse(
+          Deno.readTextFileSync(`${stateDir}/state.json`),
+        ) as { tasks?: Record<string, { block_reason?: string | null }> };
+        const reasons = Object.values(state.tasks ?? {}).map((task) =>
+          String(task.block_reason ?? "")
+        );
+        if (
+          !reasons.some((reason) =>
+            reason.includes("validation_retry_exhausted:missing_judgment")
+          )
+        ) {
+          throw new Error(
+            "state should keep validation_retry_exhausted:missing_judgment reason",
+          );
+        }
+      });
+    } finally {
+      try {
+        Deno.removeSync(workerRoot, { recursive: true });
+      } catch {
+        // noop
+      }
+      try {
+        Deno.removeSync(outputPath);
+      } catch {
+        // noop
+      }
+    }
+  },
+});
+
 Deno.test("main spec-creator polish requires existing change directory", () => {
   const buffer = createIoBuffer();
   const missingChangeId = uniqueChangeId("update-spec-creator");
@@ -2009,7 +2116,11 @@ Deno.test("main spec-creator polish rejects existing revised change directory", 
         "spec-creator polish should fail when revised change directory exists",
       );
     }
-    if (!buffer.state.stderr.includes(`requires non-existing change_id: ${revisedId}`)) {
+    if (
+      !buffer.state.stderr.includes(
+        `requires non-existing change_id: ${revisedId}`,
+      )
+    ) {
       throw new Error(
         `stderr should include existing revised change error: ${buffer.state.stderr}`,
       );

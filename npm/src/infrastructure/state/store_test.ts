@@ -154,6 +154,42 @@ Deno.test("StateStore review plan clears owner", () => {
   });
 });
 
+Deno.test("StateStore markTaskNeedsApproval transitions directly with reason", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "A",
+        title: "task A",
+        status: "in_progress",
+        owner: "tm-1",
+        target_paths: ["src/a.ts"],
+      }),
+    ]);
+
+    const updated = store.markTaskNeedsApproval(
+      "A",
+      "tm-1",
+      "validation_failed:missing_result",
+    );
+    assertEqual(updated.status, "needs_approval", "status should be updated");
+    assertEqual(
+      updated.block_reason,
+      "validation_failed:missing_result",
+      "block reason should be kept",
+    );
+
+    const task = store.getTask("A");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "needs_approval", "stored status");
+    assertEqual(
+      task.block_reason,
+      "validation_failed:missing_result",
+      "stored block reason",
+    );
+  });
+});
+
 Deno.test("StateStore task progress log append and rotation", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
@@ -302,6 +338,10 @@ Deno.test("StateStore sendBackTaskToPhase does not increment revision count when
     assertEqual(sentBack.status, "pending", "sendback should requeue task");
     assertEqual(sentBack.owner, null, "sendback should clear owner");
     assertEqual(sentBack.current_phase_index, 0, "sendback phase index");
-    assertEqual(sentBack.revision_count, 5, "revision count should remain unchanged");
+    assertEqual(
+      sentBack.revision_count,
+      5,
+      "revision count should remain unchanged",
+    );
   });
 });

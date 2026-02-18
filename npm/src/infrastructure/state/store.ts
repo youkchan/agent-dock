@@ -335,6 +335,34 @@ export class StateStore {
     });
   }
 
+  markTaskNeedsApproval(
+    taskId: string,
+    teammateId: string,
+    reason: string,
+  ): Task {
+    return this.withLockedState((state) => {
+      const raw = state.tasks[taskId];
+      if (!raw) {
+        throw new Error(`task not found: ${taskId}`);
+      }
+
+      const task = taskFromRecord(raw);
+      if (task.owner !== teammateId) {
+        throw new Error("owner mismatch");
+      }
+      if (task.status !== "in_progress") {
+        throw new Error("task not in progress");
+      }
+
+      task.status = "needs_approval";
+      task.block_reason = reason;
+      task.updated_at = nowSeconds();
+      state.tasks[taskId] = taskToRecord(task);
+      StateStore.touchProgress(state);
+      return task;
+    });
+  }
+
   completeTask(
     taskId: string,
     teammateId: string,

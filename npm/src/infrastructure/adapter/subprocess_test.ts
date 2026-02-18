@@ -174,7 +174,7 @@ Deno.test("SubprocessCodexAdapter reflects teammate sandbox env at execution", (
   });
 });
 
-Deno.test("SubprocessCodexAdapter passes RESULT_PHASE for executeTask", () => {
+Deno.test("SubprocessCodexAdapter does not inject RESULT_PHASE for executeTask", () => {
   withTempDir((dir) => {
     const scriptPath = `${dir}/phase.sh`;
     Deno.writeTextFileSync(
@@ -193,49 +193,23 @@ Deno.test("SubprocessCodexAdapter passes RESULT_PHASE for executeTask", () => {
       timeoutSeconds: 5,
     });
 
-    const fromProgressLog = createTask({
-      id: "T-progress",
-      title: "sample",
-      target_paths: ["src/a.ts"],
-      current_phase_index: 0,
-      persona_policy: {
-        phase_order: ["implement", "review", "test"],
-      },
-      progress_log: [
-        { source: "system", text: "execution started persona=x phase=review" },
-        { source: "system", text: "execution started persona=x phase=test" },
-      ],
-    });
-    const fromPhaseIndex = createTask({
-      id: "T-index",
-      title: "sample",
-      target_paths: ["src/a.ts"],
-      current_phase_index: 1,
-      persona_policy: {
-        phase_order: ["implement", "review", "test"],
-      },
-    });
-    const fallback = createTask({
-      id: "T-fallback",
+    const task = createTask({
+      id: "T1",
       title: "sample",
       target_paths: ["src/a.ts"],
     });
 
+    assertEqual(
+      adapter.executeTask("tm-1", task),
+      "unset",
+      "RESULT_PHASE should remain unset by default",
+    );
+
     withEnv("RESULT_PHASE", "base-phase", () => {
       assertEqual(
-        adapter.executeTask("tm-1", fromProgressLog),
-        "test",
-        "latest progress log phase should win",
-      );
-      assertEqual(
-        adapter.executeTask("tm-1", fromPhaseIndex),
-        "review",
-        "phase_order + current_phase_index should be used as fallback",
-      );
-      assertEqual(
-        adapter.executeTask("tm-1", fallback),
-        "implement",
-        "default fallback phase should be implement",
+        adapter.executeTask("tm-1", task),
+        "base-phase",
+        "adapter should not override RESULT_PHASE",
       );
     });
   });

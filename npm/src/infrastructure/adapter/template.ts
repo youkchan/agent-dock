@@ -22,6 +22,7 @@ export class TemplateTeammateAdapter implements TeammateAdapter {
       "SUMMARY: Implemented task {task_id} on {paths}",
       "CHANGED_FILES: {paths}",
       "CHECKS: template-adapter",
+      "JUDGMENT: pass",
     ].join("\n");
   }
 

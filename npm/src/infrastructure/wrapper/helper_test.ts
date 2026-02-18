@@ -33,7 +33,11 @@ function makeEnv(
   };
 }
 
-function withEnv(name: string, value: string | undefined, run: () => void): void {
+function withEnv(
+  name: string,
+  value: string | undefined,
+  run: () => void,
+): void {
   const original = Deno.env.get(name);
   if (value === undefined) {
     Deno.env.delete(name);
@@ -287,11 +291,12 @@ Deno.test("golden contract has zero diff for fixed payload, prompt, stream and r
     "",
     "",
     "",
-    "Final output must be exactly these 4 lines:",
+    "Final output must be exactly these 5 lines:",
     "RESULT: completed|blocked",
     "SUMMARY: <=100 chars",
     "CHANGED_FILES: comma-separated",
     "CHECKS: executed check commands",
+    "JUDGMENT: pass|changes_required|blocked",
   ].join("\n");
 
   const shellStreamLog = [
@@ -300,6 +305,7 @@ Deno.test("golden contract has zero diff for fixed payload, prompt, stream and r
     "SUMMARY: Golden regression baseline reached",
     "CHANGED_FILES: src/infrastructure/wrapper/helper_test.ts, ",
     "CHECKS: deno test --allow-read --allow-write --allow-env --allow-run src/infrastructure/wrapper/helper_test.ts; openspec validate add-codex-wrapper-step1-contract-first-golden-compat --strict",
+    "JUDGMENT: pass",
     "done",
   ].join("\n");
   const shellExpectedResult = [
@@ -307,15 +313,15 @@ Deno.test("golden contract has zero diff for fixed payload, prompt, stream and r
     "SUMMARY: Golden regression baseline reached",
     "CHANGED_FILES: src/infrastructure/wrapper/helper_test.ts",
     "CHECKS: deno test --allow-read --allow-write --allow-env --allow-run src/infrastructure/wrapper/helper_test.ts; openspec validate add-codex-wrapper-step1-contract-first-golden-compat --strict",
+    "JUDGMENT: pass",
   ].join("\n");
-  const shellExpectedExitCode = 2;
-  const shellExpectedStderr = "missing or invalid RESULT_PHASE";
 
   const actualPrompt = buildPrompt(
     payload,
     makeEnv({
       CODEX_DENY_DOTENV: "1",
-      OPENSPEC_CHANGE_ID: " add-codex-wrapper-step1-contract-first-golden-compat ",
+      OPENSPEC_CHANGE_ID:
+        " add-codex-wrapper-step1-contract-first-golden-compat ",
       CODEX_PROMPT_MAX_CHARS: "4000",
     }),
   );
@@ -333,9 +339,7 @@ Deno.test("golden contract has zero diff for fixed payload, prompt, stream and r
     const streamPath = `${root}/stream.log`;
     const outputPath = `${root}/result.log`;
     Deno.writeTextFileSync(streamPath, shellStreamLog);
-    withEnv("RESULT_PHASE", "implement", () => {
-      extractResultToFile(streamPath, outputPath);
-    });
+    extractResultToFile(streamPath, outputPath);
     const actualFileResult = Deno.readTextFileSync(outputPath);
     if (actualFileResult !== shellExpectedResult) {
       differences.push("file result");
@@ -349,19 +353,17 @@ Deno.test("golden contract has zero diff for fixed payload, prompt, stream and r
       };
       withEnv("STREAM_PATH", streamPath, () => {
         withEnv("OUTPUT_PATH", outputPath, () => {
-          withEnv("RESULT_PHASE", "invalid", () => {
-            const actualExitCode = runCli(["extract-result"]);
-            if (actualExitCode !== shellExpectedExitCode) {
-              differences.push("exit code");
-            }
-          });
+          const actualExitCode = runCli(["extract-result"]);
+          if (actualExitCode !== 0) {
+            differences.push("exit code");
+          }
         });
       });
     } finally {
       console.error = originalError;
     }
     const actualStderr = stderrLines.join("\n").trim();
-    if (actualStderr !== shellExpectedStderr) {
+    if (actualStderr.length > 0) {
       differences.push("stderr");
     }
   });
@@ -566,7 +568,7 @@ Deno.test("extractResultBlock fail-closes when CHECKS includes forbidden openspe
   );
 });
 
-Deno.test("extractResultToFile fail-closes when RESULT_PHASE is missing", () => {
+Deno.test("extractResultToFile fail-closes when JUDGMENT is missing", () => {
   withTempDir((root) => {
     const streamPath = `${root}/stream.log`;
     const outputPath = `${root}/output.log`;
@@ -581,18 +583,16 @@ Deno.test("extractResultToFile fail-closes when RESULT_PHASE is missing", () => 
     );
 
     let thrown: unknown = null;
-    withEnv("RESULT_PHASE", undefined, () => {
-      try {
-        extractResultToFile(streamPath, outputPath);
-      } catch (error) {
-        thrown = error;
-      }
-    });
+    try {
+      extractResultToFile(streamPath, outputPath);
+    } catch (error) {
+      thrown = error;
+    }
 
     assert(thrown instanceof WrapperHelperError, "expected WrapperHelperError");
-    assert(thrown.exitCode === 2, "expected missing env exit code 2");
+    assert(thrown.exitCode === 2, "expected missing judgment exit code 2");
     assert(
-      thrown.message.includes("missing or invalid RESULT_PHASE"),
+      thrown.message.includes("result block not found"),
       `unexpected message: ${thrown.message}`,
     );
   });
@@ -613,13 +613,11 @@ Deno.test("extractResultToFile fail-closes when extract-result block is missing"
     );
 
     let thrown: unknown = null;
-    withEnv("RESULT_PHASE", "implement", () => {
-      try {
-        extractResultToFile(streamPath, outputPath);
-      } catch (error) {
-        thrown = error;
-      }
-    });
+    try {
+      extractResultToFile(streamPath, outputPath);
+    } catch (error) {
+      thrown = error;
+    }
 
     assert(thrown instanceof WrapperHelperError, "expected WrapperHelperError");
     assert(thrown.exitCode === 2, "expected missing block exit code 2");
@@ -646,13 +644,11 @@ Deno.test("extractResultToFile fail-closes when stale JUDGMENT is outside last r
     );
 
     let thrown: unknown = null;
-    withEnv("RESULT_PHASE", "review", () => {
-      try {
-        extractResultToFile(streamPath, outputPath);
-      } catch (error) {
-        thrown = error;
-      }
-    });
+    try {
+      extractResultToFile(streamPath, outputPath);
+    } catch (error) {
+      thrown = error;
+    }
 
     assert(thrown instanceof WrapperHelperError, "expected WrapperHelperError");
     assert(thrown.exitCode === 2, "expected stale line exit code 2");
@@ -663,7 +659,7 @@ Deno.test("extractResultToFile fail-closes when stale JUDGMENT is outside last r
   });
 });
 
-Deno.test("extractResultToFile fail-closes when RESULT_PHASE is invalid", () => {
+Deno.test("extractResultToFile succeeds without RESULT_PHASE env when block is valid", () => {
   withTempDir((root) => {
     const streamPath = `${root}/stream.log`;
     const outputPath = `${root}/output.log`;
@@ -674,23 +670,24 @@ Deno.test("extractResultToFile fail-closes when RESULT_PHASE is invalid", () => 
         "SUMMARY: done",
         "CHANGED_FILES: (none)",
         "CHECKS: deno test",
+        "JUDGMENT: pass",
       ].join("\n"),
     );
 
-    let thrown: unknown = null;
-    withEnv("RESULT_PHASE", "invalid", () => {
-      try {
-        extractResultToFile(streamPath, outputPath);
-      } catch (error) {
-        thrown = error;
-      }
+    withEnv("RESULT_PHASE", undefined, () => {
+      extractResultToFile(streamPath, outputPath);
     });
-
-    assert(thrown instanceof WrapperHelperError, "expected WrapperHelperError");
-    assert(thrown.exitCode === 2, "expected invalid phase exit code 2");
+    const written = Deno.readTextFileSync(outputPath);
     assert(
-      thrown.message.includes("missing or invalid RESULT_PHASE"),
-      `unexpected message: ${thrown.message}`,
+      written ===
+        [
+          "RESULT: completed",
+          "SUMMARY: done",
+          "CHANGED_FILES: (none)",
+          "CHECKS: deno test",
+          "JUDGMENT: pass",
+        ].join("\n"),
+      `unexpected result: ${written}`,
     );
   });
 });

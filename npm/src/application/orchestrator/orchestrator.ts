@@ -109,7 +109,6 @@ interface ValidationOutcome {
 }
 
 interface ExecutionValidationContext {
-  requiresJudgment: boolean;
   nonImplementPhase: boolean;
 }
 
@@ -1501,7 +1500,6 @@ export class AgentTeamsLikeOrchestrator {
     this.appendTaskProgressLog(task.id, "system", startDetail);
 
     const validationContext: ExecutionValidationContext = {
-      requiresJudgment: isDecisionTaskPhase(phase),
       nonImplementPhase: phase !== null && phase !== "implement",
     };
     let result = "";
@@ -2138,7 +2136,6 @@ export class AgentTeamsLikeOrchestrator {
     let result = "";
     const taskOwnerId = task.owner ?? executionSubjectId;
     const validationContext: ExecutionValidationContext = {
-      requiresJudgment: true,
       nonImplementPhase: true,
     };
     let executionResult: ParsedExecutionResult | null = null;
@@ -2447,15 +2444,6 @@ export class AgentTeamsLikeOrchestrator {
     if (executionResult.status === null) {
       return fail("invalid_result_value");
     }
-    if (executionResult.status === "blocked") {
-      return {
-        ok: true,
-        code: null,
-        recoverable: false,
-        reason: null,
-        executionResult,
-      };
-    }
     if (
       executionResult.summary_raw === null ||
       executionResult.summary === null ||
@@ -2476,16 +2464,23 @@ export class AgentTeamsLikeOrchestrator {
     if (this.isForbiddenChecksCommand(executionResult.checks)) {
       return fail("forbidden_checks_command");
     }
-    if (context.requiresJudgment) {
-      if (
-        executionResult.judgment_raw === null ||
-        executionResult.judgment_raw.length === 0
-      ) {
-        return fail("missing_judgment");
-      }
-      if (executionResult.judgment === null) {
-        return fail("invalid_judgment");
-      }
+    if (
+      executionResult.judgment_raw === null ||
+      executionResult.judgment_raw.length === 0
+    ) {
+      return fail("missing_judgment");
+    }
+    if (executionResult.judgment === null) {
+      return fail("invalid_judgment");
+    }
+    if (executionResult.status === "blocked") {
+      return {
+        ok: true,
+        code: null,
+        recoverable: false,
+        reason: null,
+        executionResult,
+      };
     }
     if (context.nonImplementPhase && executionResult.changed_files.length > 0) {
       return fail("nonimplement_changed_files");
@@ -2517,12 +2512,11 @@ export class AgentTeamsLikeOrchestrator {
     reason: string,
     result: string,
   ): Task {
-    const blocked = this.store.markTaskBlocked(
+    const paused = this.store.markTaskNeedsApproval(
       taskId,
       taskOwnerId,
       this.short(reason, 180),
     );
-    const paused = this.store.applyTaskUpdate(blocked.id, "needs_approval");
     this.appendTaskProgressLog(
       paused.id,
       "system",

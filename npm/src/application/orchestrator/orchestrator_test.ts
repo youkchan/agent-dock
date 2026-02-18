@@ -161,6 +161,16 @@ class SequenceResultAdapter implements TeammateAdapter {
   }
 }
 
+class FailOnBlockedStateStore extends StateStore {
+  override markTaskBlocked(
+    _taskId: string,
+    _teammateId: string,
+    _reason: string,
+  ): Task {
+    throw new Error("markTaskBlocked should not be used in this scenario");
+  }
+}
+
 function withEnvVar(
   name: string,
   value: string | undefined,
@@ -567,6 +577,7 @@ Deno.test("orchestrator blocks when later reviewer blocks in ordered execution",
       "review-left": decisionPhaseResult({
         status: "blocked",
         summary: "left blocked",
+        judgment: "blocked",
       }),
     });
 
@@ -639,6 +650,7 @@ Deno.test("orchestrator blocks immediately when any reviewer blocks in ordered e
       "review-right": decisionPhaseResult({
         status: "blocked",
         summary: "blocked by right reviewer",
+        judgment: "blocked",
       }),
       "review-left": decisionPhaseResult({
         status: "completed",
@@ -960,6 +972,7 @@ function completedResult(
     `SUMMARY: ${summary}`,
     `CHANGED_FILES: ${changedFiles}`,
     "CHECKS: deno test src",
+    "JUDGMENT: pass",
   ].join("\n");
 }
 
@@ -1001,6 +1014,7 @@ Deno.test("orchestrator blocks when RESULT is blocked", () => {
           "SUMMARY: tests failed",
           "CHANGED_FILES: src/a.ts",
           "CHECKS: deno test src",
+          "JUDGMENT: blocked",
         ].join("\n"),
       ),
       provider: new MockOrchestratorProvider(),
@@ -2075,6 +2089,56 @@ Deno.test("validation recovery: missing_result twice becomes needs_approval", ()
     const result = orchestrator.run();
     assertEqual(result.stop_reason, "idle_rounds_limit", "stop reason");
     assertEqual(adapter.calls, 2, "retry count");
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "needs_approval", "task status");
+    assert(
+      String(task.block_reason).includes(
+        "validation_retry_exhausted:missing_result",
+      ),
+      "reason should include retry exhausted code",
+    );
+  });
+});
+
+Deno.test("validation recovery: missing_result does not transition through blocked", () => {
+  withTempDir((dir) => {
+    const store = new FailOnBlockedStateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "task1",
+        target_paths: ["src/a.ts"],
+      }),
+    ]);
+
+    const adapter = new SequenceResultAdapter([
+      [
+        "SUMMARY: first output misses result",
+        "CHANGED_FILES: src/a.ts",
+        "CHECKS: deno test src",
+      ].join("\n"),
+      [
+        "SUMMARY: second output still misses result",
+        "CHANGED_FILES: src/a.ts",
+        "CHECKS: deno test src",
+      ].join("\n"),
+    ]);
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter,
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        teammateIds: ["tm-1"],
+        personas: [],
+        maxRounds: 4,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+      }),
+    });
+
+    const result = orchestrator.run();
+    assertEqual(result.stop_reason, "idle_rounds_limit", "stop reason");
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
     assertEqual(task.status, "needs_approval", "task status");

@@ -350,11 +350,11 @@ Keep total output within 12 lines.`;
 
   if (mode === "execute") {
     const taskPhase = resolveTaskPhase(task, progressLog);
-    const requiresJudgment = isDecisionTaskPhase(taskPhase);
-    const changedFilesConstraint = taskPhase !== null && taskPhase !== "implement"
-      ? "- In non-implement phases, CHANGED_FILES must be (none)"
-      : "";
-    const decisionReviewConstraint = requiresJudgment
+    const changedFilesConstraint =
+      taskPhase !== null && taskPhase !== "implement"
+        ? "- In non-implement phases, CHANGED_FILES must be (none)"
+        : "";
+    const decisionReviewConstraint = isDecisionTaskPhase(taskPhase)
       ? [
         "- In decision phases, review the full relevant scope before judgment",
         "- Do not stop at the first issue; aggregate required fixes in one pass",
@@ -386,18 +386,12 @@ Keep total output within 12 lines.`;
         "- For OpenSpec validation, use `openspec validate <change-id> --strict` only when change_id is explicitly provided",
         "- Never use task_id as openspec validate target",
       ].join("\n");
-    const outputContractText = requiresJudgment
-      ? `Final output must be exactly these 5 lines:
+    const outputContractText = `Final output must be exactly these 5 lines:
 RESULT: completed|blocked
 SUMMARY: <=100 chars
 CHANGED_FILES: comma-separated
 CHECKS: executed check commands
-JUDGMENT: pass|changes_required|blocked`
-      : `Final output must be exactly these 4 lines:
-RESULT: completed|blocked
-SUMMARY: <=100 chars
-CHANGED_FILES: comma-separated
-CHECKS: executed check commands`;
+JUDGMENT: pass|changes_required|blocked`;
 
     let prompt = `You are implementation teammate ${teammateId}.
 Execute the task below.
@@ -686,19 +680,14 @@ export function extractResultToFile(
   outputPath: string,
 ): void {
   const raw = Deno.readTextFileSync(streamPath);
-  const phaseRaw = Deno.env.get("RESULT_PHASE");
-  const phase = normalizeTaskPhase(phaseRaw);
-  if (phase === null) {
-    throw new WrapperHelperError(
-      "missing or invalid RESULT_PHASE",
-      EXIT_CODE_INVALID_INPUT,
-    );
-  }
   const extracted = extractResultBlock(raw, {
-    requiresJudgment: isDecisionTaskPhase(phase),
+    requiresJudgment: true,
   });
   if (extracted === null) {
-    throw new WrapperHelperError("result block not found", EXIT_CODE_INVALID_INPUT);
+    throw new WrapperHelperError(
+      "result block not found",
+      EXIT_CODE_INVALID_INPUT,
+    );
   }
   Deno.writeTextFileSync(outputPath, extracted);
 }
@@ -706,7 +695,10 @@ export function extractResultToFile(
 function requiredEnv(name: string): string {
   const value = Deno.env.get(name);
   if (value === undefined) {
-  throw new WrapperHelperError(`missing required env: ${name}`, EXIT_CODE_INVALID_INPUT);
+    throw new WrapperHelperError(
+      `missing required env: ${name}`,
+      EXIT_CODE_INVALID_INPUT,
+    );
   }
   return value;
 }
@@ -769,7 +761,10 @@ export function runCli(args: string[]): number {
     if (command === "extract-result") {
       return runExtractResult();
     }
-    throw new WrapperHelperError(`unknown helper mode: ${command}`, EXIT_CODE_INVALID_INPUT);
+    throw new WrapperHelperError(
+      `unknown helper mode: ${command}`,
+      EXIT_CODE_INVALID_INPUT,
+    );
   } catch (error) {
     if (error instanceof WrapperHelperError) {
       console.error(error.message);
