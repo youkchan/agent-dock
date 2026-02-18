@@ -1131,15 +1131,39 @@ function runSpecCreatorWorkflow(
     let attempt = 0;
     while (true) {
       const preRunViolations = collectSpecCreatorQualityViolations(stagedPaths);
+      const qualityTargetFile = selectQualityTargetFile(preRunViolations);
       if (preRunViolations.length > 0) {
-        const issues = formatSpecCreatorQualityIssues(preRunViolations);
+        const scopedViolations = qualityTargetFile === null
+          ? preRunViolations
+          : preRunViolations.filter((violation) =>
+            path.resolve(violation.file) === qualityTargetFile
+          );
+        const issues = formatSpecCreatorQualityIssues(
+          scopedViolations.length > 0 ? scopedViolations : preRunViolations,
+        );
         Deno.env.set("SPEC_CREATOR_QUALITY_ISSUES", issues);
+        if (qualityTargetFile !== null) {
+          Deno.env.set("SPEC_CREATOR_QUALITY_TARGET_FILE", qualityTargetFile);
+        } else {
+          Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_FILE");
+        }
         io.stdout(
           `[spec-creator] quality_preflight_issues=${preRunViolations.length} attempt=${attempt}\n`,
         );
+        if (qualityTargetFile !== null) {
+          io.stdout(
+            `[spec-creator] quality_target_file=${
+              toRelativePath(qualityTargetFile)
+            }\n`,
+          );
+        }
       } else {
         Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
+        Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_FILE");
       }
+      const artifactSnapshotBeforeRun = snapshotArtifactContentsForQualityRetry(
+        stagedPaths,
+      );
 
       const runArgs = [
         "--config",
@@ -1161,8 +1185,15 @@ function runSpecCreatorWorkflow(
         () => runCommand(runArgs, io),
       );
       Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
+      Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_FILE");
       if (runExitCode !== 0) {
         return runExitCode;
+      }
+      if (qualityTargetFile !== null) {
+        assertQualityRetryEditedTargetOnly(
+          artifactSnapshotBeforeRun,
+          qualityTargetFile,
+        );
       }
 
       try {
@@ -2290,6 +2321,19 @@ function snapshotArtifactContents(
   return snapshot;
 }
 
+function snapshotArtifactContentsForQualityRetry(
+  paths: SpecCreatorArtifactPaths,
+): ArtifactSnapshot {
+  const artifactPaths = listSpecCreatorArtifactPathsForApply(paths).map((
+    artifactPath,
+  ) => path.resolve(artifactPath));
+  const snapshot: ArtifactSnapshot = {};
+  for (const artifactPath of artifactPaths) {
+    snapshot[artifactPath] = readArtifactContentOrNull(artifactPath);
+  }
+  return snapshot;
+}
+
 function readArtifactContentOrNull(artifactPath: string): string | null {
   try {
     return Deno.readTextFileSync(artifactPath);
@@ -2308,6 +2352,37 @@ function restoreArtifactContents(
   for (const artifactPath of artifactPaths) {
     restoreSingleFileContent(artifactPath, snapshot[artifactPath] ?? null);
   }
+}
+
+function assertQualityRetryEditedTargetOnly(
+  snapshotBeforeRun: ArtifactSnapshot,
+  targetFile: string,
+): void {
+  const target = path.resolve(targetFile);
+  const changedArtifactPaths: string[] = [];
+  for (
+    const [artifactPath, beforeContent] of Object.entries(snapshotBeforeRun)
+  ) {
+    const afterContent = readArtifactContentOrNull(artifactPath);
+    if (afterContent !== beforeContent) {
+      changedArtifactPaths.push(artifactPath);
+    }
+  }
+  const nonTargetChanges = changedArtifactPaths.filter((artifactPath) =>
+    path.resolve(artifactPath) !== target
+  );
+  if (nonTargetChanges.length === 0) {
+    return;
+  }
+  throw new Error(
+    `spec-creator quality retry target mismatch: only ${
+      toRelativePath(target)
+    } may change (changed: ${
+      nonTargetChanges.map((artifactPath) => toRelativePath(artifactPath)).join(
+        ", ",
+      )
+    })`,
+  );
 }
 
 function restoreSingleFileContent(
@@ -2425,6 +2500,18 @@ function formatSpecCreatorQualityIssues(
     return joined;
   }
   return `${joined.slice(0, 3960)}\n...`;
+}
+
+function selectQualityTargetFile(
+  violations: SpecCreatorQualityViolation[],
+): string | null {
+  const firstViolation = violations.find((violation) =>
+    typeof violation.file === "string" && violation.file.trim().length > 0
+  );
+  if (firstViolation === undefined) {
+    return null;
+  }
+  return path.resolve(firstViolation.file);
 }
 
 function toRelativePath(filePath: string): string {

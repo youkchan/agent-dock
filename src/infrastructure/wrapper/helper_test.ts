@@ -237,6 +237,7 @@ Deno.test("buildPrompt includes quality issues when provided", () => {
       CODEX_DENY_DOTENV: "1",
       SPEC_CREATOR_QUALITY_ISSUES:
         "spec.md:7:stage_contract:run --config must not require compile error",
+      SPEC_CREATOR_QUALITY_TARGET_FILE: "openspec/changes/foo/tasks.md",
     }),
   );
   assert(
@@ -246,6 +247,14 @@ Deno.test("buildPrompt includes quality issues when provided", () => {
   assert(
     prompt.includes("stage_contract"),
     "prompt should include provided quality issue details",
+  );
+  assert(
+    prompt.includes("quality_target_file: openspec/changes/foo/tasks.md"),
+    "prompt should include quality target file",
+  );
+  assert(
+    prompt.includes("edit only quality_target_file"),
+    "prompt should include target-only edit constraint",
   );
 });
 

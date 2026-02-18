@@ -381,6 +381,16 @@ Keep total output within 12 lines.`;
     const qualityIssues = qualityIssuesRaw.length > 0
       ? qualityIssuesRaw.slice(0, 3000)
       : "";
+    const qualityTargetFile = sanitizePromptText(
+      readEnv("SPEC_CREATOR_QUALITY_TARGET_FILE", "").trim(),
+    );
+    const qualityTargetConstraint = qualityTargetFile.length > 0
+      ? [
+        `- quality_target_file: ${qualityTargetFile}`,
+        "- During this quality retry, edit only quality_target_file",
+        "- Do not edit any other file in this retry",
+      ].join("\n")
+      : "";
     const qualityIssueConstraint = qualityIssues.length > 0
       ? [
         "- Resolve the quality issues listed below in this execution before final output",
@@ -389,6 +399,10 @@ Keep total output within 12 lines.`;
         qualityIssues,
       ].join("\n")
       : "";
+    const qualityRetryConstraints = [
+      qualityTargetConstraint,
+      qualityIssueConstraint,
+    ].filter((constraint) => constraint.length > 0).join("\n");
     const openSpecChangeId = sanitizePromptText(
       readEnv("OPENSPEC_CHANGE_ID", ""),
     );
@@ -434,7 +448,7 @@ ${openSpecValidationConstraint}
 - If failed, provide a short root cause
 ${changedFilesConstraint ? `${changedFilesConstraint}\n` : ""}
 ${decisionReviewConstraint ? `${decisionReviewConstraint}\n` : ""}
-${qualityIssueConstraint ? `${qualityIssueConstraint}\n` : ""}
+${qualityRetryConstraints ? `${qualityRetryConstraints}\n` : ""}
 
 ${outputContractText}`;
 
@@ -451,12 +465,16 @@ ${outputContractText}`;
         const body = prompt.slice(0, contractIndex).trimEnd();
         const contract = prompt.slice(contractIndex);
         const markerBlock = `\n\n${PROMPT_TRUNCATION_MARKER}\n\n`;
-        const maxBodyChars = maxPromptChars - markerBlock.length - contract.length;
+        const maxBodyChars = maxPromptChars - markerBlock.length -
+          contract.length;
         if (maxBodyChars > 0) {
           const truncatedBody = truncateCenter(body, maxBodyChars);
           prompt = `${truncatedBody}${markerBlock}${contract}`;
         } else {
-          const fallbackBodyChars = Math.max(0, maxPromptChars - contract.length);
+          const fallbackBodyChars = Math.max(
+            0,
+            maxPromptChars - contract.length,
+          );
           prompt = `${truncateCenter(body, fallbackBodyChars)}${contract}`;
         }
       } else {
