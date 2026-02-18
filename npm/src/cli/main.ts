@@ -2456,7 +2456,7 @@ function runSpecCreatorPostAuditGate(
   workspaceRoot: string = Deno.cwd(),
 ): void {
   io.stdout(
-    `[spec-creator] post-audit revalidate: agent-dock compile-openspec --change-id ${changeId}\n`,
+    `[spec-creator] post-audit revalidate: internal compile gate (compile-openspec equivalent) --change-id ${changeId}\n`,
   );
   compileChangeToConfig(changeId, {
     openspecRoot: path.join(workspaceRoot, "openspec"),

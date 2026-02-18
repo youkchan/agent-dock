@@ -164,8 +164,7 @@ export function createSpecCreatorTaskConfigTemplate(
       {
         id: "1.4",
         title: "design.md を生成する",
-        description:
-          "design.md を作成し、意思決定とトレードオフを記述する。",
+        description: "design.md を作成し、意思決定とトレードオフを記述する。",
         target_paths: [designPath],
         related_paths: [],
         depends_on: ["1.2"],
@@ -211,7 +210,7 @@ export function createSpecCreatorTaskConfigTemplate(
         id: "1.7",
         title: "OpenSpec compile + strict validate を実行する",
         description:
-          "agent-dock compile-openspec --change-id <change_id> と openspec validate <change_id> --strict を実行し、失敗時は修正後に再実行する。",
+          "内部 compile gate（compile-openspec 相当）と openspec validate <change_id> --strict を実行し、失敗時は修正後に再実行する。",
         target_paths: [...requiredOutputPaths],
         related_paths: [designPath],
         depends_on: ["1.6"],
