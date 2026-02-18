@@ -148,7 +148,6 @@ export interface BuildSpecCreatorPolishPromptOptions {
   changeId: string;
   markdownContexts: string[];
   feedback?: string | null;
-  includeDesignTarget?: boolean;
 }
 
 export interface BuildSpecCreatorPolishPromptResult {
@@ -178,11 +177,11 @@ export function buildSpecCreatorPolishPrompt(
     ? `${markdownContexts.join("\n")}\nfeedback: ${feedback}`
     : markdownContexts.join("\n");
   const language = detectSpecCreatorLanguage(languageSource);
-  const includeDesignTarget = options.includeDesignTarget === true;
-  const requiredRegenerateTargets = [...SPEC_CREATOR_POLISH_REGENERATE_TARGETS];
-  const regenerateTargets = includeDesignTarget
-    ? [...requiredRegenerateTargets, SPEC_CREATOR_POLISH_DESIGN_TARGET]
-    : [...requiredRegenerateTargets];
+  const requiredRegenerateTargets = [
+    ...SPEC_CREATOR_POLISH_REGENERATE_TARGETS,
+    SPEC_CREATOR_POLISH_DESIGN_TARGET,
+  ];
+  const regenerateTargets = [...requiredRegenerateTargets];
 
   const requirementsText = [
     `polish target: ${changeId}`,
@@ -195,16 +194,9 @@ export function buildSpecCreatorPolishPrompt(
     requirementsText.push(`feedback: ${feedback}`, "");
   }
 
-  const designTargetLine = includeDesignTarget
-    ? `- ${SPEC_CREATOR_POLISH_DESIGN_TARGET}`
-    : `- ${SPEC_CREATOR_POLISH_DESIGN_TARGET} (${
-      language === "ja" ? "必要時のみ" : "when needed"
-    })`;
-
   requirementsText.push(
     "regenerate targets:",
     ...requiredRegenerateTargets.map((target) => `- ${target}`),
-    designTargetLine,
     "",
     "latest contract (5 lines + judgment):",
     ...latestContractLines(language),

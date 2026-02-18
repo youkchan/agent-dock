@@ -74,7 +74,7 @@
   - 依存: 1.6
   - 対象: openspec/changes/refactor-spec-creator-and-orchestrator-modularization/proposal.md, openspec/changes/refactor-spec-creator-and-orchestrator-modularization/tasks.md, openspec/changes/refactor-spec-creator-and-orchestrator-modularization/code_summary.md, openspec/changes/refactor-spec-creator-and-orchestrator-modularization/specs/**/spec.md
   - 関連許可: openspec/changes/refactor-spec-creator-and-orchestrator-modularization/design.md
-  - フェーズ担当: implement=code-reviewer
+  - フェーズ担当: implement=implementer; review=code-reviewer
   - 成果物: `agent-dock compile-openspec --change-id <change_id>` と `openspec validate <change_id> --strict` を実行し、失敗時は修正後に再実行する。
 
 ## 2. 人間向けメモ（コンパイラ非対象）

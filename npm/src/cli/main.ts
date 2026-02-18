@@ -955,9 +955,6 @@ const SPEC_CREATOR_FORBIDDEN_COMMAND_EXEMPT_CONTEXT_PATTERNS = [
   /must not use/iu,
 ] as const;
 
-const SPEC_CREATOR_DESIGN_SIGNAL_PATTERN =
-  /設計|design|architecture|アーキテクチャ|migration|移行|trade[\s-]?off|トレードオフ/iu;
-
 function specCreatorCommand(argv: string[], io: CliIO): number {
   const subcommand = argv[0] ?? "";
   if (subcommand === "polish") {
@@ -1019,7 +1016,9 @@ function assertSpecCreatorChangeDirAbsent(
 
 const SPEC_CREATOR_POLISH_REVISED_SUFFIX = "_revised";
 
-function resolveSpecCreatorPolishRevisedChangeId(sourceChangeId: string): string {
+function resolveSpecCreatorPolishRevisedChangeId(
+  sourceChangeId: string,
+): string {
   return `${sourceChangeId}${SPEC_CREATOR_POLISH_REVISED_SUFFIX}`;
 }
 
@@ -1040,15 +1039,10 @@ function buildSpecCreatorPolishContextFromMarkdown(
     commandLabel,
   );
   const feedback = feedbackRaw?.trim() ?? "";
-  const includeDesignTarget = shouldIncludeDesignTargetForPolish(
-    markdownContexts,
-    feedback,
-  );
   const prompt = buildSpecCreatorPolishPrompt({
     changeId: outputChangeId,
     markdownContexts,
     feedback,
-    includeDesignTarget,
   });
   const specContext = normalizeSpecContextForReviewContract({
     requirements_text: prompt.requirementsText,
@@ -1062,56 +1056,11 @@ function buildSpecCreatorPolishContextFromMarkdown(
   return {
     change_id: outputChangeId,
     spec_context: specContext,
-    task_config: buildSpecCreatorTaskConfig(outputChangeId, specContext, {
-      includeDesignTarget,
-    }),
+    task_config: buildSpecCreatorTaskConfig(outputChangeId, specContext),
     polish: {
-      includeDesignTarget,
       sourceChangeId,
     },
   };
-}
-
-function shouldIncludeDesignTargetForPolish(
-  markdownContexts: string[],
-  feedback: string,
-): boolean {
-  const signalBody = markdownContexts
-    .map(extractPolishSignalBody)
-    .join("\n");
-  return SPEC_CREATOR_DESIGN_SIGNAL_PATTERN.test(
-    `${signalBody}\n${feedback}`,
-  );
-}
-
-function extractPolishSignalBody(markdownContext: string): string {
-  const normalized = markdownContext.replaceAll(/\r\n?/gu, "\n");
-  const [firstLine, ...restLines] = normalized.split("\n");
-  const contextPath = extractPolishContextPath(firstLine ?? "");
-  if (contextPath === null) {
-    return normalized;
-  }
-  if (isIgnoredForDesignSignalContextPath(contextPath)) {
-    return "";
-  }
-  return restLines.join("\n");
-}
-
-function extractPolishContextPath(firstLine: string): string | null {
-  const headerMatch = /^\s*###\s+(.+?)\s*$/u.exec(firstLine);
-  return headerMatch === null ? null : headerMatch[1];
-}
-
-function isIgnoredForDesignSignalContextPath(rawPath: string): boolean {
-  const normalized = rawPath.trim().replaceAll("\\", "/").toLowerCase();
-  return (
-    normalized === "design.md" ||
-    normalized.endsWith("/design.md") ||
-    normalized === "tasks.md" ||
-    normalized.endsWith("/tasks.md") ||
-    normalized === "code_summary.md" ||
-    normalized.endsWith("/code_summary.md")
-  );
 }
 
 function runSpecCreatorWorkflow(
@@ -1263,7 +1212,6 @@ interface SpecCreatorContextPayload {
   spec_context: SpecContext;
   task_config: SpecCreatorTaskConfig;
   polish?: {
-    includeDesignTarget: boolean;
     sourceChangeId?: string;
   };
 }
@@ -1387,17 +1335,27 @@ function normalizeSpecCreatorReviewContractCoverage(
   io: CliIO | null,
 ): void {
   const tasksResult = normalizeTasksReviewContractCoverage(paths.tasksPath);
+  const codeSummaryResult = normalizeCodeSummaryReviewContractCoverage(
+    paths.codeSummaryPath,
+    tasksResult.language,
+  );
   const specsResult = normalizeDeltaSpecReviewContractCoverage(
     paths,
     tasksResult.language,
   );
-  if (!tasksResult.changed && !specsResult.changed) {
+  if (
+    !tasksResult.changed &&
+    !specsResult.changed &&
+    !codeSummaryResult.changed
+  ) {
     return;
   }
   io?.stdout(
     `[spec-creator] normalize_review_contract phase=${phase} tasks_changed=${
       tasksResult.changed ? 1 : 0
-    } specs_changed=${specsResult.changed ? 1 : 0}\n`,
+    } code_summary_changed=${codeSummaryResult.changed ? 1 : 0} specs_changed=${
+      specsResult.changed ? 1 : 0
+    }\n`,
   );
 }
 
@@ -1431,17 +1389,26 @@ function normalizeTasksReviewContractCoverage(
     );
   }
 
-  const sectionText = lines.slice(sectionRange.start, sectionRange.end).join(
-    "\n",
+  const originalSectionLines = lines.slice(
+    sectionRange.start,
+    sectionRange.end,
   );
-  const missingIds = REQUIRED_REVIEW_CONTRACT_IDS.filter((id) =>
-    !sectionText.includes(id)
+  const sectionWithoutContractLines = originalSectionLines.filter(
+    (line, index) => index === 0 || !isReviewContractTraceLine(line),
   );
-  if (missingIds.length > 0) {
+  const insertionIndex = findTaskReviewContractInsertIndex(
+    sectionWithoutContractLines,
+  );
+  const rewrittenSectionLines = [
+    ...sectionWithoutContractLines.slice(0, insertionIndex),
+    ...buildTaskReviewContractLines(REQUIRED_REVIEW_CONTRACT_IDS, language),
+    ...sectionWithoutContractLines.slice(insertionIndex),
+  ];
+  if (!areStringArraysEqual(originalSectionLines, rewrittenSectionLines)) {
     lines.splice(
-      sectionRange.end,
-      0,
-      ...buildTaskReviewContractLines(missingIds, language),
+      sectionRange.start,
+      sectionRange.end - sectionRange.start,
+      ...rewrittenSectionLines,
     );
     changed = true;
   }
@@ -1451,6 +1418,66 @@ function normalizeTasksReviewContractCoverage(
   }
   Deno.writeTextFileSync(tasksPath, ensureTrailingNewline(lines.join("\n")));
   return { changed: true, language };
+}
+
+function normalizeCodeSummaryReviewContractCoverage(
+  codeSummaryPath: string,
+  language: "ja" | "en",
+): { changed: boolean } {
+  const original = readTextFileOrEmpty(codeSummaryPath);
+  const lines = original.length > 0
+    ? original.split(/\r?\n/u)
+    : ["# code_summary.md", ""];
+  let changed = false;
+
+  let sectionRange = findCodeSummaryTaskSectionRange(lines, "1.3");
+  if (sectionRange === null) {
+    if (lines.length > 0 && lines[lines.length - 1] !== "") {
+      lines.push("");
+    }
+    const sectionLines = buildCodeSummaryTaskSectionLines(language);
+    lines.push(...sectionLines);
+    changed = true;
+    sectionRange = findCodeSummaryTaskSectionRange(lines, "1.3");
+  }
+
+  if (sectionRange === null) {
+    throw new Error(
+      `failed to normalize review contract coverage: missing task_id 1.3 section in ${codeSummaryPath}`,
+    );
+  }
+
+  const originalSectionLines = lines.slice(
+    sectionRange.start,
+    sectionRange.end,
+  );
+  const sectionWithoutTraceability = originalSectionLines.filter((line) =>
+    !isReviewContractTraceLine(line) &&
+    !isCodeSummaryReviewContractTraceabilityHeading(line)
+  );
+  const rewrittenSectionLines = appendCodeSummaryTraceabilityLines(
+    sectionWithoutTraceability,
+    language,
+  );
+  if (!areStringArraysEqual(originalSectionLines, rewrittenSectionLines)) {
+    lines.splice(
+      sectionRange.start,
+      sectionRange.end - sectionRange.start,
+      ...rewrittenSectionLines,
+    );
+    changed = true;
+  }
+
+  if (!changed) {
+    return { changed: false };
+  }
+
+  Deno.mkdirSync(path.dirname(codeSummaryPath), { recursive: true });
+  Deno.writeTextFileSync(
+    codeSummaryPath,
+    ensureTrailingNewline(lines.join("\n")),
+  );
+  return { changed: true };
 }
 
 function normalizeDeltaSpecReviewContractCoverage(
@@ -1550,6 +1577,33 @@ function findTaskSectionRange(
   return { start, end };
 }
 
+function findCodeSummaryTaskSectionRange(
+  lines: string[],
+  taskId: string,
+): { start: number; end: number } | null {
+  const sectionPattern = /^##\s+task_id:\s*(\S+)\s*$/u;
+  const sectionStartPattern = /^##\s+task_id:\s*/u;
+  let start = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const matched = sectionPattern.exec(lines[index]);
+    if (matched?.[1] === taskId) {
+      start = index;
+      break;
+    }
+  }
+  if (start < 0) {
+    return null;
+  }
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (sectionStartPattern.test(lines[index])) {
+      end = index;
+      break;
+    }
+  }
+  return { start, end };
+}
+
 function findImplementationSectionEnd(lines: string[]): number {
   const implementationHeadingPattern = /^##\s+1\./u;
   const headingPattern = /^##\s+/u;
@@ -1573,15 +1627,334 @@ function buildTask13HeaderLine(language: "ja" | "en"): string {
     : "- [ ] 1.3 Document execution-result review contract (RC-01..RC-12)";
 }
 
+type ReviewContractId = (typeof REQUIRED_REVIEW_CONTRACT_IDS)[number];
+
+interface ReviewContractTraceDefinition {
+  id: ReviewContractId;
+  ja: {
+    transport: string;
+    reject: string;
+    pathTest: string;
+    rejectTest: string;
+  };
+  en: {
+    transport: string;
+    reject: string;
+    pathTest: string;
+    rejectTest: string;
+  };
+}
+
+const REVIEW_CONTRACT_TRACE_DEFINITIONS: ReviewContractTraceDefinition[] = [
+  {
+    id: "RC-01",
+    ja: {
+      transport:
+        "run/spec-creator/polish の最終結果 block から RESULT を抽出して completed|blocked に正規化する",
+      reject:
+        "missing_result / invalid_result_value / malformed_result_block は fail-closed",
+      pathTest:
+        "正常 RESULT=completed を受理し completed 遷移になることを確認する",
+      rejectTest: "RESULT 欠落で missing_result を返し拒否することを確認する",
+    },
+    en: {
+      transport:
+        "extract RESULT from final block on run/spec-creator/polish and normalize to completed|blocked",
+      reject:
+        "fail-closed on missing_result / invalid_result_value / malformed_result_block",
+      pathTest: "accept RESULT=completed and transition to completed",
+      rejectTest: "reject when RESULT is missing with missing_result",
+    },
+  },
+  {
+    id: "RC-02",
+    ja: {
+      transport: "SUMMARY を抽出して必須化し、要約用途へ受け渡す",
+      reject: "missing_summary は fail-closed",
+      pathTest: "SUMMARY ありの正常応答で通過することを確認する",
+      rejectTest: "SUMMARY 欠落で missing_summary を返すことを確認する",
+    },
+    en: {
+      transport: "extract SUMMARY, require it, and pass it to summary usage",
+      reject: "fail-closed on missing_summary",
+      pathTest: "pass when SUMMARY exists in normal response",
+      rejectTest: "return missing_summary when SUMMARY is absent",
+    },
+  },
+  {
+    id: "RC-03",
+    ja: {
+      transport:
+        "CHANGED_FILES を正規化し、非implementフェーズでは (none) を強制する",
+      reject:
+        "missing_changed_files / nonimplement_changed_files は fail-closed",
+      pathTest: "implement フェーズで変更ファイル配列を受理することを確認する",
+      rejectTest:
+        "review/spec_check/test でファイル名がある場合に nonimplement_changed_files を返すことを確認する",
+    },
+    en: {
+      transport:
+        "normalize CHANGED_FILES and enforce (none) in non-implement phases",
+      reject:
+        "fail-closed on missing_changed_files / nonimplement_changed_files",
+      pathTest: "accept changed files array in implement phase",
+      rejectTest:
+        "return nonimplement_changed_files when review/spec_check/test reports files",
+    },
+  },
+  {
+    id: "RC-04",
+    ja: {
+      transport: "CHECKS を抽出して必須化し、禁止コマンド検査を適用する",
+      reject: "missing_checks / forbidden_checks_command は fail-closed",
+      pathTest: "許可コマンドのみを含む CHECKS を受理することを確認する",
+      rejectTest:
+        "禁止コマンドを含む CHECKS で forbidden_checks_command を返すことを確認する",
+    },
+    en: {
+      transport:
+        "extract CHECKS, require it, and apply forbidden command detection",
+      reject: "fail-closed on missing_checks / forbidden_checks_command",
+      pathTest: "accept CHECKS with allowed commands only",
+      rejectTest:
+        "return forbidden_checks_command when CHECKS includes banned command",
+    },
+  },
+  {
+    id: "RC-05",
+    ja: {
+      transport:
+        "decision phase で JUDGMENT を必須化し pass|changes_required|blocked に正規化する",
+      reject: "missing_judgment / invalid_judgment は fail-closed",
+      pathTest: "JUDGMENT=pass を受理して次フェーズへ進むことを確認する",
+      rejectTest: "不正値 JUDGMENT で invalid_judgment を返すことを確認する",
+    },
+    en: {
+      transport:
+        "require JUDGMENT in decision phase and normalize to pass|changes_required|blocked",
+      reject: "fail-closed on missing_judgment / invalid_judgment",
+      pathTest: "accept JUDGMENT=pass and advance phase",
+      rejectTest: "return invalid_judgment when JUDGMENT value is invalid",
+    },
+  },
+  {
+    id: "RC-06",
+    ja: {
+      transport:
+        "判定時系列を blocked即停止 / changes_required送返 / pass前進 で統一する",
+      reject: "判定順序違反や未定義分岐は fail-closed",
+      pathTest: "changes_required で sendback に遷移することを確認する",
+      rejectTest: "blocked 判定後に継続しないことを確認する",
+    },
+    en: {
+      transport:
+        "unify decision timeline as blocked stop / changes_required sendback / pass advance",
+      reject: "fail-closed on invalid decision ordering or undefined branch",
+      pathTest: "verify sendback transition on changes_required",
+      rejectTest: "verify no continuation after blocked judgment",
+    },
+  },
+  {
+    id: "RC-07",
+    ja: {
+      transport:
+        "review結果に REVIEWER_STOP:requirement_drift|over_editing|verbosity を反映する",
+      reject: "REVIEWER_STOP 欠落や未定義コードは fail-closed",
+      pathTest: "重大違反で REVIEWER_STOP が出力され停止することを確認する",
+      rejectTest: "未定義 REVIEWER_STOP コードを拒否することを確認する",
+    },
+    en: {
+      transport:
+        "propagate REVIEWER_STOP:requirement_drift|over_editing|verbosity in review outputs",
+      reject: "fail-closed on missing REVIEWER_STOP or unknown code",
+      pathTest: "stop when major violation emits REVIEWER_STOP",
+      rejectTest: "reject undefined REVIEWER_STOP code",
+    },
+  },
+  {
+    id: "RC-08",
+    ja: {
+      transport: "run と spec-creator(polish含む) の両経路で同じ検証を実行する",
+      reject: "片経路のみ実装は fail-closed",
+      pathTest:
+        "run と spec-creator の双方で同一 validation code になることを確認する",
+      rejectTest: "片経路で契約を無視する実装を拒否することを確認する",
+    },
+    en: {
+      transport:
+        "apply identical validation on both run and spec-creator (including polish) paths",
+      reject: "fail-closed when only one path is covered",
+      pathTest: "verify run and spec-creator return the same validation code",
+      rejectTest: "reject implementation that bypasses contract on one path",
+    },
+  },
+  {
+    id: "RC-09",
+    ja: {
+      transport: "compile と runtime の責務境界を分離して扱う",
+      reject: "compile/runtime の混在判定は fail-closed",
+      pathTest: "runtime 契約違反が runtime 側で検出されることを確認する",
+      rejectTest: "compile エラーを runtime 経路で扱わないことを確認する",
+    },
+    en: {
+      transport: "separate compile and runtime responsibility boundaries",
+      reject: "fail-closed when compile/runtime checks are mixed",
+      pathTest: "verify runtime contract errors are detected at runtime path",
+      rejectTest: "verify compile errors are not handled as runtime path",
+    },
+  },
+  {
+    id: "RC-10",
+    ja: {
+      transport:
+        "task_config.persona_policy.phase_overrides.<phase>.executor_personas を入力契約キーとして検証する",
+      reject: "入力キー欠落や別キー使用は fail-closed",
+      pathTest: "正しい入力キーで reviewer 順序が解釈されることを確認する",
+      rejectTest: "誤キー task_config.review を拒否することを確認する",
+    },
+    en: {
+      transport:
+        "validate task_config.persona_policy.phase_overrides.<phase>.executor_personas as input contract key",
+      reject: "fail-closed on missing key or wrong key usage",
+      pathTest: "verify reviewer order resolves with the correct key",
+      rejectTest: "reject wrong key task_config.review",
+    },
+  },
+  {
+    id: "RC-11",
+    ja: {
+      transport: "sendback 条件を blocked=false 前提で評価する",
+      reject: "blocked=true の sendback は fail-closed",
+      pathTest:
+        "changes_required かつ blocked=false で sendback することを確認する",
+      rejectTest: "blocked=true で sendback を拒否することを確認する",
+    },
+    en: {
+      transport: "evaluate sendback with blocked=false precondition",
+      reject: "fail-closed when sendback is attempted with blocked=true",
+      pathTest: "verify sendback on changes_required with blocked=false",
+      rejectTest: "verify sendback is rejected when blocked=true",
+    },
+  },
+  {
+    id: "RC-12",
+    ja: {
+      transport:
+        "MUST/SHALL ごとに transport・reject・path_test・reject_test を両成果物で追跡可能にする",
+      reject: "4要素欠落または tasks/spec/code_summary 非同義は fail-closed",
+      pathTest: "RC-01..RC-12 全件で4要素がそろっていることを確認する",
+      rejectTest: "任意RCの4要素欠落で品質ガードが reject することを確認する",
+    },
+    en: {
+      transport:
+        "make transport/reject/path_test/reject_test traceable per MUST/SHALL across artifacts",
+      reject:
+        "fail-closed on missing four fields or non-equivalent tasks/spec/code_summary",
+      pathTest: "verify all RC-01..RC-12 entries include the four fields",
+      rejectTest: "verify quality guard rejects when any RC misses one field",
+    },
+  },
+];
+
+const REVIEW_CONTRACT_TRACE_BY_ID = new Map(
+  REVIEW_CONTRACT_TRACE_DEFINITIONS.map((definition) => [
+    definition.id,
+    definition,
+  ]),
+);
+
 function buildTaskReviewContractLines(
-  ids: readonly string[],
+  ids: readonly ReviewContractId[],
   language: "ja" | "en",
 ): string[] {
-  return ids.map((id) =>
-    language === "ja"
-      ? `  - ${id}: tasks.md(1.3) と specs/**/spec.md に同義で明記し、経路テストと fail-closed 拒否テストを定義する。`
-      : `  - ${id}: mirror in tasks.md(1.3) and specs/**/spec.md with path test and fail-closed rejection test.`
+  return ids.map((id) => {
+    const traceDefinition = REVIEW_CONTRACT_TRACE_BY_ID.get(id);
+    if (traceDefinition === undefined) {
+      throw new Error(`missing review contract trace definition for ${id}`);
+    }
+    const trace = language === "ja" ? traceDefinition.ja : traceDefinition.en;
+    return `  - ${id} | transport: ${trace.transport} | reject: ${trace.reject} | path_test: ${trace.pathTest} | reject_test: ${trace.rejectTest}`;
+  });
+}
+
+function buildCodeSummaryReviewContractLines(
+  ids: readonly ReviewContractId[],
+  language: "ja" | "en",
+): string[] {
+  return ids.map((id) => {
+    const traceDefinition = REVIEW_CONTRACT_TRACE_BY_ID.get(id);
+    if (traceDefinition === undefined) {
+      throw new Error(`missing review contract trace definition for ${id}`);
+    }
+    const trace = language === "ja" ? traceDefinition.ja : traceDefinition.en;
+    return `- ${id} | transport: ${trace.transport} | reject: ${trace.reject} | path_test: ${trace.pathTest} | reject_test: ${trace.rejectTest}`;
+  });
+}
+
+function buildCodeSummaryTaskSectionLines(language: "ja" | "en"): string[] {
+  return [
+    "## task_id: 1.3",
+    "",
+    "### review_contract_traceability",
+    ...buildCodeSummaryReviewContractLines(
+      REQUIRED_REVIEW_CONTRACT_IDS,
+      language,
+    ),
+  ];
+}
+
+function appendCodeSummaryTraceabilityLines(
+  sectionLines: string[],
+  language: "ja" | "en",
+): string[] {
+  const trimmed = trimTrailingBlankLines(sectionLines);
+  const next = [...trimmed];
+  if (next.length > 0 && next[next.length - 1] !== "") {
+    next.push("");
+  }
+  next.push("### review_contract_traceability");
+  next.push(
+    ...buildCodeSummaryReviewContractLines(
+      REQUIRED_REVIEW_CONTRACT_IDS,
+      language,
+    ),
   );
+  return next;
+}
+
+function trimTrailingBlankLines(lines: string[]): string[] {
+  const next = [...lines];
+  while (next.length > 0 && next[next.length - 1].trim().length === 0) {
+    next.pop();
+  }
+  return next;
+}
+
+function isReviewContractTraceLine(line: string): boolean {
+  return /^\s*-\s*RC-(?:0[1-9]|1[0-2])\b/u.test(line);
+}
+
+function isCodeSummaryReviewContractTraceabilityHeading(line: string): boolean {
+  return /^\s*###\s+review_contract_traceability\s*$/iu.test(line);
+}
+
+function findTaskReviewContractInsertIndex(sectionLines: string[]): number {
+  const failClosedIndex = sectionLines.findIndex((line, index) =>
+    index > 0 && /\bfail-closed\b/iu.test(line)
+  );
+  return failClosedIndex >= 0 ? failClosedIndex : sectionLines.length;
+}
+
+function areStringArraysEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function buildSpecReviewContractBlock(
@@ -1705,13 +2078,9 @@ export function collectSpecCreatorApplyManifestForTest(
 }
 
 function shouldGenerateDesignMarkdown(
-  context: SpecCreatorContextPayload,
+  _context: SpecCreatorContextPayload,
 ): boolean {
-  if (context.polish !== undefined) {
-    return context.polish.includeDesignTarget;
-  }
-  const requirements = context.spec_context.requirements_text;
-  return SPEC_CREATOR_DESIGN_SIGNAL_PATTERN.test(requirements);
+  return true;
 }
 
 function collectDeltaSpecPaths(changeDir: string, changeId: string): string[] {
@@ -2346,14 +2715,14 @@ function writeDesignMarkdownStub(options: {
       "# Design",
       "",
       "## 目的",
-      "- 必要時のみ設計判断を追記する。",
+      "- この change の設計判断とトレードオフを記録する。",
       "",
     ].join("\n")
     : [
       "# Design",
       "",
       "## Purpose",
-      "- Add design decisions only when needed.",
+      "- Document design decisions and trade-offs for this change.",
       "",
     ].join("\n");
   Deno.mkdirSync(path.dirname(options.designPath), { recursive: true });

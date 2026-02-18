@@ -78,8 +78,8 @@ Deno.test("buildSpecCreatorPolishPrompt aggregates markdown, feedback, and lates
   if (!prompt.requirementsText.includes("proposal.md")) {
     throw new Error("prompt must include proposal.md regen target");
   }
-  if (!prompt.requirementsText.includes("design.md (必要時のみ)")) {
-    throw new Error("prompt must include optional design target");
+  if (!prompt.requirementsText.includes("design.md")) {
+    throw new Error("prompt must include design target");
   }
   if (!prompt.requirementsText.includes("5行契約")) {
     throw new Error("prompt must include latest contract");
@@ -96,17 +96,17 @@ Deno.test("buildSpecCreatorPolishPrompt aggregates markdown, feedback, and lates
     "tasks.md",
     "code_summary.md",
     "specs/**/spec.md",
+    "design.md",
   ]);
-  if (prompt.regenerateTargets.includes("design.md")) {
-    throw new Error("design target should be optional unless explicitly enabled");
+  if (!prompt.regenerateTargets.includes("design.md")) {
+    throw new Error("design target should be required");
   }
 });
 
-Deno.test("buildSpecCreatorPolishPrompt can include design as required regeneration target", () => {
+Deno.test("buildSpecCreatorPolishPrompt always includes design target", () => {
   const prompt = buildSpecCreatorPolishPrompt({
     changeId: "foo",
     markdownContexts: ["# title"],
-    includeDesignTarget: true,
   });
 
   if (prompt.language !== "en") {
@@ -116,7 +116,7 @@ Deno.test("buildSpecCreatorPolishPrompt can include design as required regenerat
     throw new Error("prompt should include design target when required");
   }
   if (!prompt.regenerateTargets.includes("design.md")) {
-    throw new Error("regenerateTargets should include design.md when enabled");
+    throw new Error("regenerateTargets should include design.md");
   }
 });
 

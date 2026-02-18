@@ -163,9 +163,9 @@ export function createSpecCreatorTaskConfigTemplate(
       },
       {
         id: "1.4",
-        title: "必要時に design.md を生成する",
+        title: "design.md を生成する",
         description:
-          "設計上の判断が必要な場合のみ design.md を作成し、意思決定とトレードオフを記述する。",
+          "design.md を作成し、意思決定とトレードオフを記述する。",
         target_paths: [designPath],
         related_paths: [],
         depends_on: ["1.2"],

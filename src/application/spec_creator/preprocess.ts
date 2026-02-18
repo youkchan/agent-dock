@@ -41,10 +41,6 @@ export interface SpecCreatorTaskConfig extends SpecCreatorTaskConfigTemplate {
   };
 }
 
-interface BuildSpecCreatorTaskConfigOptions {
-  includeDesignTarget?: boolean;
-}
-
 const DEFAULT_SPEC_CREATOR_PERSONAS = [
   "spec-planner",
   "spec-reviewer",
@@ -169,20 +165,13 @@ export function collectSpecContextInteractive(
 export function buildSpecCreatorTaskConfig(
   changeId: string,
   specContext: SpecContext,
-  options: BuildSpecCreatorTaskConfigOptions = {},
 ): SpecCreatorTaskConfig {
   const normalizedSpecContext = normalizeSpecContextForReviewContract(
     specContext,
   );
   const template = createSpecCreatorTaskConfigTemplate(changeId);
-  const includeDesignTarget = options.includeDesignTarget !== false;
-  const tasksForScope = scopeSpecCreatorTasksByDesignTarget(
-    template.tasks,
-    changeId,
-    includeDesignTarget,
-  );
   const contextText = buildSpecContextPromptSection(normalizedSpecContext);
-  const tasks = tasksForScope.map((task) => ({
+  const tasks = template.tasks.map((task) => ({
     ...task,
     target_paths: [...task.target_paths],
     related_paths: [...task.related_paths],
@@ -249,48 +238,6 @@ export function ensureRequiredReviewContractInRequirementsText(
     heading,
     ...lines.map((line) => `- ${line}`),
   ].join("\n").trim();
-}
-
-function scopeSpecCreatorTasksByDesignTarget(
-  tasks: SpecCreatorTaskConfigTemplate["tasks"],
-  changeId: string,
-  includeDesignTarget: boolean,
-): SpecCreatorTaskConfigTemplate["tasks"] {
-  const cloned = tasks.map((task) => ({
-    ...task,
-    target_paths: [...task.target_paths],
-    related_paths: [...task.related_paths],
-    depends_on: [...task.depends_on],
-    persona_policy: task.persona_policy === null
-      ? null
-      : structuredClone(task.persona_policy),
-    output_phase_assignments: task.output_phase_assignments,
-  }));
-  if (includeDesignTarget) {
-    return cloned;
-  }
-
-  const designPath = `openspec/changes/${changeId}/design.md`;
-  const removedTaskIds = new Set<string>();
-  const withoutDesignPaths = cloned.map((task) => ({
-    ...task,
-    target_paths: task.target_paths.filter((item) => item !== designPath),
-    related_paths: task.related_paths.filter((item) => item !== designPath),
-  }));
-  const keptTasks = withoutDesignPaths.filter((task) => {
-    if (task.target_paths.length > 0) {
-      return true;
-    }
-    removedTaskIds.add(task.id);
-    return false;
-  });
-  if (removedTaskIds.size === 0) {
-    return keptTasks;
-  }
-  return keptTasks.map((task) => ({
-    ...task,
-    depends_on: task.depends_on.filter((dep) => !removedTaskIds.has(dep)),
-  }));
 }
 
 function buildSpecContextPromptSection(specContext: SpecContext): string {

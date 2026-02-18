@@ -86,6 +86,14 @@ const REVIEW_CONTRACT_IDS = [
   "RC-12",
 ] as const;
 
+function hasReviewTraceabilityLine(sectionText: string, id: string): boolean {
+  const pattern = new RegExp(
+    `${id}\\s*\\|\\s*transport:\\s*.+\\|\\s*reject:\\s*.+\\|\\s*path_test:\\s*.+\\|\\s*reject_test:\\s*.+`,
+    "u",
+  );
+  return pattern.test(sectionText);
+}
+
 function withTemporaryChangeDir(changeId: string, fn: () => void): void {
   const dirPath = `openspec/changes/${changeId}`;
   const revisedDirPath = `openspec/changes/${revisedChangeId(changeId)}`;
@@ -1424,28 +1432,23 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
       throw new Error("task_config should include tasks");
     }
     const designPath = `openspec/changes/${polishedChangeId}/design.md`;
-    for (const task of taskConfig.tasks) {
+    const hasDesignPath = taskConfig.tasks.some((task) => {
       const targetPaths = Array.isArray(task.target_paths)
         ? task.target_paths.map((item) => String(item))
         : [];
       const relatedPaths = Array.isArray(task.related_paths)
         ? task.related_paths.map((item) => String(item))
         : [];
-      if (targetPaths.includes(designPath)) {
-        throw new Error(
-          "design.md should not appear in target_paths when not required",
-        );
-      }
-      if (relatedPaths.includes(designPath)) {
-        throw new Error(
-          "design.md should not appear in related_paths when not required",
-        );
-      }
-    }
-    if (taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
+      return targetPaths.includes(designPath) ||
+        relatedPaths.includes(designPath);
+    });
+    if (!hasDesignPath) {
       throw new Error(
-        "task 1.4 should be omitted when design target is not required",
+        "design.md should be included in target_paths or related_paths",
       );
+    }
+    if (!taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
+      throw new Error("task 1.4 should be included");
     }
   } finally {
     try {
@@ -1594,7 +1597,7 @@ Deno.test("main spec-creator polish preserves existing phase assignments from ta
   });
 });
 
-Deno.test("main spec-creator polish does not force design target only because design.md exists", () => {
+Deno.test("main spec-creator polish always includes design target", () => {
   const changeId = uniqueChangeId("update-polish-design-optional");
   const polishedChangeId = revisedChangeId(changeId);
   const outputPath = `task_configs/spec_creator/${changeId}.json`;
@@ -1636,28 +1639,23 @@ Deno.test("main spec-creator polish does not force design target only because de
     }
 
     const designPath = `openspec/changes/${polishedChangeId}/design.md`;
-    for (const task of taskConfig.tasks) {
+    const hasDesignPath = taskConfig.tasks.some((task) => {
       const targetPaths = Array.isArray(task.target_paths)
         ? task.target_paths.map((item) => String(item))
         : [];
       const relatedPaths = Array.isArray(task.related_paths)
         ? task.related_paths.map((item) => String(item))
         : [];
-      if (targetPaths.includes(designPath)) {
-        throw new Error(
-          "design.md should not appear in target_paths when not required",
-        );
-      }
-      if (relatedPaths.includes(designPath)) {
-        throw new Error(
-          "design.md should not appear in related_paths when not required",
-        );
-      }
-    }
-    if (taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
+      return targetPaths.includes(designPath) ||
+        relatedPaths.includes(designPath);
+    });
+    if (!hasDesignPath) {
       throw new Error(
-        "task 1.4 should be omitted when design target is not required",
+        "design.md should be included in target_paths or related_paths",
       );
+    }
+    if (!taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
+      throw new Error("task 1.4 should be included");
     }
 
     try {
@@ -1668,7 +1666,7 @@ Deno.test("main spec-creator polish does not force design target only because de
   });
 });
 
-Deno.test("main spec-creator polish ignores design keyword noise in tasks and code_summary", () => {
+Deno.test("main spec-creator polish keeps design target even with noisy markdown context", () => {
   const changeId = uniqueChangeId("update-polish-design-signal-noise");
   const outputPath = `task_configs/spec_creator/${changeId}.json`;
   withTemporaryChangeDir(changeId, () => {
@@ -1711,9 +1709,9 @@ Deno.test("main spec-creator polish ignores design keyword noise in tasks and co
     if (!Array.isArray(taskConfig.tasks)) {
       throw new Error("task_config should include tasks");
     }
-    if (taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
+    if (!taskConfig.tasks.some((task) => String(task.id) === "1.4")) {
       throw new Error(
-        "task 1.4 should not be included from tasks/code_summary noise only",
+        "task 1.4 should stay included",
       );
     }
 
@@ -1812,6 +1810,7 @@ Deno.test("normalizeSpecCreatorReviewContractCoverageForTest backfills missing R
         "The system SHALL keep artifacts aligned.",
       ].join("\n"),
     );
+    Deno.writeTextFileSync(`${changeDir}/code_summary.md`, "# code_summary\n");
 
     const paths: SpecCreatorArtifactPaths = {
       changeId,
@@ -1838,8 +1837,8 @@ Deno.test("normalizeSpecCreatorReviewContractCoverageForTest backfills missing R
       throw new Error("task 1.3 section should exist after normalization");
     }
     for (const id of REVIEW_CONTRACT_IDS) {
-      if (!sectionMatch[0].includes(id)) {
-        throw new Error(`task 1.3 should include ${id}`);
+      if (!hasReviewTraceabilityLine(sectionMatch[0], id)) {
+        throw new Error(`task 1.3 should include traceability line for ${id}`);
       }
     }
 
@@ -1847,6 +1846,22 @@ Deno.test("normalizeSpecCreatorReviewContractCoverageForTest backfills missing R
     for (const id of REVIEW_CONTRACT_IDS) {
       if (!specText.includes(`### Requirement (${id})`)) {
         throw new Error(`spec should include Requirement (${id})`);
+      }
+    }
+
+    const codeSummaryText = Deno.readTextFileSync(paths.codeSummaryPath);
+    const codeSummarySectionMatch =
+      /##\s+task_id:\s*1\.3[\s\S]*?(?=\n##\s+task_id:|\s*$)/u.exec(
+        codeSummaryText,
+      );
+    if (codeSummarySectionMatch === null) {
+      throw new Error("code_summary should include task_id: 1.3 section");
+    }
+    for (const id of REVIEW_CONTRACT_IDS) {
+      if (!hasReviewTraceabilityLine(codeSummarySectionMatch[0], id)) {
+        throw new Error(
+          `code_summary task_id:1.3 should include traceability line for ${id}`,
+        );
       }
     }
   });
@@ -1863,6 +1878,16 @@ Deno.test("normalizeSpecCreatorReviewContractCoverageForTest is idempotent", () 
         "## 1. 実装タスク",
         "- [ ] 1.3 実行結果レビュー契約",
         ...REVIEW_CONTRACT_IDS.map((id) => `  - ${id}: already included`),
+      ].join("\n"),
+    );
+    Deno.writeTextFileSync(
+      `${changeDir}/code_summary.md`,
+      [
+        "# code_summary",
+        "",
+        "## task_id: 1.3",
+        "",
+        ...REVIEW_CONTRACT_IDS.map((id) => `- ${id}: already included`),
       ].join("\n"),
     );
     Deno.writeTextFileSync(
@@ -1897,11 +1922,28 @@ Deno.test("normalizeSpecCreatorReviewContractCoverageForTest is idempotent", () 
     normalizeSpecCreatorReviewContractCoverageForTest(paths);
 
     const tasksText = Deno.readTextFileSync(paths.tasksPath);
+    const codeSummaryText = Deno.readTextFileSync(paths.codeSummaryPath);
     const specText = Deno.readTextFileSync(paths.deltaSpecPath);
     for (const id of REVIEW_CONTRACT_IDS) {
-      const taskMatches = tasksText.match(new RegExp(id, "g")) ?? [];
+      const taskMatches = tasksText.match(
+        new RegExp(`^\\s*-\\s*${id}\\b`, "gmu"),
+      ) ?? [];
       if (taskMatches.length !== 1) {
         throw new Error(`task should contain ${id} exactly once`);
+      }
+      if (!hasReviewTraceabilityLine(tasksText, id)) {
+        throw new Error(`task should keep traceability line for ${id}`);
+      }
+      const codeSummaryMatches = codeSummaryText.match(
+        new RegExp(`^\\s*-\\s*${id}\\b`, "gmu"),
+      ) ?? [];
+      if (codeSummaryMatches.length !== 1) {
+        throw new Error(`code_summary should contain ${id} exactly once`);
+      }
+      if (!hasReviewTraceabilityLine(codeSummaryText, id)) {
+        throw new Error(
+          `code_summary should keep traceability line for ${id}`,
+        );
       }
       const specMatches = specText.match(
         new RegExp(`### Requirement \\(${id}\\)`, "g"),

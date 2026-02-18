@@ -27,6 +27,13 @@ interface LoadedArtifacts {
 }
 
 interface TaskSection {
+  taskId: string;
+  startLine: number;
+  text: string;
+}
+
+interface CodeSummaryTaskSection {
+  taskId: string;
   startLine: number;
   text: string;
 }
@@ -104,12 +111,14 @@ export function collectSpecCreatorQualityViolations(
   }
   pushTask14BlockedTestConflict(violations, paths.tasksPath, artifacts.tasks);
   pushTask15SendbackAmbiguity(violations, paths.tasksPath, artifacts.tasks);
+  pushTaskPhaseOrderCoverage(violations, paths.tasksPath, artifacts.tasks);
   pushDesignGenerationConsistency(
     violations,
     paths.proposalPath,
     artifacts.proposal,
   );
   pushRequiredReviewContractCoverage(violations, paths, artifacts);
+  pushReviewContractTraceability(violations, paths, artifacts);
 
   if (PERSONA_DIR_PATTERN.test(combined)) {
     pushRunSpecCreatorCoverage(violations, paths, artifacts);
@@ -317,6 +326,66 @@ function pushTask15SendbackAmbiguity(
   });
 }
 
+function pushTaskPhaseOrderCoverage(
+  violations: SpecCreatorQualityViolation[],
+  tasksPath: string,
+  tasksText: string,
+): void {
+  const sections = findAllTaskSections(tasksText);
+  for (const section of sections) {
+    const phaseOrderValidation = validateTaskPhaseOrderInSection(section.text);
+    if (phaseOrderValidation === null) {
+      continue;
+    }
+    violations.push({
+      rule_id: "phase_order_coverage",
+      file: tasksPath,
+      line: section.startLine,
+      message:
+        `task ${section.taskId} must declare persona_policy.phase_order (${phaseOrderValidation})`,
+    });
+  }
+}
+
+function validateTaskPhaseOrderInSection(sectionText: string): string | null {
+  const lines = sectionText.split(/\r?\n/u);
+  const personaPolicyLine = lines.find((line) =>
+    /^\s*-\s*persona_policy\s*:/u.test(line)
+  );
+  if (personaPolicyLine === undefined) {
+    return "missing persona_policy line";
+  }
+  const jsonMatch = /^\s*-\s*persona_policy\s*:\s*(.+?)\s*$/u.exec(
+    personaPolicyLine,
+  );
+  if (!jsonMatch) {
+    return "invalid persona_policy syntax";
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonMatch[1]);
+  } catch {
+    return "persona_policy is not valid JSON";
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return "persona_policy must be object JSON";
+  }
+
+  const phaseOrder = (parsed as { phase_order?: unknown }).phase_order;
+  if (!Array.isArray(phaseOrder) || phaseOrder.length === 0) {
+    return "phase_order must be non-empty array";
+  }
+
+  const normalized = phaseOrder
+    .map((phase) => String(phase).trim())
+    .filter((phase) => phase.length > 0);
+  if (!normalized.includes("implement")) {
+    return "phase_order must include implement";
+  }
+  return null;
+}
+
 function pushCustomPersonaAssignmentCoverage(
   violations: SpecCreatorQualityViolation[],
   paths: SpecCreatorArtifactPaths,
@@ -397,6 +466,56 @@ function pushRequiredReviewContractCoverage(
   });
 }
 
+function pushReviewContractTraceability(
+  violations: SpecCreatorQualityViolation[],
+  paths: SpecCreatorArtifactPaths,
+  artifacts: LoadedArtifacts,
+): void {
+  const task13Section = findTaskSection(artifacts.tasks, "1.3");
+  const codeSummaryTask13Section = findCodeSummaryTaskSection(
+    artifacts.codeSummary,
+    "1.3",
+  );
+
+  const missingInTasks = task13Section === null
+    ? [...REQUIRED_REVIEW_CONTRACT_IDS]
+    : collectMissingReviewTraceabilityIds(task13Section.text);
+  const missingInCodeSummary = codeSummaryTask13Section === null
+    ? [...REQUIRED_REVIEW_CONTRACT_IDS]
+    : collectMissingReviewTraceabilityIds(codeSummaryTask13Section.text);
+
+  if (missingInTasks.length === 0 && missingInCodeSummary.length === 0) {
+    return;
+  }
+
+  const messageParts: string[] = [];
+  if (missingInTasks.length > 0) {
+    messageParts.push(
+      `missing in tasks.md task 1.3: ${missingInTasks.join(", ")}`,
+    );
+  }
+  if (missingInCodeSummary.length > 0) {
+    messageParts.push(
+      `missing in code_summary.md task_id:1.3: ${
+        missingInCodeSummary.join(", ")
+      }`,
+    );
+  }
+
+  const primaryMissingInTasks = missingInTasks.length > 0;
+  violations.push({
+    rule_id: "review_contract_traceability",
+    file: primaryMissingInTasks ? paths.tasksPath : paths.codeSummaryPath,
+    line: primaryMissingInTasks
+      ? (task13Section?.startLine ?? 1)
+      : (codeSummaryTask13Section?.startLine ?? 1),
+    message:
+      `RC-01..RC-12 must declare transport/reject/path_test/reject_test in tasks.md(1.3) and code_summary.md(task_id:1.3) (${
+        messageParts.join("; ")
+      })`,
+  });
+}
+
 function loadArtifacts(paths: SpecCreatorArtifactPaths): LoadedArtifacts {
   const specs = allDeltaSpecPaths(paths).map((specPath) => ({
     path: specPath,
@@ -448,33 +567,42 @@ function readTextOptional(filePath: string): string {
 }
 
 function findTaskSection(markdown: string, taskId: string): TaskSection | null {
+  return findAllTaskSections(markdown).find((section) =>
+    section.taskId === taskId
+  ) ??
+    null;
+}
+
+function findAllTaskSections(markdown: string): TaskSection[] {
   const lines = markdown.split(/\r?\n/u);
-  const startPattern = new RegExp(
-    `^\\s*-\\s*\\[[ xX]\\]\\s*${escapeRegExp(taskId)}\\b`,
-    "u",
-  );
-  const anotherTaskPattern = /^\s*-\s*\[[ xX]\]\s*\S+/u;
+  const taskPattern = /^\s*-\s*\[[ xX]\]\s*(\S+)/u;
+  const sections: TaskSection[] = [];
   let start = -1;
+  let currentTaskId = "";
+
   for (let index = 0; index < lines.length; index += 1) {
-    if (startPattern.test(lines[index])) {
-      start = index;
-      break;
+    const matched = taskPattern.exec(lines[index]);
+    if (matched === null) {
+      continue;
     }
-  }
-  if (start < 0) {
-    return null;
-  }
-  let end = lines.length;
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (anotherTaskPattern.test(lines[index])) {
-      end = index;
-      break;
+    if (start >= 0) {
+      sections.push({
+        taskId: currentTaskId,
+        startLine: start + 1,
+        text: lines.slice(start, index).join("\n"),
+      });
     }
+    start = index;
+    currentTaskId = matched[1];
   }
-  return {
-    startLine: start + 1,
-    text: lines.slice(start, end).join("\n"),
-  };
+  if (start >= 0) {
+    sections.push({
+      taskId: currentTaskId,
+      startLine: start + 1,
+      text: lines.slice(start).join("\n"),
+    });
+  }
+  return sections;
 }
 
 function firstMatchLine(text: string, pattern: RegExp): number | null {
@@ -487,13 +615,63 @@ function firstMatchLine(text: string, pattern: RegExp): number | null {
   return null;
 }
 
+function collectMissingReviewTraceabilityIds(text: string): string[] {
+  return REQUIRED_REVIEW_CONTRACT_IDS.filter((id) => {
+    const tracePattern = new RegExp(
+      `${
+        escapeRegex(id)
+      }[^\\n]*\\btransport\\s*:[^\\n]*\\breject\\s*:[^\\n]*\\bpath_test\\s*:[^\\n]*\\breject_test\\s*:`,
+      "iu",
+    );
+    return !tracePattern.test(text);
+  });
+}
+
+function findCodeSummaryTaskSection(
+  markdown: string,
+  taskId: string,
+): CodeSummaryTaskSection | null {
+  const lines = markdown.split(/\r?\n/u);
+  const sectionPattern = /^##\s+task_id:\s*(\S+)\s*$/u;
+  const sectionStartPattern = /^##\s+task_id:\s*\S+/u;
+  let start = -1;
+  let currentTaskId = "";
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const matched = sectionPattern.exec(lines[index]);
+    if (matched === null) {
+      continue;
+    }
+    if (start >= 0 && currentTaskId === taskId) {
+      return {
+        taskId: currentTaskId,
+        startLine: start + 1,
+        text: lines.slice(start, index).join("\n"),
+      };
+    }
+    start = index;
+    currentTaskId = matched[1];
+  }
+  if (start >= 0 && currentTaskId === taskId) {
+    return {
+      taskId: currentTaskId,
+      startLine: start + 1,
+      text: lines.slice(start).join("\n"),
+    };
+  }
+  if (!sectionStartPattern.test(markdown)) {
+    return null;
+  }
+  return null;
+}
+
+function escapeRegex(text: string): string {
+  return text.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
 function toRelativePath(filePath: string): string {
   const relative = path.relative(Deno.cwd(), filePath);
   return relative.length > 0 ? relative : filePath;
-}
-
-function escapeRegExp(input: string): string {
-  return input.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function collectReviewContractIds(text: string): Set<string> {

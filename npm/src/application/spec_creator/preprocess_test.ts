@@ -208,7 +208,7 @@ Deno.test("collectSpecContextInteractive allows overriding proposed change_id", 
   }
 });
 
-Deno.test("buildSpecCreatorTaskConfig excludes design targets when includeDesignTarget is false", () => {
+Deno.test("buildSpecCreatorTaskConfig always includes design targets", () => {
   const changeId = "add-spec-creator";
   const designPath = `openspec/changes/${changeId}/design.md`;
   const specContext: SpecContext = {
@@ -220,30 +220,25 @@ Deno.test("buildSpecCreatorTaskConfig excludes design targets when includeDesign
     },
   };
 
-  const config = buildSpecCreatorTaskConfig(changeId, specContext, {
-    includeDesignTarget: false,
-  });
+  const config = buildSpecCreatorTaskConfig(changeId, specContext);
 
-  if (config.tasks.some((task) => task.id === "1.4")) {
+  if (!config.tasks.some((task) => task.id === "1.4")) {
     throw new Error(
-      "task 1.4 should be removed when design target is disabled",
+      "task 1.4 should exist when design target is required",
     );
   }
+  if (!config.tasks.some((task) => task.target_paths.includes(designPath))) {
+    throw new Error("at least one task should target design.md");
+  }
   for (const task of config.tasks) {
-    if (task.target_paths.includes(designPath)) {
-      throw new Error(`target_paths should exclude design.md for ${task.id}`);
+    const hasDesignPath = task.target_paths.includes(designPath) ||
+      task.related_paths.includes(designPath);
+    if (!hasDesignPath && task.id !== "1.4") {
+      continue;
     }
-    if (task.related_paths.includes(designPath)) {
-      throw new Error(`related_paths should exclude design.md for ${task.id}`);
+    if (task.id === "1.4" && !task.target_paths.includes(designPath)) {
+      throw new Error("task 1.4 should target design.md");
     }
-  }
-
-  const task16 = config.tasks.find((task) => task.id === "1.6");
-  if (!task16) {
-    throw new Error("task 1.6 should exist");
-  }
-  if (task16.depends_on.includes("1.4")) {
-    throw new Error("task 1.6 should not depend on removed task 1.4");
   }
 });
 
