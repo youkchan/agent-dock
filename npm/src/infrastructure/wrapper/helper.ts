@@ -33,6 +33,7 @@ const FORBIDDEN_OPENSPEC_CHECK_COMMAND_PATTERNS = [
   /\bagent-dock\s+openspec\b/iu,
   /(?:^|[\s`"'=])(?:\.\/)?node_modules\/\.bin\/openspec\b/iu,
 ] as const;
+const PROMPT_TRUNCATION_MARKER = "[truncated by codex_wrapper]";
 
 type ResultKey = (typeof RESULT_KEYS)[number];
 type OptionalResultKey = (typeof OPTIONAL_RESULT_KEYS)[number];
@@ -98,6 +99,21 @@ function safeIntEnv(
   maximum: number,
 ): number {
   return safeInt(readEnv(name, ""), fallback, minimum, maximum);
+}
+
+function truncateCenter(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  if (maxChars <= 0) {
+    return "";
+  }
+  if (maxChars <= 32) {
+    return text.slice(0, maxChars);
+  }
+  const headChars = Math.max(1, Math.floor(maxChars * 0.7));
+  const tailChars = Math.max(1, maxChars - headChars);
+  return `${text.slice(0, headChars)}${text.slice(-tailChars)}`;
 }
 
 export function sanitizePromptText(raw: string): string {
@@ -430,9 +446,24 @@ ${outputContractText}`;
       120000,
     );
     if (prompt.length > maxPromptChars) {
-      prompt = `${
-        prompt.slice(0, maxPromptChars - 60)
-      }\n\n[truncated by codex_wrapper]`;
+      const contractIndex = prompt.lastIndexOf(outputContractText);
+      if (contractIndex > 0) {
+        const body = prompt.slice(0, contractIndex).trimEnd();
+        const contract = prompt.slice(contractIndex);
+        const markerBlock = `\n\n${PROMPT_TRUNCATION_MARKER}\n\n`;
+        const maxBodyChars = maxPromptChars - markerBlock.length - contract.length;
+        if (maxBodyChars > 0) {
+          const truncatedBody = truncateCenter(body, maxBodyChars);
+          prompt = `${truncatedBody}${markerBlock}${contract}`;
+        } else {
+          const fallbackBodyChars = Math.max(0, maxPromptChars - contract.length);
+          prompt = `${truncateCenter(body, fallbackBodyChars)}${contract}`;
+        }
+      } else {
+        prompt = `${
+          prompt.slice(0, maxPromptChars - 60)
+        }\n\n${PROMPT_TRUNCATION_MARKER}`;
+      }
     }
     return prompt;
   }

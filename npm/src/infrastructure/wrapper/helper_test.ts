@@ -104,8 +104,20 @@ Deno.test("buildPrompt renders execute template and truncates when too long", ()
     "missing header",
   );
   assert(
-    prompt.endsWith("[truncated by codex_wrapper]"),
+    prompt.includes("[truncated by codex_wrapper]"),
     "expected truncation marker",
+  );
+  assert(
+    prompt.includes("Final output must be exactly these 5 lines:"),
+    "truncation must preserve output contract header",
+  );
+  assert(
+    prompt.endsWith("JUDGMENT: pass|changes_required|blocked"),
+    "truncation must preserve contract tail",
+  );
+  assert(
+    prompt.length <= 2000,
+    `prompt length exceeded cap: ${prompt.length}`,
   );
 });
 
