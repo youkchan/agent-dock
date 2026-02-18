@@ -99,6 +99,15 @@ type ValidationCode =
   | "forbidden_checks_command"
   | "nonimplement_changed_files"
   | "malformed_result_block";
+type RecoverableValidationCode =
+  | "missing_result"
+  | "invalid_result_value"
+  | "missing_summary"
+  | "missing_changed_files"
+  | "missing_checks"
+  | "missing_judgment"
+  | "nonimplement_changed_files"
+  | "malformed_result_block";
 
 interface ValidationOutcome {
   ok: boolean;
@@ -169,7 +178,7 @@ const REVIEWER_STOP_RULE_PATTERNS: Record<string, RegExp[]> = {
   ],
 };
 
-const VALIDATION_RECOVERABLE_CODES = new Set<ValidationCode>([
+const RECOVERABLE_VALIDATION_CODES: readonly RecoverableValidationCode[] = [
   "missing_result",
   "invalid_result_value",
   "missing_summary",
@@ -178,7 +187,29 @@ const VALIDATION_RECOVERABLE_CODES = new Set<ValidationCode>([
   "missing_judgment",
   "nonimplement_changed_files",
   "malformed_result_block",
-]);
+];
+const VALIDATION_RECOVERABLE_CODES = new Set<ValidationCode>(
+  RECOVERABLE_VALIDATION_CODES,
+);
+const VALIDATION_RETRY_INSTRUCTIONS: Record<RecoverableValidationCode, string> =
+  {
+    missing_result:
+      "RESULT is missing. Output exactly 5 lines only: RESULT, SUMMARY, CHANGED_FILES, CHECKS, JUDGMENT. No prose.",
+    invalid_result_value:
+      "RESULT must be completed or blocked. Output exactly 5 lines only: RESULT, SUMMARY, CHANGED_FILES, CHECKS, JUDGMENT. No prose.",
+    missing_summary:
+      "SUMMARY is missing. Output exactly 5 lines only: RESULT, SUMMARY, CHANGED_FILES, CHECKS, JUDGMENT. No prose.",
+    missing_changed_files:
+      "CHANGED_FILES is missing. Output exactly 5 lines only: RESULT, SUMMARY, CHANGED_FILES, CHECKS, JUDGMENT. Use (none) when no files changed.",
+    missing_checks:
+      "CHECKS is missing. Output exactly 5 lines only: RESULT, SUMMARY, CHANGED_FILES, CHECKS, JUDGMENT. Include executed checks.",
+    missing_judgment:
+      "JUDGMENT is missing. Output exactly 5 lines only: RESULT, SUMMARY, CHANGED_FILES, CHECKS, JUDGMENT. Use pass|changes_required|blocked.",
+    malformed_result_block:
+      "Result block is malformed. Output exactly 5 lines only: RESULT, SUMMARY, CHANGED_FILES, CHECKS, JUDGMENT. No duplicate or unknown keys.",
+    nonimplement_changed_files:
+      "Non-implement phase violation: CHANGED_FILES must be (none). Output exactly 5 lines only: RESULT, SUMMARY, CHANGED_FILES, CHECKS, JUDGMENT. Use JUDGMENT pass|changes_required|blocked.",
+  };
 
 export class OrchestratorConfig {
   leadId: string;
@@ -2523,15 +2554,10 @@ export class AgentTeamsLikeOrchestrator {
   }
 
   private validationRetryInstruction(code: ValidationCode): string | null {
-    if (code !== "nonimplement_changed_files") {
+    if (!isRecoverableValidationCode(code)) {
       return null;
     }
-    return [
-      "contract violation in non-implement phase:",
-      "set CHANGED_FILES to (none).",
-      "if pass, output JUDGMENT: pass.",
-      "if fixes are required, output JUDGMENT: changes_required to send back to implement.",
-    ].join(" ");
+    return VALIDATION_RETRY_INSTRUCTIONS[code];
   }
 
   private escalateValidationFailureToNeedsApproval(
@@ -2742,6 +2768,12 @@ function detectReviewerStopRule(text: string): string | null {
 function normalizeReviewerStopRule(rawRule: string): string {
   const normalizedKey = rawRule.trim().toLowerCase().replaceAll("-", "_");
   return REVIEWER_STOP_RULE_ALIASES[normalizedKey] ?? normalizedKey;
+}
+
+function isRecoverableValidationCode(
+  code: ValidationCode,
+): code is RecoverableValidationCode {
+  return VALIDATION_RECOVERABLE_CODES.has(code);
 }
 
 interface ParsedExecutionResult {

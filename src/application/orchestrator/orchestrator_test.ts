@@ -2072,6 +2072,14 @@ Deno.test("validation recovery: missing_result succeeds on single retry", () => 
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
     assertEqual(task.status, "completed", "task status");
+    assert(
+      task.progress_log.some((entry) =>
+        String(entry.text ?? "").includes(
+          "validation correction code=missing_result",
+        )
+      ),
+      "progress log should include missing_result correction instruction",
+    );
   });
 });
 
@@ -2122,6 +2130,83 @@ Deno.test("validation recovery: missing_result exhausts retries and becomes need
         "validation_retry_exhausted:missing_result",
       ),
       "reason should include retry exhausted code",
+    );
+    assert(
+      task.progress_log.some((entry) =>
+        String(entry.text ?? "").includes(
+          "validation correction code=missing_result",
+        )
+      ),
+      "progress log should include missing_result correction instruction",
+    );
+  });
+});
+
+Deno.test("validation recovery: missing_result injects correction on decision path", () => {
+  withTempDir((dir) => {
+    const store = new StateStore(dir);
+    store.bootstrapTasks([
+      createTask({
+        id: "T1",
+        title: "review task",
+        target_paths: ["src/a.ts"],
+        current_phase_index: 1,
+      }),
+    ]);
+
+    const adapter = new SequenceResultAdapter([
+      [
+        "SUMMARY: review output misses result",
+        "CHANGED_FILES: (none)",
+        "CHECKS: deno test src",
+        "JUDGMENT: pass",
+      ].join("\n"),
+      decisionPhaseResult({
+        summary: "review fixed",
+        changedFiles: "(none)",
+        judgment: "pass",
+      }),
+    ]);
+    const orchestrator = new AgentTeamsLikeOrchestrator({
+      store,
+      adapter,
+      provider: new MockOrchestratorProvider(),
+      config: new OrchestratorConfig({
+        maxRounds: 4,
+        maxIdleRounds: 1,
+        maxIdleSeconds: 60,
+        personas: [
+          createPersona("reviewer", {
+            enabled: true,
+            role: "reviewer",
+          }),
+        ],
+        personaDefaults: {
+          phase_order: ["implement", "review"],
+          phase_policies: {
+            implement: { executor_personas: ["implementer"] },
+            review: {
+              executor_personas: ["reviewer"],
+              state_transition_personas: ["lead"],
+            },
+          },
+        },
+      }),
+    });
+
+    const result = orchestrator.run();
+    assertEqual(result.stop_reason, "all_tasks_completed", "stop reason");
+    assertEqual(adapter.calls, 2, "decision path should retry once and recover");
+    const task = store.getTask("T1");
+    assert(task !== null, "task should exist");
+    assertEqual(task.status, "completed", "task status");
+    assert(
+      task.progress_log.some((entry) =>
+        String(entry.text ?? "").includes(
+          "validation correction code=missing_result",
+        )
+      ),
+      "decision path should include missing_result correction instruction",
     );
   });
 });

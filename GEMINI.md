@@ -76,6 +76,7 @@ deno task test
 
 ## Development Conventions
 
+- **Code-First Analysis:** NEVER assume or guess code logic. Always read the relevant files (`read_file`, `grep_search`) before explaining behavior or proposing changes.
 - **Type Safety:** Keep strict TypeScript checks enabled.
 - **Event-Driven:** The Lead only acts on specific events (Kickoff, TaskCompleted, Blocked, etc.) to minimize API costs.
 - **Fail-Closed:** State transitions and OpenSpec compilation should fail early if inconsistencies are detected.
