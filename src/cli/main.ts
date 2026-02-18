@@ -21,7 +21,6 @@ import {
   normalizePersonaDefaults,
   normalizeTaskPersonaPolicy,
   type PersonaDefaults,
-  type TaskPersonaPolicy,
 } from "../domain/persona_policy.ts";
 import {
   createTask,
@@ -1301,12 +1300,17 @@ function writeSpecCreatorArtifacts(
     ]),
   });
 
+  const preservedOutputPhaseAssignments =
+    collectExistingTaskOutputPhaseAssignments(
+      paths.tasksPath,
+    );
   writeTasksMarkdown({
     tasksPath: paths.tasksPath,
     lang,
     implementationMarkdown: buildImplementationMarkdownForSpecCreator(
       context.task_config.tasks,
       lang,
+      { preservedOutputPhaseAssignments },
     ),
     humanNotesMarkdown: buildHumanNotesMarkdownForSpecCreator(
       context.spec_context,
@@ -2053,9 +2057,12 @@ function buildImplementationMarkdownForSpecCreator(
     depends_on: string[];
     target_paths: string[];
     related_paths: string[];
-    persona_policy: TaskPersonaPolicy | null;
+    output_phase_assignments?: string | null;
   }>,
   lang: "ja" | "en",
+  options: {
+    preservedOutputPhaseAssignments: Map<string, string>;
+  },
 ): string {
   const lines: string[] = [];
   for (const task of tasks) {
@@ -2069,23 +2076,27 @@ function buildImplementationMarkdownForSpecCreator(
       ? task.related_paths.join(", ")
       : (lang === "ja" ? "なし" : "none");
     const description = compactTaskDescription(task.description);
-    const phasePlan = resolvePhasePlanForTemplate(task.persona_policy);
-    const phaseAssignments = formatPhaseAssignments(phasePlan);
-    const personaPolicy = JSON.stringify({ phase_order: phasePlan.phaseOrder });
+    const phaseAssignments = resolveTaskOutputPhaseAssignments(
+      task,
+      options.preservedOutputPhaseAssignments,
+    );
+    const personaPolicy = JSON.stringify({
+      phase_order: phaseAssignments.phaseOrder,
+    });
 
     lines.push(`- [ ] ${task.id} ${task.title}`);
     if (lang === "ja") {
       lines.push(`  - 依存: ${dependsOn}`);
       lines.push(`  - 対象: ${targetPaths}`);
       lines.push(`  - 関連許可: ${relatedPaths}`);
-      lines.push(`  - フェーズ担当: ${phaseAssignments}`);
+      lines.push(`  - フェーズ担当: ${phaseAssignments.text}`);
       lines.push(`  - persona_policy: ${personaPolicy}`);
       lines.push(`  - 成果物: ${description}`);
     } else {
       lines.push(`  - Depends on: ${dependsOn}`);
       lines.push(`  - Target paths: ${targetPaths}`);
       lines.push(`  - Related paths: ${relatedPaths}`);
-      lines.push(`  - phase assignments: ${phaseAssignments}`);
+      lines.push(`  - phase assignments: ${phaseAssignments.text}`);
       lines.push(`  - persona_policy: ${personaPolicy}`);
       lines.push(`  - Description: ${description}`);
     }
@@ -2105,141 +2116,161 @@ function compactTaskDescription(raw: string): string {
   return oneLine || "(none)";
 }
 
-function formatPhaseAssignments(
-  phasePlan: {
-    assignments: Array<{ phase: string; executor: string }>;
-  },
-): string {
-  if (phasePlan.assignments.length === 0) {
-    return "implement=implementer; review=code-reviewer";
+const DEFAULT_TASK_OUTPUT_PHASE_ASSIGNMENTS =
+  "implement=implementer; review=code-reviewer";
+
+const ALLOWED_OUTPUT_PHASES = new Set([
+  "implement",
+  "review",
+  "spec_check",
+  "test",
+]);
+
+const ALLOWED_OUTPUT_EXECUTORS = new Set([
+  "implementer",
+  "code-reviewer",
+  "spec-checker",
+  "test-owner",
+]);
+
+function collectExistingTaskOutputPhaseAssignments(
+  tasksPath: string,
+): Map<string, string> {
+  const text = readArtifactContentOrNull(tasksPath);
+  if (text === null || text.trim().length === 0) {
+    return new Map<string, string>();
   }
-  return phasePlan.assignments
-    .map((assignment) => `${assignment.phase}=${assignment.executor}`)
-    .join("; ");
-}
 
-function resolvePhasePlanForTemplate(
-  policyRaw: TaskPersonaPolicy | null,
-): {
-  phaseOrder: string[];
-  assignments: Array<{ phase: string; executor: string }>;
-} {
-  const phaseOverridesRaw = policyRaw?.phase_overrides ?? {};
-  const phaseOrder = collectPhaseOrderForTemplate(policyRaw, phaseOverridesRaw);
-  const assignments = phaseOrder.map((phase) => {
-    const phasePolicyRaw = phaseOverridesRaw[phase];
-    const executor = normalizePhaseExecutorForTemplate(
-      phase,
-      firstPersonaIdFromPhasePolicy(phasePolicyRaw ?? {}) ?? "",
-    );
-    return { phase, executor };
-  });
-  return { phaseOrder, assignments };
-}
+  const lines = text.replaceAll(/\r\n?/gu, "\n").split("\n");
+  const taskHeaderPattern = /^\s*-\s*\[[ xX]\]\s*(\S+)/u;
+  const phaseAssignmentsPattern =
+    /^\s*-\s*(?:フェーズ担当|phase assignments)\s*:\s*(.+?)\s*$/u;
+  const assignmentsByTask = new Map<string, string>();
 
-function collectPhaseOrderForTemplate(
-  policyRaw: TaskPersonaPolicy | null,
-  phaseOverridesRaw: Record<string, {
-    active_personas?: string[];
-    executor_personas?: string[];
-    state_transition_personas?: string[];
-  }>,
-): string[] {
-  const order: string[] = [];
-  const seen = new Set<string>();
-
-  const push = (rawPhase: unknown) => {
-    const phase = String(rawPhase ?? "").trim();
-    if (!phase || seen.has(phase)) {
-      return;
+  let currentTaskId: string | null = null;
+  for (const line of lines) {
+    if (/^##\s+/u.test(line)) {
+      currentTaskId = null;
     }
-    seen.add(phase);
-    order.push(phase);
-  };
 
-  if (Array.isArray(policyRaw?.phase_order)) {
-    for (const phase of policyRaw.phase_order) {
-      push(phase);
-    }
-  }
-  for (const phase of Object.keys(phaseOverridesRaw)) {
-    push(phase);
-  }
-  if (order.length === 0) {
-    push("implement");
-    push("review");
-  }
-  if (!seen.has("implement")) {
-    push("implement");
-  }
-
-  const firstPhase = order[0] ?? "";
-  if (firstPhase !== "implement") {
-    const withoutImplement = order.filter((phase) => phase !== "implement");
-    withoutImplement.push("implement");
-    return withoutImplement;
-  }
-  return order;
-}
-
-function firstPersonaIdFromPhasePolicy(
-  phasePolicy: {
-    active_personas?: string[];
-    executor_personas?: string[];
-    state_transition_personas?: string[];
-  },
-): string | null {
-  for (
-    const key of [
-      "executor_personas",
-      "active_personas",
-      "state_transition_personas",
-    ] as const
-  ) {
-    const value = phasePolicy[key];
-    if (!Array.isArray(value) || value.length === 0) {
+    const taskHeaderMatch = taskHeaderPattern.exec(line);
+    if (taskHeaderMatch) {
+      currentTaskId = taskHeaderMatch[1];
       continue;
     }
-    const first = String(value[0] ?? "").trim();
-    if (first) {
-      return first;
+    if (currentTaskId === null) {
+      continue;
     }
+
+    const phaseAssignmentsMatch = phaseAssignmentsPattern.exec(line);
+    if (!phaseAssignmentsMatch) {
+      continue;
+    }
+
+    const parsed = parseOutputPhaseAssignments(
+      phaseAssignmentsMatch[1],
+      `${toRelativePath(tasksPath)} task=${currentTaskId}`,
+    );
+    assignmentsByTask.set(currentTaskId, parsed.text);
   }
-  return null;
+
+  return assignmentsByTask;
 }
 
-function normalizePhaseExecutorForTemplate(
-  phase: string,
-  executor: string,
-): string {
-  const normalizedExecutor = executor.trim();
-  if (
-    normalizedExecutor === "implementer" ||
-    normalizedExecutor === "code-reviewer" ||
-    normalizedExecutor === "spec-checker" ||
-    normalizedExecutor === "test-owner"
-  ) {
-    return normalizedExecutor;
+function resolveTaskOutputPhaseAssignments(
+  task: {
+    id: string;
+    output_phase_assignments?: string | null;
+  },
+  preservedOutputPhaseAssignments: Map<string, string>,
+): {
+  text: string;
+  phaseOrder: string[];
+} {
+  const preserved = preservedOutputPhaseAssignments.get(task.id);
+  const configured = normalizeOptionalOutputPhaseAssignments(
+    task.output_phase_assignments,
+  );
+  const source = preserved ?? configured ??
+    DEFAULT_TASK_OUTPUT_PHASE_ASSIGNMENTS;
+  return parseOutputPhaseAssignments(source, `task ${task.id}`);
+}
+
+function normalizeOptionalOutputPhaseAssignments(
+  raw: string | null | undefined,
+): string | null {
+  if (typeof raw !== "string") {
+    return null;
   }
-  if (
-    normalizedExecutor === "spec-planner" ||
-    normalizedExecutor === "spec-code-creator"
-  ) {
-    return "implementer";
+  const normalized = raw.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function parseOutputPhaseAssignments(
+  raw: string,
+  sourceLabel: string,
+): {
+  text: string;
+  phaseOrder: string[];
+} {
+  const chunks = raw.split(/[;|]/u).map((chunk) => chunk.trim()).filter((
+    chunk,
+  ) => chunk.length > 0);
+  if (chunks.length === 0) {
+    throw new Error(`${sourceLabel}: phase assignments must not be empty`);
   }
-  if (normalizedExecutor === "spec-reviewer") {
-    return "code-reviewer";
+
+  const normalizedChunks: string[] = [];
+  const phaseOrder: string[] = [];
+  const seenPhases = new Set<string>();
+
+  for (const chunk of chunks) {
+    const matched = /^(?<phase>[^=:]+)\s*(?:=|:)\s*(?<executor>.+)$/u.exec(
+      chunk,
+    );
+    if (!matched?.groups) {
+      throw new Error(
+        `${sourceLabel}: invalid phase assignment '${chunk}'`,
+      );
+    }
+    const phase = normalizeOutputPhase(matched.groups.phase);
+    if (!ALLOWED_OUTPUT_PHASES.has(phase)) {
+      throw new Error(
+        `${sourceLabel}: unknown output phase '${phase}'`,
+      );
+    }
+    if (seenPhases.has(phase)) {
+      throw new Error(
+        `${sourceLabel}: duplicate output phase '${phase}'`,
+      );
+    }
+
+    const executor = matched.groups.executor.trim().toLowerCase();
+    if (!ALLOWED_OUTPUT_EXECUTORS.has(executor)) {
+      throw new Error(
+        `${sourceLabel}: unknown output executor '${executor}'`,
+      );
+    }
+
+    seenPhases.add(phase);
+    phaseOrder.push(phase);
+    normalizedChunks.push(`${phase}=${executor}`);
   }
-  if (phase === "review") {
-    return "code-reviewer";
+
+  if (!seenPhases.has("implement")) {
+    throw new Error(
+      `${sourceLabel}: phase assignments must include implement`,
+    );
   }
-  if (phase === "spec_check") {
-    return "spec-checker";
-  }
-  if (phase === "test") {
-    return "test-owner";
-  }
-  return "implementer";
+
+  return {
+    text: normalizedChunks.join("; "),
+    phaseOrder,
+  };
+}
+
+function normalizeOutputPhase(rawPhase: string): string {
+  return rawPhase.trim().toLowerCase().replaceAll("-", "_");
 }
 
 function buildHumanNotesMarkdownForSpecCreator(

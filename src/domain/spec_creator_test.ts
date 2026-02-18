@@ -21,6 +21,28 @@ Deno.test("createSpecCreatorTaskConfigTemplate builds fixed 1.1..1.7 tasks", () 
   }
 });
 
+Deno.test("createSpecCreatorTaskConfigTemplate separates output phase assignments from internal persona policy", () => {
+  const config = createSpecCreatorTaskConfigTemplate("add-sample-change");
+  const task17 = config.tasks.find((task) => task.id === "1.7");
+  if (!task17) {
+    throw new Error("task 1.7 should exist");
+  }
+  if (
+    task17.persona_policy?.phase_overrides?.implement?.executor_personas
+      ?.[0] !==
+      "spec-reviewer"
+  ) {
+    throw new Error(
+      "task 1.7 internal implement persona should stay spec-reviewer",
+    );
+  }
+  if (task17.output_phase_assignments !== "implement=implementer") {
+    throw new Error(
+      `task 1.7 output phase assignments should be implement=implementer, got ${task17.output_phase_assignments}`,
+    );
+  }
+});
+
 Deno.test("createSpecCreatorTaskConfigTemplate enables only spec personas", () => {
   const config = createSpecCreatorTaskConfigTemplate("add-sample-change");
   const enabledIds = config.personas.filter((persona) => persona.enabled).map((

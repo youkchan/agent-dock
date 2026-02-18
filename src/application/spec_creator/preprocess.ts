@@ -190,6 +190,7 @@ export function buildSpecCreatorTaskConfig(
     persona_policy: task.persona_policy === null
       ? null
       : structuredClone(task.persona_policy),
+    output_phase_assignments: task.output_phase_assignments,
     description: `${
       withTaskReviewContractDescription(
         task.id,
@@ -263,6 +264,7 @@ function scopeSpecCreatorTasksByDesignTarget(
     persona_policy: task.persona_policy === null
       ? null
       : structuredClone(task.persona_policy),
+    output_phase_assignments: task.output_phase_assignments,
   }));
   if (includeDesignTarget) {
     return cloned;

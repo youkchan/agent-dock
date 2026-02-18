@@ -30,6 +30,7 @@ export interface SpecCreatorConfigTask {
   depends_on: SpecCreatorChangeTaskId[];
   requires_plan: boolean;
   persona_policy: TaskPersonaPolicy | null;
+  output_phase_assignments: string;
 }
 
 export interface SpecCreatorTaskConfigTemplate {
@@ -129,6 +130,7 @@ export function createSpecCreatorTaskConfigTemplate(
           implementPersona: "spec-planner",
           reviewPersona: "spec-reviewer",
         }),
+        output_phase_assignments: "implement=implementer; review=code-reviewer",
       },
       {
         id: "1.2",
@@ -142,6 +144,7 @@ export function createSpecCreatorTaskConfigTemplate(
           implementPersona: "spec-planner",
           reviewPersona: "spec-reviewer",
         }),
+        output_phase_assignments: "implement=implementer; review=code-reviewer",
       },
       {
         id: "1.3",
@@ -156,6 +159,7 @@ export function createSpecCreatorTaskConfigTemplate(
           implementPersona: "spec-planner",
           reviewPersona: "spec-reviewer",
         }),
+        output_phase_assignments: "implement=implementer; review=code-reviewer",
       },
       {
         id: "1.4",
@@ -170,6 +174,7 @@ export function createSpecCreatorTaskConfigTemplate(
           implementPersona: "spec-planner",
           reviewPersona: "spec-reviewer",
         }),
+        output_phase_assignments: "implement=implementer; review=code-reviewer",
       },
       {
         id: "1.5",
@@ -184,6 +189,7 @@ export function createSpecCreatorTaskConfigTemplate(
           implementPersona: "spec-code-creator",
           reviewPersona: "spec-reviewer",
         }),
+        output_phase_assignments: "implement=implementer; review=code-reviewer",
       },
       {
         id: "1.6",
@@ -198,6 +204,8 @@ export function createSpecCreatorTaskConfigTemplate(
           implementPersona: "spec-planner",
           reviewPersona: "spec-reviewer",
         }),
+        output_phase_assignments:
+          "implement=implementer; review=code-reviewer; test=test-owner",
       },
       {
         id: "1.7",
@@ -211,6 +219,7 @@ export function createSpecCreatorTaskConfigTemplate(
         persona_policy: createTaskPersonaPolicy({
           implementPersona: "spec-reviewer",
         }),
+        output_phase_assignments: "implement=implementer",
       },
     ],
   };

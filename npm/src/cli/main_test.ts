@@ -1384,6 +1384,23 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
     if (!fileExists(outputPath)) {
       throw new Error("spec-creator polish should produce task_config output");
     }
+    const generatedTasks = Deno.readTextFileSync(
+      `openspec/changes/${changeId}/tasks.md`,
+    );
+    const task17Section =
+      /-\s*\[[ xX]\]\s*1\.7[\s\S]*?(?=\n-\s*\[[ xX]\]\s*\S+|\n##\s+|\s*$)/u
+        .exec(generatedTasks);
+    if (task17Section === null) {
+      throw new Error("generated tasks.md should include task 1.7");
+    }
+    if (
+      !task17Section[0].includes("フェーズ担当: implement=implementer") &&
+      !task17Section[0].includes("phase assignments: implement=implementer")
+    ) {
+      throw new Error(
+        "task 1.7 phase assignments should use output_phase_assignments instead of internal persona",
+      );
+    }
     const taskConfig = JSON.parse(Deno.readTextFileSync(outputPath)) as {
       tasks?: Array<Record<string, unknown>>;
     };
@@ -1485,6 +1502,62 @@ Deno.test("main spec-creator polish quotes checklist lines in human notes", () =
     if (/^\s*-\s*\[[ xX]\]\s*1\.1\b/m.test(humanNotesBody)) {
       throw new Error(
         "human notes should not include top-level checklist items parsed as task ids",
+      );
+    }
+
+    try {
+      Deno.removeSync(outputPath);
+    } catch {
+      // noop
+    }
+  });
+});
+
+Deno.test("main spec-creator polish preserves existing phase assignments from tasks.md", () => {
+  const changeId = uniqueChangeId("update-polish-preserve-phase-assignments");
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  withTemporaryChangeDir(changeId, () => {
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/tasks.md`,
+      [
+        "## 0. Persona Defaults",
+        "- persona_defaults.phase_order: implement, review, spec_check, test",
+        "",
+        "## 1. 実装タスク",
+        "- [ ] 1.7 OpenSpec strict validate を実行する",
+        "  - フェーズ担当: implement=code-reviewer",
+      ].join("\n"),
+    );
+
+    const buffer = createIoBuffer();
+    withFakeOpenSpecValidate("pass", () => {
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        changeId,
+        "--no-run",
+        "--output",
+        outputPath,
+      ], buffer.io);
+      if (exitCode !== 0) {
+        throw new Error(
+          `spec-creator polish should succeed: ${buffer.state.stderr}`,
+        );
+      }
+    });
+
+    const generatedTasks = Deno.readTextFileSync(
+      `openspec/changes/${changeId}/tasks.md`,
+    );
+    const task17Section =
+      /-\s*\[[ xX]\]\s*1\.7[\s\S]*?(?=\n-\s*\[[ xX]\]\s*\S+|\n##\s+|\s*$)/u
+        .exec(generatedTasks);
+    if (task17Section === null) {
+      throw new Error("generated tasks.md should include task 1.7");
+    }
+    if (!task17Section[0].includes("フェーズ担当: implement=code-reviewer")) {
+      throw new Error(
+        "existing phase assignments should be preserved when tasks.md already defines them",
       );
     }
 
