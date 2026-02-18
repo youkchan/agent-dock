@@ -67,6 +67,10 @@ function uniqueChangeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 }
 
+function revisedChangeId(changeId: string): string {
+  return `${changeId}_revised`;
+}
+
 const REVIEW_CONTRACT_IDS = [
   "RC-01",
   "RC-02",
@@ -84,11 +88,21 @@ const REVIEW_CONTRACT_IDS = [
 
 function withTemporaryChangeDir(changeId: string, fn: () => void): void {
   const dirPath = `openspec/changes/${changeId}`;
+  const revisedDirPath = `openspec/changes/${revisedChangeId(changeId)}`;
   Deno.mkdirSync(dirPath, { recursive: true });
   try {
     fn();
   } finally {
-    Deno.removeSync(dirPath, { recursive: true });
+    try {
+      Deno.removeSync(dirPath, { recursive: true });
+    } catch {
+      // noop
+    }
+    try {
+      Deno.removeSync(revisedDirPath, { recursive: true });
+    } catch {
+      // noop
+    }
   }
 }
 
@@ -1349,6 +1363,7 @@ Deno.test("main spec-creator polish rejects --feedback without value", () => {
 
 Deno.test("main spec-creator polish uses existing markdown context without interactive TTY", () => {
   const changeId = uniqueChangeId("update-polish-context");
+  const polishedChangeId = revisedChangeId(changeId);
   const changeDir = `openspec/changes/${changeId}`;
   const outputPath = `task_configs/spec_creator/${changeId}.json`;
   Deno.mkdirSync(changeDir, { recursive: true });
@@ -1385,7 +1400,7 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
       throw new Error("spec-creator polish should produce task_config output");
     }
     const generatedTasks = Deno.readTextFileSync(
-      `openspec/changes/${changeId}/tasks.md`,
+      `openspec/changes/${polishedChangeId}/tasks.md`,
     );
     const task17Section =
       /-\s*\[[ xX]\]\s*1\.7[\s\S]*?(?=\n-\s*\[[ xX]\]\s*\S+|\n##\s+|\s*$)/u
@@ -1407,7 +1422,7 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
     if (!Array.isArray(taskConfig.tasks)) {
       throw new Error("task_config should include tasks");
     }
-    const designPath = `openspec/changes/${changeId}/design.md`;
+    const designPath = `openspec/changes/${polishedChangeId}/design.md`;
     for (const task of taskConfig.tasks) {
       const targetPaths = Array.isArray(task.target_paths)
         ? task.target_paths.map((item) => String(item))
@@ -1438,6 +1453,13 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
       // noop
     }
     try {
+      Deno.removeSync(`openspec/changes/${polishedChangeId}`, {
+        recursive: true,
+      });
+    } catch {
+      // noop
+    }
+    try {
       Deno.removeSync(outputPath);
     } catch {
       // noop
@@ -1447,6 +1469,7 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
 
 Deno.test("main spec-creator polish quotes checklist lines in human notes", () => {
   const changeId = uniqueChangeId("update-polish-quote-checklist");
+  const polishedChangeId = revisedChangeId(changeId);
   const outputPath = `task_configs/spec_creator/${changeId}.json`;
   withTemporaryChangeDir(changeId, () => {
     Deno.writeTextFileSync(
@@ -1483,7 +1506,7 @@ Deno.test("main spec-creator polish quotes checklist lines in human notes", () =
     }
 
     const generatedTasks = Deno.readTextFileSync(
-      `openspec/changes/${changeId}/tasks.md`,
+      `openspec/changes/${polishedChangeId}/tasks.md`,
     );
     if (!generatedTasks.includes("  > - [x] 1.1 既存タスク")) {
       throw new Error(
@@ -1515,6 +1538,7 @@ Deno.test("main spec-creator polish quotes checklist lines in human notes", () =
 
 Deno.test("main spec-creator polish preserves existing phase assignments from tasks.md", () => {
   const changeId = uniqueChangeId("update-polish-preserve-phase-assignments");
+  const polishedChangeId = revisedChangeId(changeId);
   const outputPath = `task_configs/spec_creator/${changeId}.json`;
   withTemporaryChangeDir(changeId, () => {
     Deno.writeTextFileSync(
@@ -1547,7 +1571,7 @@ Deno.test("main spec-creator polish preserves existing phase assignments from ta
     });
 
     const generatedTasks = Deno.readTextFileSync(
-      `openspec/changes/${changeId}/tasks.md`,
+      `openspec/changes/${polishedChangeId}/tasks.md`,
     );
     const task17Section =
       /-\s*\[[ xX]\]\s*1\.7[\s\S]*?(?=\n-\s*\[[ xX]\]\s*\S+|\n##\s+|\s*$)/u
@@ -1571,6 +1595,7 @@ Deno.test("main spec-creator polish preserves existing phase assignments from ta
 
 Deno.test("main spec-creator polish does not force design target only because design.md exists", () => {
   const changeId = uniqueChangeId("update-polish-design-optional");
+  const polishedChangeId = revisedChangeId(changeId);
   const outputPath = `task_configs/spec_creator/${changeId}.json`;
   withTemporaryChangeDir(changeId, () => {
     Deno.writeTextFileSync(
@@ -1609,7 +1634,7 @@ Deno.test("main spec-creator polish does not force design target only because de
       throw new Error("task_config should include tasks");
     }
 
-    const designPath = `openspec/changes/${changeId}/design.md`;
+    const designPath = `openspec/changes/${polishedChangeId}/design.md`;
     for (const task of taskConfig.tasks) {
       const targetPaths = Array.isArray(task.target_paths)
         ? task.target_paths.map((item) => String(item))
@@ -1965,6 +1990,31 @@ Deno.test("main spec-creator polish requires existing change directory", () => {
       `stderr should include missing change directory error: ${buffer.state.stderr}`,
     );
   }
+});
+
+Deno.test("main spec-creator polish rejects existing revised change directory", () => {
+  const changeId = uniqueChangeId("update-polish-existing-revised");
+  const revisedId = revisedChangeId(changeId);
+  withTemporaryChangeDir(changeId, () => {
+    Deno.mkdirSync(`openspec/changes/${revisedId}`, { recursive: true });
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/README.md`,
+      "# polish context\n- markdown source\n",
+    );
+
+    const buffer = createIoBuffer();
+    const exitCode = main(["spec-creator", "polish", changeId], buffer.io);
+    if (exitCode !== 1) {
+      throw new Error(
+        "spec-creator polish should fail when revised change directory exists",
+      );
+    }
+    if (!buffer.state.stderr.includes(`requires non-existing change_id: ${revisedId}`)) {
+      throw new Error(
+        `stderr should include existing revised change error: ${buffer.state.stderr}`,
+      );
+    }
+  });
 });
 
 Deno.test("main spec-creator legacy create rejects existing change_id", () => {

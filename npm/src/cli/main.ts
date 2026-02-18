@@ -988,8 +988,13 @@ function specCreatorCommand(argv: string[], io: CliIO): number {
 
 function specCreatorPolishCommand(argv: string[], io: CliIO): number {
   const args = parseSpecCreatorPolishArgs(argv);
+  const revisedChangeId = resolveSpecCreatorPolishRevisedChangeId(
+    args.changeId,
+  );
+  assertSpecCreatorChangeDirAbsent(revisedChangeId, "spec-creator polish");
   const context = buildSpecCreatorPolishContextFromMarkdown(
     args.changeId,
+    revisedChangeId,
     args.feedback,
     "spec-creator polish",
   );
@@ -1012,6 +1017,12 @@ function assertSpecCreatorChangeDirAbsent(
   }
 }
 
+const SPEC_CREATOR_POLISH_REVISED_SUFFIX = "_revised";
+
+function resolveSpecCreatorPolishRevisedChangeId(sourceChangeId: string): string {
+  return `${sourceChangeId}${SPEC_CREATOR_POLISH_REVISED_SUFFIX}`;
+}
+
 const SPEC_CREATOR_POLISH_ACTIVE_PERSONAS = [
   "spec-planner",
   "spec-reviewer",
@@ -1019,12 +1030,13 @@ const SPEC_CREATOR_POLISH_ACTIVE_PERSONAS = [
 ];
 
 function buildSpecCreatorPolishContextFromMarkdown(
-  changeId: string,
+  sourceChangeId: string,
+  outputChangeId: string,
   feedbackRaw: string | null,
   commandLabel: string,
 ): SpecCreatorContextPayload {
   const markdownContexts = collectSpecCreatorPolishMarkdownContexts(
-    changeId,
+    sourceChangeId,
     commandLabel,
   );
   const feedback = feedbackRaw?.trim() ?? "";
@@ -1033,7 +1045,7 @@ function buildSpecCreatorPolishContextFromMarkdown(
     feedback,
   );
   const prompt = buildSpecCreatorPolishPrompt({
-    changeId,
+    changeId: outputChangeId,
     markdownContexts,
     feedback,
     includeDesignTarget,
@@ -1048,13 +1060,14 @@ function buildSpecCreatorPolishContextFromMarkdown(
   });
 
   return {
-    change_id: changeId,
+    change_id: outputChangeId,
     spec_context: specContext,
-    task_config: buildSpecCreatorTaskConfig(changeId, specContext, {
+    task_config: buildSpecCreatorTaskConfig(outputChangeId, specContext, {
       includeDesignTarget,
     }),
     polish: {
       includeDesignTarget,
+      sourceChangeId,
     },
   };
 }
@@ -1251,6 +1264,7 @@ interface SpecCreatorContextPayload {
   task_config: SpecCreatorTaskConfig;
   polish?: {
     includeDesignTarget: boolean;
+    sourceChangeId?: string;
   };
 }
 
@@ -1300,9 +1314,11 @@ function writeSpecCreatorArtifacts(
     ]),
   });
 
+  const preservedOutputPhaseAssignmentsPath =
+    resolveSpecCreatorPreservedOutputPhaseAssignmentsPath(context, paths);
   const preservedOutputPhaseAssignments =
     collectExistingTaskOutputPhaseAssignments(
-      paths.tasksPath,
+      preservedOutputPhaseAssignmentsPath,
     );
   writeTasksMarkdown({
     tasksPath: paths.tasksPath,
@@ -1338,6 +1354,25 @@ function writeSpecCreatorArtifacts(
   }
 
   writeTaskConfigFile(context.task_config, outputPath);
+}
+
+function resolveSpecCreatorPreservedOutputPhaseAssignmentsPath(
+  context: SpecCreatorContextPayload,
+  paths: SpecCreatorArtifactPaths,
+): string {
+  const sourceChangeId = context.polish?.sourceChangeId;
+  if (sourceChangeId !== undefined) {
+    const sourceTasksPath = path.resolve(
+      "openspec",
+      "changes",
+      sourceChangeId,
+      "tasks.md",
+    );
+    if (isFile(sourceTasksPath)) {
+      return sourceTasksPath;
+    }
+  }
+  return paths.tasksPath;
 }
 
 export function normalizeSpecCreatorReviewContractCoverageForTest(
