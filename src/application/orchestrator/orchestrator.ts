@@ -176,6 +176,7 @@ const VALIDATION_RECOVERABLE_CODES = new Set<ValidationCode>([
   "missing_changed_files",
   "missing_checks",
   "missing_judgment",
+  "nonimplement_changed_files",
   "malformed_result_block",
 ]);
 
@@ -1595,6 +1596,14 @@ export class AgentTeamsLikeOrchestrator {
         } attempt=${attempt}`,
       );
       if (validation.recoverable && attempt < this.validationMaxRetry) {
+        const instruction = this.validationRetryInstruction(code);
+        if (instruction !== null) {
+          this.appendTaskProgressLog(
+            task.id,
+            "system",
+            `validation correction code=${code}: ${instruction}`,
+          );
+        }
         this.log(
           `validation retry task=${task.id} code=${code} attempt=${
             attempt + 1
@@ -2229,6 +2238,14 @@ export class AgentTeamsLikeOrchestrator {
         } attempt=${attempt}`,
       );
       if (validation.recoverable && attempt < this.validationMaxRetry) {
+        const instruction = this.validationRetryInstruction(code);
+        if (instruction !== null) {
+          this.appendTaskProgressLog(
+            task.id,
+            "system",
+            `validation correction code=${code}: ${instruction}`,
+          );
+        }
         this.log(
           `validation retry task=${task.id} code=${code} attempt=${
             attempt + 1
@@ -2503,6 +2520,18 @@ export class AgentTeamsLikeOrchestrator {
       `CHECKS: ${checksRaw}`,
     ].join("\n");
     return extractResultBlock(probe) === null;
+  }
+
+  private validationRetryInstruction(code: ValidationCode): string | null {
+    if (code !== "nonimplement_changed_files") {
+      return null;
+    }
+    return [
+      "contract violation in non-implement phase:",
+      "set CHANGED_FILES to (none).",
+      "if pass, output JUDGMENT: pass.",
+      "if fixes are required, output JUDGMENT: changes_required to send back to implement.",
+    ].join(" ");
   }
 
   private escalateValidationFailureToNeedsApproval(
@@ -2871,14 +2900,15 @@ function getEnv(name: string, fallback: string): string {
 function resolveValidationMaxRetry(
   logger: (message: string) => void,
 ): number {
-  const raw = getEnv("ORCHESTRATOR_VALIDATION_MAX_RETRY", "1");
-  if (raw === "0" || raw === "1") {
-    return Number.parseInt(raw, 10);
+  const raw = getEnv("ORCHESTRATOR_VALIDATION_MAX_RETRY", "3");
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 3) {
+    return parsed;
   }
   logger(
-    `[orchestrator] invalid ORCHESTRATOR_VALIDATION_MAX_RETRY=${raw} fallback=1`,
+    `[orchestrator] invalid ORCHESTRATOR_VALIDATION_MAX_RETRY=${raw} fallback=3`,
   );
-  return 1;
+  return 3;
 }
 
 function nowSeconds(): number {

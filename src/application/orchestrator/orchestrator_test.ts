@@ -1788,7 +1788,7 @@ Deno.test("orchestrator implement phase accepts symlink CHANGED_FILES with non-e
   });
 });
 
-Deno.test("orchestrator review phase moves to needs_approval when CHANGED_FILES is non-empty", () => {
+Deno.test("orchestrator review phase retries and moves to needs_approval when CHANGED_FILES stays non-empty", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
     store.bootstrapTasks([
@@ -1800,15 +1800,31 @@ Deno.test("orchestrator review phase moves to needs_approval when CHANGED_FILES 
       }),
     ]);
 
+    const adapter = new SequenceResultAdapter([
+      decisionPhaseResult({
+        summary: "review complete",
+        changedFiles: "src/a.ts",
+        judgment: "pass",
+      }),
+      decisionPhaseResult({
+        summary: "review complete",
+        changedFiles: "src/a.ts",
+        judgment: "pass",
+      }),
+      decisionPhaseResult({
+        summary: "review complete",
+        changedFiles: "src/a.ts",
+        judgment: "pass",
+      }),
+      decisionPhaseResult({
+        summary: "review complete",
+        changedFiles: "src/a.ts",
+        judgment: "pass",
+      }),
+    ]);
     const orchestrator = new AgentTeamsLikeOrchestrator({
       store,
-      adapter: new FixedResultAdapter(
-        decisionPhaseResult({
-          summary: "review complete",
-          changedFiles: "src/a.ts",
-          judgment: "pass",
-        }),
-      ),
+      adapter,
       provider: new MockOrchestratorProvider(),
       config: new OrchestratorConfig({
         maxRounds: 3,
@@ -1834,14 +1850,23 @@ Deno.test("orchestrator review phase moves to needs_approval when CHANGED_FILES 
     });
 
     orchestrator.run();
+    assertEqual(adapter.calls, 4, "should retry up to max retry=3");
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
     assertEqual(task.status, "needs_approval", "task status");
     assert(
       String(task.block_reason).includes(
-        "validation_failed:nonimplement_changed_files",
+        "validation_retry_exhausted:nonimplement_changed_files",
       ),
-      "block reason should include validation failure marker",
+      "block reason should include retry exhausted marker",
+    );
+    assert(
+      task.progress_log.some((entry) =>
+        String(entry.text ?? "").includes(
+          "validation correction code=nonimplement_changed_files",
+        )
+      ),
+      "progress log should include correction instruction",
     );
   });
 });
@@ -1898,9 +1923,9 @@ Deno.test("orchestrator review phase moves to needs_approval when CHANGED_FILES 
     assertEqual(task.revision_count, 0, "revision count should not increase");
     assert(
       String(task.block_reason).includes(
-        "validation_failed:nonimplement_changed_files",
+        "validation_retry_exhausted:nonimplement_changed_files",
       ),
-      "block reason should include validation failure marker",
+      "block reason should include retry exhausted marker",
     );
   });
 });
@@ -2050,7 +2075,7 @@ Deno.test("validation recovery: missing_result succeeds on single retry", () => 
   });
 });
 
-Deno.test("validation recovery: missing_result twice becomes needs_approval", () => {
+Deno.test("validation recovery: missing_result exhausts retries and becomes needs_approval", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
     store.bootstrapTasks([
@@ -2088,7 +2113,7 @@ Deno.test("validation recovery: missing_result twice becomes needs_approval", ()
 
     const result = orchestrator.run();
     assertEqual(result.stop_reason, "idle_rounds_limit", "stop reason");
-    assertEqual(adapter.calls, 2, "retry count");
+    assertEqual(adapter.calls, 4, "retry count should follow default retry=3");
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
     assertEqual(task.status, "needs_approval", "task status");
@@ -2198,7 +2223,7 @@ Deno.test("validation recovery: forbidden checks command is non-recoverable", ()
   });
 });
 
-Deno.test("validation recovery: nonimplement_changed_files is non-recoverable", () => {
+Deno.test("validation recovery: nonimplement_changed_files recovers after correction", () => {
   withTempDir((dir) => {
     const store = new StateStore(dir);
     store.bootstrapTasks([
@@ -2212,14 +2237,14 @@ Deno.test("validation recovery: nonimplement_changed_files is non-recoverable", 
 
     const adapter = new SequenceResultAdapter([
       decisionPhaseResult({
-        summary: "review complete",
+        summary: "review complete with wrong changed files",
         changedFiles: "src/a.ts",
-        judgment: "pass",
+        judgment: "changes_required",
       }),
       decisionPhaseResult({
-        summary: "should not be retried",
+        summary: "needs implementation fix",
         changedFiles: "(none)",
-        judgment: "pass",
+        judgment: "changes_required",
       }),
     ]);
     const orchestrator = new AgentTeamsLikeOrchestrator({
@@ -2250,15 +2275,23 @@ Deno.test("validation recovery: nonimplement_changed_files is non-recoverable", 
     });
 
     orchestrator.run();
-    assertEqual(adapter.calls, 1, "non-recoverable should not retry");
+    assertEqual(adapter.calls, 2, "recoverable should retry once and recover");
     const task = store.getTask("T1");
     assert(task !== null, "task should exist");
-    assertEqual(task.status, "needs_approval", "task status");
+    assertEqual(
+      task.status,
+      "pending",
+      "task should be sent back to implement",
+    );
+    assertEqual(task.current_phase_index, 0, "phase index after sendback");
+    assertEqual(task.revision_count, 1, "revision count should increase");
     assert(
-      String(task.block_reason).includes(
-        "validation_failed:nonimplement_changed_files",
+      task.progress_log.some((entry) =>
+        String(entry.text ?? "").includes(
+          "validation correction code=nonimplement_changed_files",
+        )
       ),
-      "reason should include non-implement changed files code",
+      "progress log should include correction instruction",
     );
   });
 });
@@ -2354,7 +2387,7 @@ Deno.test("validation recovery: max retry 0 disables retry", () => {
   });
 });
 
-Deno.test("validation recovery: invalid retry env falls back to default retry=1", () => {
+Deno.test("validation recovery: invalid retry env falls back to default retry=3", () => {
   withEnvVar("ORCHESTRATOR_VALIDATION_MAX_RETRY", "invalid", () => {
     withTempDir((dir) => {
       const logs: string[] = [];
@@ -2395,7 +2428,7 @@ Deno.test("validation recovery: invalid retry env falls back to default retry=1"
       assert(
         logs.some((line) =>
           line.includes(
-            "invalid ORCHESTRATOR_VALIDATION_MAX_RETRY=invalid fallback=1",
+            "invalid ORCHESTRATOR_VALIDATION_MAX_RETRY=invalid fallback=3",
           )
         ),
         "warning log should include fallback message",
