@@ -1129,10 +1129,25 @@ function runSpecCreatorWorkflow(
     );
     const maxQualityRetries = Math.max(0, Math.min(3, maxQualityRetriesRaw));
     let attempt = 0;
+    const qualityRetryCountsByFile = new Map<string, number>();
     while (true) {
       const preRunViolations = collectSpecCreatorQualityViolations(stagedPaths);
-      const qualityTargetFile = selectQualityTargetFile(preRunViolations);
+      const qualityTargetSelection = selectQualityTargetFile(
+        preRunViolations,
+        qualityRetryCountsByFile,
+        maxQualityRetries,
+      );
+      const qualityTargetFile = qualityTargetSelection.targetFile;
       if (preRunViolations.length > 0) {
+        if (qualityTargetFile === null) {
+          throw new Error(
+            `spec-creator quality retry exhausted: no eligible target file (targets=${
+              qualityTargetSelection.targetFiles.map((filePath) =>
+                toRelativePath(filePath)
+              ).join(", ")
+            })`,
+          );
+        }
         const scopedViolations = qualityTargetFile === null
           ? preRunViolations
           : preRunViolations.filter((violation) =>
@@ -1144,8 +1159,18 @@ function runSpecCreatorWorkflow(
         Deno.env.set("SPEC_CREATOR_QUALITY_ISSUES", issues);
         if (qualityTargetFile !== null) {
           Deno.env.set("SPEC_CREATOR_QUALITY_TARGET_FILE", qualityTargetFile);
+          Deno.env.set(
+            "SPEC_CREATOR_QUALITY_TARGET_INDEX",
+            String(qualityTargetSelection.targetIndex),
+          );
+          Deno.env.set(
+            "SPEC_CREATOR_QUALITY_TARGET_TOTAL",
+            String(qualityTargetSelection.targetTotal),
+          );
         } else {
           Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_FILE");
+          Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_INDEX");
+          Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_TOTAL");
         }
         io.stdout(
           `[spec-creator] quality_preflight_issues=${preRunViolations.length} attempt=${attempt}\n`,
@@ -1154,12 +1179,14 @@ function runSpecCreatorWorkflow(
           io.stdout(
             `[spec-creator] quality_target_file=${
               toRelativePath(qualityTargetFile)
-            }\n`,
+            } index=${qualityTargetSelection.targetIndex}/${qualityTargetSelection.targetTotal}\n`,
           );
         }
       } else {
         Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
         Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_FILE");
+        Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_INDEX");
+        Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_TOTAL");
       }
       const artifactSnapshotBeforeRun = snapshotArtifactContentsForQualityRetry(
         stagedPaths,
@@ -1186,6 +1213,8 @@ function runSpecCreatorWorkflow(
       );
       Deno.env.delete("SPEC_CREATOR_QUALITY_ISSUES");
       Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_FILE");
+      Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_INDEX");
+      Deno.env.delete("SPEC_CREATOR_QUALITY_TARGET_TOTAL");
       if (runExitCode !== 0) {
         return runExitCode;
       }
@@ -1212,6 +1241,23 @@ function runSpecCreatorWorkflow(
         });
         return 0;
       } catch (error) {
+        if (qualityTargetFile !== null) {
+          const currentRetry =
+            qualityRetryCountsByFile.get(qualityTargetFile) ??
+              0;
+          const nextRetry = currentRetry + 1;
+          qualityRetryCountsByFile.set(qualityTargetFile, nextRetry);
+          if (nextRetry > maxQualityRetries) {
+            throw error;
+          }
+          const reason = error instanceof Error ? error.message : String(error);
+          io.stdout(
+            `[spec-creator] quality_retry file=${
+              toRelativePath(qualityTargetFile)
+            } retry=${nextRetry}/${maxQualityRetries} reason=${reason}\n`,
+          );
+          continue;
+        }
         if (attempt >= maxQualityRetries) {
           throw error;
         }
@@ -1586,7 +1632,8 @@ function findTaskSectionRange(
     `^\\s*-\\s*\\[[ xX]\\]\\s*${escapeRegex(taskId)}\\b`,
     "u",
   );
-  const taskPattern = /^\s*-\s*\[[ xX]\]\s*\S+/u;
+  const taskPattern =
+    /^\s*-\s*\[[ xX]\]\s*(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*)\b/iu;
   const headingPattern = /^##\s+/u;
   let start = -1;
   for (let index = 0; index < lines.length; index += 1) {
@@ -1962,7 +2009,7 @@ function trimTrailingBlankLines(lines: string[]): string[] {
 }
 
 function isReviewContractTraceLine(line: string): boolean {
-  return /^\s*-\s*RC-(?:0[1-9]|1[0-2])\b/u.test(line);
+  return /^\s*-\s*(?:\[[ xX]\]\s*)?RC-(?:0[1-9]|1[0-2])\b/u.test(line);
 }
 
 function isCodeSummaryReviewContractTraceabilityHeading(line: string): boolean {
@@ -2502,16 +2549,70 @@ function formatSpecCreatorQualityIssues(
   return `${joined.slice(0, 3960)}\n...`;
 }
 
+interface QualityTargetSelection {
+  targetFile: string | null;
+  targetFiles: string[];
+  targetIndex: number;
+  targetTotal: number;
+}
+
 function selectQualityTargetFile(
   violations: SpecCreatorQualityViolation[],
-): string | null {
-  const firstViolation = violations.find((violation) =>
-    typeof violation.file === "string" && violation.file.trim().length > 0
-  );
-  if (firstViolation === undefined) {
-    return null;
+  retryCountsByFile: Map<string, number>,
+  maxQualityRetries: number,
+): QualityTargetSelection {
+  const targetFiles: string[] = [];
+  const seen = new Set<string>();
+  for (const violation of violations) {
+    if (
+      typeof violation.file !== "string" || violation.file.trim().length === 0
+    ) {
+      continue;
+    }
+    const resolved = path.resolve(violation.file);
+    if (seen.has(resolved)) {
+      continue;
+    }
+    seen.add(resolved);
+    targetFiles.push(resolved);
   }
-  return path.resolve(firstViolation.file);
+  if (targetFiles.length === 0) {
+    return {
+      targetFile: null,
+      targetFiles,
+      targetIndex: 0,
+      targetTotal: 0,
+    };
+  }
+
+  const eligibleTargets = targetFiles.filter((filePath) =>
+    (retryCountsByFile.get(filePath) ?? 0) <= maxQualityRetries
+  );
+  if (eligibleTargets.length === 0) {
+    return {
+      targetFile: null,
+      targetFiles,
+      targetIndex: 0,
+      targetTotal: targetFiles.length,
+    };
+  }
+
+  let selectedTarget = eligibleTargets[0];
+  let selectedRetryCount = retryCountsByFile.get(selectedTarget) ?? 0;
+  for (const filePath of eligibleTargets.slice(1)) {
+    const retryCount = retryCountsByFile.get(filePath) ?? 0;
+    if (retryCount < selectedRetryCount) {
+      selectedTarget = filePath;
+      selectedRetryCount = retryCount;
+    }
+  }
+
+  return {
+    targetFile: selectedTarget,
+    targetFiles,
+    targetIndex: targetFiles.indexOf(selectedTarget) + 1,
+    targetTotal: targetFiles.length,
+  };
 }
 
 function toRelativePath(filePath: string): string {

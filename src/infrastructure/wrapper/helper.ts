@@ -384,9 +384,22 @@ Keep total output within 12 lines.`;
     const qualityTargetFile = sanitizePromptText(
       readEnv("SPEC_CREATOR_QUALITY_TARGET_FILE", "").trim(),
     );
+    const qualityTargetIndex = sanitizePromptText(
+      readEnv("SPEC_CREATOR_QUALITY_TARGET_INDEX", "").trim(),
+    );
+    const qualityTargetTotal = sanitizePromptText(
+      readEnv("SPEC_CREATOR_QUALITY_TARGET_TOTAL", "").trim(),
+    );
+    const qualityTargetPosition = qualityTargetIndex.length > 0 &&
+        qualityTargetTotal.length > 0
+      ? `${qualityTargetIndex}/${qualityTargetTotal}`
+      : "";
     const qualityTargetConstraint = qualityTargetFile.length > 0
       ? [
         `- quality_target_file: ${qualityTargetFile}`,
+        ...(qualityTargetPosition.length > 0
+          ? [`- quality_target_position: ${qualityTargetPosition}`]
+          : []),
         "- During this quality retry, edit only quality_target_file",
         "- Do not edit any other file in this retry",
       ].join("\n")

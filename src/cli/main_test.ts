@@ -1867,6 +1867,69 @@ Deno.test("normalizeSpecCreatorReviewContractCoverageForTest backfills missing R
   });
 });
 
+Deno.test("normalizeSpecCreatorReviewContractCoverageForTest rewrites checkbox RC lines to canonical non-checkbox lines", () => {
+  withTempCwd(() => {
+    const changeId = "sample-change";
+    const changeDir = `openspec/changes/${changeId}`;
+    Deno.mkdirSync(`${changeDir}/specs/sample-change`, { recursive: true });
+    Deno.writeTextFileSync(
+      `${changeDir}/tasks.md`,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 1.3 実行結果レビュー契約",
+        "  - [ ] RC-01 | transport: legacy | reject: legacy | path_test: legacy | reject_test: legacy",
+        "  - [x] RC-02 | transport: legacy | reject: legacy | path_test: legacy | reject_test: legacy",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+        "- [ ] 1.4 検証",
+      ].join("\n"),
+    );
+    Deno.writeTextFileSync(
+      `${changeDir}/specs/sample-change/spec.md`,
+      [
+        "## ADDED Requirements",
+        "### Requirement: baseline",
+        "The system SHALL keep artifacts aligned.",
+      ].join("\n"),
+    );
+    Deno.writeTextFileSync(`${changeDir}/code_summary.md`, "# code_summary\n");
+
+    const paths: SpecCreatorArtifactPaths = {
+      changeId,
+      changeDir: `${Deno.cwd()}/${changeDir}`,
+      proposalPath: `${Deno.cwd()}/${changeDir}/proposal.md`,
+      tasksPath: `${Deno.cwd()}/${changeDir}/tasks.md`,
+      designPath: `${Deno.cwd()}/${changeDir}/design.md`,
+      codeSummaryPath: `${Deno.cwd()}/${changeDir}/code_summary.md`,
+      deltaSpecPath: `${Deno.cwd()}/${changeDir}/specs/sample-change/spec.md`,
+      deltaSpecPaths: [
+        `${Deno.cwd()}/${changeDir}/specs/sample-change/spec.md`,
+      ],
+    };
+
+    normalizeSpecCreatorReviewContractCoverageForTest(paths);
+
+    const tasksText = Deno.readTextFileSync(paths.tasksPath);
+    const sectionMatch =
+      /-\s*\[[ xX]\]\s*1\.3[\s\S]*?(?=\n-\s*\[[ xX]\]\s*\S+|\n##\s+|\s*$)/u
+        .exec(
+          tasksText,
+        );
+    if (sectionMatch === null) {
+      throw new Error("task 1.3 section should exist after normalization");
+    }
+    if (/\n\s*-\s*\[[ xX]\]\s*RC-(?:0[1-9]|1[0-2])\b/u.test(sectionMatch[0])) {
+      throw new Error("RC lines should be rewritten without checkbox markers");
+    }
+    for (const id of REVIEW_CONTRACT_IDS) {
+      if (!hasReviewTraceabilityLine(sectionMatch[0], id)) {
+        throw new Error(
+          `task 1.3 should include canonical traceability for ${id}`,
+        );
+      }
+    }
+  });
+});
+
 Deno.test("normalizeSpecCreatorReviewContractCoverageForTest is idempotent", () => {
   withTempCwd(() => {
     const changeId = "sample-change";

@@ -396,6 +396,31 @@ Deno.test("quality guard detects missing task persona_policy.phase_order", () =>
   });
 });
 
+Deno.test("quality guard ignores RC checkbox trace lines for phase_order_coverage", () => {
+  withTempArtifacts({
+    tasksPath: [
+      "## 1. tasks",
+      "- [ ] 1.3 review contract",
+      ...buildReviewTraceabilityLines("  - [ ] "),
+      '  - persona_policy: {"phase_order":["implement","review"]}',
+    ].join("\n"),
+  }, (paths) => {
+    const violations = collectSpecCreatorQualityViolations(paths);
+    if (hasRule(violations, "phase_order_coverage")) {
+      throw new Error(
+        `unexpected phase_order_coverage violation: ${
+          violations
+            .filter((violation) => violation.rule_id === "phase_order_coverage")
+            .map((violation) =>
+              `${path.basename(violation.file)}:${violation.line}`
+            )
+            .join(", ")
+        }`,
+      );
+    }
+  });
+});
+
 Deno.test("quality guard scans all delta spec files, not only first one", () => {
   withTempArtifactsAndExtraSpecs(
     {

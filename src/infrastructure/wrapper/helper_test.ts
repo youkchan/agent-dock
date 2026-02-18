@@ -238,6 +238,8 @@ Deno.test("buildPrompt includes quality issues when provided", () => {
       SPEC_CREATOR_QUALITY_ISSUES:
         "spec.md:7:stage_contract:run --config must not require compile error",
       SPEC_CREATOR_QUALITY_TARGET_FILE: "openspec/changes/foo/tasks.md",
+      SPEC_CREATOR_QUALITY_TARGET_INDEX: "2",
+      SPEC_CREATOR_QUALITY_TARGET_TOTAL: "4",
     }),
   );
   assert(
@@ -255,6 +257,10 @@ Deno.test("buildPrompt includes quality issues when provided", () => {
   assert(
     prompt.includes("edit only quality_target_file"),
     "prompt should include target-only edit constraint",
+  );
+  assert(
+    prompt.includes("quality_target_position: 2/4"),
+    "prompt should include quality target position",
   );
 });
 

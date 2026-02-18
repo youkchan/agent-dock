@@ -575,7 +575,8 @@ function findTaskSection(markdown: string, taskId: string): TaskSection | null {
 
 function findAllTaskSections(markdown: string): TaskSection[] {
   const lines = markdown.split(/\r?\n/u);
-  const taskPattern = /^\s*-\s*\[[ xX]\]\s*(\S+)/u;
+  const taskPattern =
+    /^\s*-\s*\[[ xX]\]\s*((?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*))\b/iu;
   const sections: TaskSection[] = [];
   let start = -1;
   let currentTaskId = "";
