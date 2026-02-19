@@ -1867,6 +1867,78 @@ Deno.test("normalizeSpecCreatorReviewContractCoverageForTest backfills missing R
   });
 });
 
+Deno.test("normalizeSpecCreatorReviewContractCoverageForTest backfills missing persona_policy lines", () => {
+  withTempCwd(() => {
+    const changeId = "sample-change";
+    const changeDir = `openspec/changes/${changeId}`;
+    Deno.mkdirSync(`${changeDir}/specs/sample-change`, { recursive: true });
+    Deno.writeTextFileSync(
+      `${changeDir}/tasks.md`,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 1.2 既存タスク",
+        "  - フェーズ担当: implement=implementer; review=code-reviewer",
+        "  - 成果物: src/existing.ts",
+        "- [ ] 1.3 実行結果レビュー契約",
+        "  - フェーズ担当: review=code-reviewer; implement=implementer",
+        "  - 成果物: src/review.ts",
+        "- [ ] 1.4 検証",
+      ].join("\n"),
+    );
+    Deno.writeTextFileSync(
+      `${changeDir}/specs/sample-change/spec.md`,
+      [
+        "## ADDED Requirements",
+        "### Requirement: baseline",
+        "The system SHALL keep artifacts aligned.",
+      ].join("\n"),
+    );
+    Deno.writeTextFileSync(`${changeDir}/code_summary.md`, "# code_summary\n");
+
+    const paths: SpecCreatorArtifactPaths = {
+      changeId,
+      changeDir: `${Deno.cwd()}/${changeDir}`,
+      proposalPath: `${Deno.cwd()}/${changeDir}/proposal.md`,
+      tasksPath: `${Deno.cwd()}/${changeDir}/tasks.md`,
+      designPath: `${Deno.cwd()}/${changeDir}/design.md`,
+      codeSummaryPath: `${Deno.cwd()}/${changeDir}/code_summary.md`,
+      deltaSpecPath: `${Deno.cwd()}/${changeDir}/specs/sample-change/spec.md`,
+      deltaSpecPaths: [
+        `${Deno.cwd()}/${changeDir}/specs/sample-change/spec.md`,
+      ],
+    };
+
+    normalizeSpecCreatorReviewContractCoverageForTest(paths);
+
+    const tasksText = Deno.readTextFileSync(paths.tasksPath);
+    const section12 =
+      /-\s*\[[ xX]\]\s*1\.2[\s\S]*?(?=\n-\s*\[[ xX]\]\s*\S+|\n##\s+|\s*$)/u
+        .exec(tasksText);
+    if (section12 === null) {
+      throw new Error("task 1.2 section should exist after normalization");
+    }
+    if (!/persona_policy\s*:\s*\{"phase_order":\["implement","review"\]\}/u
+      .test(section12[0])) {
+      throw new Error(
+        "task 1.2 should include backfilled persona_policy with phase_order",
+      );
+    }
+
+    const section13 =
+      /-\s*\[[ xX]\]\s*1\.3[\s\S]*?(?=\n-\s*\[[ xX]\]\s*\S+|\n##\s+|\s*$)/u
+        .exec(tasksText);
+    if (section13 === null) {
+      throw new Error("task 1.3 section should exist after normalization");
+    }
+    if (!/persona_policy\s*:\s*\{"phase_order":\["review","implement"\]\}/u
+      .test(section13[0])) {
+      throw new Error(
+        "task 1.3 should include backfilled persona_policy preserving assignment order",
+      );
+    }
+  });
+});
+
 Deno.test("normalizeSpecCreatorReviewContractCoverageForTest rewrites checkbox RC lines to canonical non-checkbox lines", () => {
   withTempCwd(() => {
     const changeId = "sample-change";
@@ -2207,7 +2279,7 @@ Deno.test({
         '  target_path="openspec/changes/${change_id}/tasks.md"',
         '  if [ -f "$target_path" ]; then',
         '    tmp_path="${target_path}.tmp"',
-        '    /usr/bin/awk \'!/persona_policy/\' "$target_path" > "$tmp_path"',
+        '    /usr/bin/awk \'/persona_policy/ { print "  - persona_policy: {invalid_json}"; next } { print }\' "$target_path" > "$tmp_path"',
         '    /bin/mv "$tmp_path" "$target_path"',
         "  fi",
         "fi",
@@ -2308,7 +2380,7 @@ Deno.test({
         '  target_path="openspec/changes/${change_id}/tasks.md"',
         '  if [ -f "$target_path" ]; then',
         '    tmp_path="${target_path}.tmp"',
-        '    /usr/bin/awk \'!/persona_policy/\' "$target_path" > "$tmp_path"',
+        '    /usr/bin/awk \'/persona_policy/ { print "  - persona_policy: {invalid_json}"; next } { print }\' "$target_path" > "$tmp_path"',
         '    /bin/mv "$tmp_path" "$target_path"',
         "  fi",
         "fi",

@@ -1520,11 +1520,89 @@ function normalizeTasksReviewContractCoverage(
     changed = true;
   }
 
+  if (normalizeTaskPersonaPolicyCoverage(lines, tasksPath)) {
+    changed = true;
+  }
+
   if (!changed) {
     return { changed: false, language };
   }
   Deno.writeTextFileSync(tasksPath, ensureTrailingNewline(lines.join("\n")));
   return { changed: true, language };
+}
+
+function normalizeTaskPersonaPolicyCoverage(
+  lines: string[],
+  tasksPath: string,
+): boolean {
+  const taskPattern =
+    /^\s*-\s*\[[ xX]\]\s*((?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*))\b/iu;
+  const headingPattern = /^##\s+/u;
+  const personaPolicyPattern = /^\s*-\s*persona_policy\s*:/u;
+  const phaseAssignmentsPattern =
+    /^\s*-\s*(?:フェーズ担当|phase assignments)\s*:\s*(.+?)\s*$/u;
+  const descriptionPattern = /^\s*-\s*(?:成果物|Description)\s*:/u;
+  const fallbackPhaseOrder = parseOutputPhaseAssignments(
+    DEFAULT_TASK_OUTPUT_PHASE_ASSIGNMENTS,
+    `${toRelativePath(tasksPath)} fallback`,
+  ).phaseOrder;
+
+  let changed = false;
+  let index = 0;
+  while (index < lines.length) {
+    const matched = taskPattern.exec(lines[index]);
+    if (matched === null) {
+      index += 1;
+      continue;
+    }
+    const taskId = matched[1];
+    const sectionStart = index;
+    let sectionEnd = lines.length;
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      if (taskPattern.test(lines[cursor]) || headingPattern.test(lines[cursor])) {
+        sectionEnd = cursor;
+        break;
+      }
+    }
+
+    const sectionLines = lines.slice(sectionStart, sectionEnd);
+    const hasPersonaPolicy = sectionLines.some((line) =>
+      personaPolicyPattern.test(line)
+    );
+    if (hasPersonaPolicy) {
+      index = sectionEnd;
+      continue;
+    }
+
+    let phaseOrder = [...fallbackPhaseOrder];
+    const phaseAssignmentsRaw = sectionLines
+      .map((line) => phaseAssignmentsPattern.exec(line)?.[1]?.trim() ?? "")
+      .find((value) => value.length > 0);
+    if (phaseAssignmentsRaw !== undefined) {
+      try {
+        phaseOrder = parseOutputPhaseAssignments(
+          phaseAssignmentsRaw,
+          `${toRelativePath(tasksPath)} task=${taskId}`,
+        ).phaseOrder;
+      } catch {
+        phaseOrder = [...fallbackPhaseOrder];
+      }
+    }
+
+    const personaPolicyLine = `  - persona_policy: ${
+      JSON.stringify({ phase_order: phaseOrder })
+    }`;
+    const insertionOffset = sectionLines.findIndex((line, sectionIndex) =>
+      sectionIndex > 0 && descriptionPattern.test(line)
+    );
+    const insertionIndex = insertionOffset >= 0
+      ? sectionStart + insertionOffset
+      : sectionEnd;
+    lines.splice(insertionIndex, 0, personaPolicyLine);
+    changed = true;
+    index = sectionEnd + 1;
+  }
+  return changed;
 }
 
 function normalizeCodeSummaryReviewContractCoverage(

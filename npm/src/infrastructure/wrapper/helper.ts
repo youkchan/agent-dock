@@ -454,6 +454,7 @@ ${progress.recent}
 Constraints:
 - Treat editable_paths (target_paths + related_paths) as implementation hints, not hard limits
 - Do not read/reference/edit .env or .env.*
+- Keep each tasks.md task's \`persona_policy.phase_order\` line; if missing, restore it before final output
 - Run required local checks
 ${openSpecValidationConstraint}
 - Do not use \`agent-dock openspec ...\` or \`./node_modules/.bin/openspec ...\`

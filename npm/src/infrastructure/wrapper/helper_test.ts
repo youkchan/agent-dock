@@ -307,6 +307,7 @@ Deno.test("golden contract has zero diff for fixed payload, prompt, stream and r
     "Constraints:",
     "- Treat editable_paths (target_paths + related_paths) as implementation hints, not hard limits",
     "- Do not read/reference/edit .env or .env.*",
+    "- Keep each tasks.md task's `persona_policy.phase_order` line; if missing, restore it before final output",
     "- Run required local checks",
     "- OpenSpec change_id: add-codex-wrapper-step1-contract-first-golden-compat",
     "- For OpenSpec validation, use `openspec validate add-codex-wrapper-step1-contract-first-golden-compat --strict` only",
