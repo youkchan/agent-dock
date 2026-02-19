@@ -315,11 +315,10 @@ export function buildPrompt(
   const denyDotenv = readEnv("CODEX_DENY_DOTENV", "1") !== "0";
   if (denyDotenv) {
     const violations: string[] = [];
-    violations.push(...collectDotenvHits("title", title));
-    violations.push(...collectDotenvHits("description", description));
+    // Deny path-level .env references only. Natural-language mentions in
+    // task text are allowed (e.g. requirements that mention ".env").
     violations.push(...collectDotenvHits("target_paths", targetPaths));
     violations.push(...collectDotenvHits("related_paths", relatedPaths));
-    violations.push(...collectDotenvHits("depends_on", dependsOn));
     if (violations.length > 0) {
       const preview = violations.slice(0, 5).join(", ");
       throw new WrapperHelperError(

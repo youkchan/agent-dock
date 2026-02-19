@@ -425,7 +425,7 @@ Deno.test("buildPrompt requires CHANGED_FILES to be (none) for non-implement pha
   );
 });
 
-Deno.test("buildPrompt rejects .env references when deny rule is enabled", () => {
+Deno.test("buildPrompt allows .env mentions in description when deny rule is enabled", () => {
   const payload = {
     mode: "execute",
     teammate_id: "tm-1",
@@ -434,6 +434,27 @@ Deno.test("buildPrompt rejects .env references when deny rule is enabled", () =>
       title: "title",
       description: "touch .env.local",
       target_paths: [],
+      depends_on: [],
+      requires_plan: false,
+      progress_log: [],
+    },
+  };
+  const prompt = buildPrompt(payload, makeEnv({ CODEX_DENY_DOTENV: "1" }));
+  assert(
+    prompt.includes("description: touch .env.local"),
+    "description text should be preserved even when it mentions .env",
+  );
+});
+
+Deno.test("buildPrompt rejects .env references in target_paths when deny rule is enabled", () => {
+  const payload = {
+    mode: "execute",
+    teammate_id: "tm-1",
+    task: {
+      id: "2.8",
+      title: "title",
+      description: "desc",
+      target_paths: [".env.local"],
       depends_on: [],
       requires_plan: false,
       progress_log: [],
