@@ -2185,6 +2185,209 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name:
+    "main spec-creator polish post-run failure keeps staged artifacts unapplied by default",
+  ignore: !hasBashRunPermission,
+  fn: () => {
+    const changeId = uniqueChangeId("update-polish-post-run-fail-default");
+    const revisedId = revisedChangeId(changeId);
+    const outputPath = `task_configs/spec_creator/${changeId}.json`;
+    const workerRoot = Deno.makeTempDirSync();
+    const workerPath = `${workerRoot}/force_post_run_failure_worker.sh`;
+    const stateDir = `${workerRoot}/state`;
+    Deno.writeTextFileSync(
+      workerPath,
+      [
+        "#!/bin/sh",
+        "set -eu",
+        'payload="$(/bin/cat)"',
+        'if printf "%s" "$payload" | /usr/bin/grep -q \'"mode":"execute"\'; then',
+        '  change_id="${OPENSPEC_CHANGE_ID:-}"',
+        '  target_path="openspec/changes/${change_id}/tasks.md"',
+        '  if [ -f "$target_path" ]; then',
+        '    tmp_path="${target_path}.tmp"',
+        '    /usr/bin/awk \'!/persona_policy/\' "$target_path" > "$tmp_path"',
+        '    /bin/mv "$tmp_path" "$target_path"',
+        "  fi",
+        "fi",
+        "echo 'RESULT: completed'",
+        "echo 'SUMMARY: force post-run semantic guard failure'",
+        "echo 'CHANGED_FILES: (none)'",
+        "echo 'CHECKS: openspec validate sample --strict'",
+        "echo 'JUDGMENT: pass'",
+      ].join("\n"),
+    );
+    Deno.chmodSync(workerPath, 0o755);
+
+    const buffer = createIoBuffer();
+    try {
+      withTemporaryChangeDir(changeId, () => {
+        Deno.writeTextFileSync(
+          `openspec/changes/${changeId}/README.md`,
+          "# polish context\n- markdown source\n",
+        );
+        withFakeOpenSpecValidate("pass", () => {
+          withEnvValue("ORCHESTRATOR_PROVIDER", "mock", () => {
+            withEnvValue("TEAMMATE_ADAPTER", "subprocess", () => {
+              withEnvValue("TEAMMATE_COMMAND", `/bin/sh '${workerPath}'`, () => {
+                const exitCode = main([
+                  "spec-creator",
+                  "polish",
+                  changeId,
+                  "--output",
+                  outputPath,
+                  "--state-dir",
+                  stateDir,
+                ], buffer.io);
+                if (exitCode !== 1) {
+                  throw new Error(
+                    "spec-creator polish should fail when post-run guard fails",
+                  );
+                }
+              });
+            });
+          });
+        });
+
+        const revisedTasksPath = `openspec/changes/${revisedId}/tasks.md`;
+        if (fileExists(revisedTasksPath)) {
+          throw new Error(
+            "revised tasks should not be applied on post-run failure by default",
+          );
+        }
+        if (fileExists(outputPath)) {
+          throw new Error(
+            "output config should not be applied on post-run failure by default",
+          );
+        }
+        if (
+          buffer.state.stdout.includes(
+            "applied_staged_artifacts_on_post_run_fail=1",
+          )
+        ) {
+          throw new Error(
+            "stdout should not include apply-on-post-run-fail marker by default",
+          );
+        }
+      });
+    } finally {
+      try {
+        Deno.removeSync(workerRoot, { recursive: true });
+      } catch {
+        // noop
+      }
+      try {
+        Deno.removeSync(outputPath);
+      } catch {
+        // noop
+      }
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "main spec-creator polish --apply-on-post-run-fail applies staged artifacts before failing",
+  ignore: !hasBashRunPermission,
+  fn: () => {
+    const changeId = uniqueChangeId("update-polish-post-run-fail-apply");
+    const revisedId = revisedChangeId(changeId);
+    const outputPath = `task_configs/spec_creator/${changeId}.json`;
+    const workerRoot = Deno.makeTempDirSync();
+    const workerPath = `${workerRoot}/force_post_run_failure_worker.sh`;
+    const stateDir = `${workerRoot}/state`;
+    Deno.writeTextFileSync(
+      workerPath,
+      [
+        "#!/bin/sh",
+        "set -eu",
+        'payload="$(/bin/cat)"',
+        'if printf "%s" "$payload" | /usr/bin/grep -q \'"mode":"execute"\'; then',
+        '  change_id="${OPENSPEC_CHANGE_ID:-}"',
+        '  target_path="openspec/changes/${change_id}/tasks.md"',
+        '  if [ -f "$target_path" ]; then',
+        '    tmp_path="${target_path}.tmp"',
+        '    /usr/bin/awk \'!/persona_policy/\' "$target_path" > "$tmp_path"',
+        '    /bin/mv "$tmp_path" "$target_path"',
+        "  fi",
+        "fi",
+        "echo 'RESULT: completed'",
+        "echo 'SUMMARY: force post-run semantic guard failure'",
+        "echo 'CHANGED_FILES: (none)'",
+        "echo 'CHECKS: openspec validate sample --strict'",
+        "echo 'JUDGMENT: pass'",
+      ].join("\n"),
+    );
+    Deno.chmodSync(workerPath, 0o755);
+
+    const buffer = createIoBuffer();
+    try {
+      withTemporaryChangeDir(changeId, () => {
+        Deno.writeTextFileSync(
+          `openspec/changes/${changeId}/README.md`,
+          "# polish context\n- markdown source\n",
+        );
+        withFakeOpenSpecValidate("pass", () => {
+          withEnvValue("ORCHESTRATOR_PROVIDER", "mock", () => {
+            withEnvValue("TEAMMATE_ADAPTER", "subprocess", () => {
+              withEnvValue("TEAMMATE_COMMAND", `/bin/sh '${workerPath}'`, () => {
+                const exitCode = main([
+                  "spec-creator",
+                  "polish",
+                  changeId,
+                  "--apply-on-post-run-fail",
+                  "--output",
+                  outputPath,
+                  "--state-dir",
+                  stateDir,
+                ], buffer.io);
+                if (exitCode !== 1) {
+                  throw new Error(
+                    "spec-creator polish should still fail when post-run guard fails",
+                  );
+                }
+              });
+            });
+          });
+        });
+
+        const revisedTasksPath = `openspec/changes/${revisedId}/tasks.md`;
+        if (!fileExists(revisedTasksPath)) {
+          throw new Error(
+            "revised tasks should be applied when --apply-on-post-run-fail is set",
+          );
+        }
+        if (!fileExists(outputPath)) {
+          throw new Error(
+            "output config should be applied when --apply-on-post-run-fail is set",
+          );
+        }
+        if (
+          !buffer.state.stdout.includes(
+            "applied_staged_artifacts_on_post_run_fail=1",
+          )
+        ) {
+          throw new Error(
+            "stdout should include apply-on-post-run-fail marker when enabled",
+          );
+        }
+      });
+    } finally {
+      try {
+        Deno.removeSync(workerRoot, { recursive: true });
+      } catch {
+        // noop
+      }
+      try {
+        Deno.removeSync(outputPath);
+      } catch {
+        // noop
+      }
+    }
+  },
+});
+
 Deno.test("main spec-creator polish requires existing change directory", () => {
   const buffer = createIoBuffer();
   const missingChangeId = uniqueChangeId("update-spec-creator");

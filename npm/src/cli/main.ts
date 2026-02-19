@@ -101,6 +101,7 @@ interface SpecCreatorArgs {
   changeId: string | null;
   output: string | null;
   noRun: boolean;
+  applyOnPostRunFail: boolean;
   stateDir: string | null;
   resume: boolean;
   personaDir: string | null;
@@ -111,6 +112,7 @@ interface SpecCreatorPolishArgs {
   feedback: string | null;
   output: string | null;
   noRun: boolean;
+  applyOnPostRunFail: boolean;
   stateDir: string | null;
   resume: boolean;
   personaDir: string | null;
@@ -190,12 +192,12 @@ const SPEC_CREATOR_PREPROCESS_USAGE = [
 ].join("\n");
 
 const SPEC_CREATOR_USAGE = [
-  "usage: spec-creator polish <change_id> [--feedback TEXT] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--persona-dir DIR]",
-  "       spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--persona-dir DIR]  (deprecated)",
+  "usage: spec-creator polish <change_id> [--feedback TEXT] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--apply-on-post-run-fail] [--persona-dir DIR]",
+  "       spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--apply-on-post-run-fail] [--persona-dir DIR]  (deprecated)",
 ].join("\n");
 
 const SPEC_CREATOR_POLISH_USAGE = [
-  "usage: spec-creator polish <change_id> [--feedback TEXT] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--persona-dir DIR]",
+  "usage: spec-creator polish <change_id> [--feedback TEXT] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--apply-on-post-run-fail] [--persona-dir DIR]",
 ].join("\n");
 
 const DEFAULT_WRAPPER_RUNTIME = "ts";
@@ -544,6 +546,7 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
     changeId: null,
     output: null,
     noRun: false,
+    applyOnPostRunFail: false,
     stateDir: null,
     resume: false,
     personaDir: null,
@@ -581,6 +584,10 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
       parsed.noRun = true;
       continue;
     }
+    if (arg === "--apply-on-post-run-fail") {
+      parsed.applyOnPostRunFail = true;
+      continue;
+    }
     if (arg === "--resume") {
       parsed.resume = true;
       continue;
@@ -607,6 +614,7 @@ function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
     feedback: null,
     output: null,
     noRun: false,
+    applyOnPostRunFail: false,
     stateDir: null,
     resume: false,
     personaDir: null,
@@ -650,6 +658,10 @@ function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
     }
     if (arg === "--no-run") {
       parsed.noRun = true;
+      continue;
+    }
+    if (arg === "--apply-on-post-run-fail") {
+      parsed.applyOnPostRunFail = true;
       continue;
     }
     if (arg === "--resume") {
@@ -1067,6 +1079,7 @@ function runSpecCreatorWorkflow(
   args: {
     output: string | null;
     noRun: boolean;
+    applyOnPostRunFail: boolean;
     stateDir: string | null;
     resume: boolean;
     personaDir: string | null;
@@ -1241,6 +1254,21 @@ function runSpecCreatorWorkflow(
         });
         return 0;
       } catch (error) {
+        const maybeApplyArtifactsOnPostRunFailure = (): void => {
+          if (!args.applyOnPostRunFail) {
+            return;
+          }
+          applyStagedArtifactsAtomically({
+            stagingRoot,
+            stagedPaths,
+            targetPaths: paths,
+            stagedOutputPath,
+            outputPath,
+            artifactSnapshotBeforeWorkflow,
+            outputSnapshotBeforeWorkflow,
+          });
+          io.stdout("[spec-creator] applied_staged_artifacts_on_post_run_fail=1\n");
+        };
         if (qualityTargetFile !== null) {
           const currentRetry =
             qualityRetryCountsByFile.get(qualityTargetFile) ??
@@ -1248,6 +1276,7 @@ function runSpecCreatorWorkflow(
           const nextRetry = currentRetry + 1;
           qualityRetryCountsByFile.set(qualityTargetFile, nextRetry);
           if (nextRetry > maxQualityRetries) {
+            maybeApplyArtifactsOnPostRunFailure();
             throw error;
           }
           const reason = error instanceof Error ? error.message : String(error);
@@ -1259,6 +1288,7 @@ function runSpecCreatorWorkflow(
           continue;
         }
         if (attempt >= maxQualityRetries) {
+          maybeApplyArtifactsOnPostRunFailure();
           throw error;
         }
         attempt += 1;
