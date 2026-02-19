@@ -457,6 +457,7 @@ Constraints:
 - Run required local checks
 ${openSpecValidationConstraint}
 - Do not use \`agent-dock openspec ...\` or \`./node_modules/.bin/openspec ...\`
+- Do not run \`agent-dock compile-openspec ...\`; compile gate is executed internally by spec-creator post-audit
 - For \`deno test\`, use \`--allow-read --allow-write --allow-env --allow-run\` by default
 - If failed, provide a short root cause
 ${changedFilesConstraint ? `${changedFilesConstraint}\n` : ""}

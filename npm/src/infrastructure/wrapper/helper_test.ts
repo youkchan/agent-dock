@@ -312,6 +312,7 @@ Deno.test("golden contract has zero diff for fixed payload, prompt, stream and r
     "- For OpenSpec validation, use `openspec validate add-codex-wrapper-step1-contract-first-golden-compat --strict` only",
     "- Never use task_id as openspec validate target",
     "- Do not use `agent-dock openspec ...` or `./node_modules/.bin/openspec ...`",
+    "- Do not run `agent-dock compile-openspec ...`; compile gate is executed internally by spec-creator post-audit",
     "- For `deno test`, use `--allow-read --allow-write --allow-env --allow-run` by default",
     "- If failed, provide a short root cause",
     "",
