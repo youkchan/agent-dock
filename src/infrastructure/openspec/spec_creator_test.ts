@@ -7,6 +7,7 @@ import {
   buildTasksMarkdown,
   checkNonMarkdownConsistency,
   collectChangeFilesRecursively,
+  extractTaskIdsFromTasksMarkdown,
   polishMarkdownFiles,
 } from "./spec_creator.ts";
 
@@ -283,6 +284,51 @@ Deno.test("buildCodeSummaryMarkdown validates task to code mapping integrity", (
         summaries: [{ task_id: "9.9" }],
       }),
     "unknown task_id",
+  );
+});
+
+Deno.test("extractTaskIdsFromTasksMarkdown keeps compatibility task ids distinct", () => {
+  const taskIds = extractTaskIdsFromTasksMarkdown([
+    "## 1. 実装タスク",
+    "- [ ] 1.2 numeric task",
+    "- [ ] TASK-1 task style",
+    "- [ ] T-foo short style",
+    "- [ ] 0.A.1 first task",
+    "- [ ] 0.B.1 second task",
+  ].join("\n"));
+
+  assertDeepEqual(taskIds, ["1.2", "TASK-1", "T-foo", "0.A.1", "0.B.1"]);
+});
+
+Deno.test("extractTaskIdsFromTasksMarkdown throws duplicate only for exact same id", () => {
+  assertThrowsMessage(
+    () =>
+      extractTaskIdsFromTasksMarkdown([
+        "## 1. 実装タスク",
+        "- [ ] 0.A.1 first task",
+        "- [ ] 0.A.1 duplicate task",
+      ].join("\n")),
+    "duplicate task_id in tasks.md: 0.A.1",
+  );
+
+  assertThrowsMessage(
+    () =>
+      extractTaskIdsFromTasksMarkdown([
+        "## 1. 実装タスク",
+        "- [ ] TASK-1 first task",
+        "- [ ] TASK-1 duplicate task",
+      ].join("\n")),
+    "duplicate task_id in tasks.md: TASK-1",
+  );
+
+  assertThrowsMessage(
+    () =>
+      extractTaskIdsFromTasksMarkdown([
+        "## 1. 実装タスク",
+        "- [ ] T-foo first task",
+        "- [ ] T-foo duplicate task",
+      ].join("\n")),
+    "duplicate task_id in tasks.md: T-foo",
   );
 });
 

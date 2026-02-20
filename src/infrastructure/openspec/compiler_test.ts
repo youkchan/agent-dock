@@ -115,6 +115,71 @@ Deno.test("parseTasksMarkdown accepts ja template", () => {
   });
 });
 
+Deno.test("compileChangeToConfig parses dotted alpha task ids and dependencies", () => {
+  withTempDir((root) => {
+    writeChange(
+      root,
+      "add-dotted-alpha-task-id",
+      [
+        "## 1. 実装タスク",
+        "- [ ] 0.A.1 基盤を準備する",
+        "  - 依存: なし",
+        "  - 対象: src/a.ts",
+        "  - フェーズ担当: implement=implementer",
+        "- [ ] 0.B.1 後続を実装する",
+        "  - 依存: 0.A.1",
+        "  - 対象: src/b.ts",
+        "  - フェーズ担当: implement=implementer",
+      ].join("\n"),
+    );
+
+    const compiled = compileChangeToConfig("add-dotted-alpha-task-id", {
+      openspecRoot: `${root}/openspec`,
+      overridesRoot: `${root}/task_configs/overrides`,
+    });
+    const tasks = compiled.tasks as Array<Record<string, unknown>>;
+    assertDeepEqual(tasks.map((task) => task.id), ["0.A.1", "0.B.1"]);
+    assertDeepEqual(tasks[1].depends_on, ["0.A.1"]);
+  });
+});
+
+Deno.test("compileChangeToConfig keeps compatibility task ids in depends_on", () => {
+  withTempDir((root) => {
+    writeChange(
+      root,
+      "add-compat-task-id-depends-on",
+      [
+        "## 1. 実装タスク",
+        "- [ ] 0.A.1 alpha root task",
+        "  - 依存: なし",
+        "  - 対象: src/a.ts",
+        "  - フェーズ担当: implement=implementer",
+        "- [ ] 1.2 numeric root task",
+        "  - 依存: なし",
+        "  - 対象: src/b.ts",
+        "  - フェーズ担当: implement=implementer",
+        "- [ ] TASK-1 depends on mixed ids",
+        "  - 依存: 0.A.1, 1.2",
+        "  - 対象: src/c.ts",
+        "  - フェーズ担当: implement=implementer",
+        "- [ ] T-foo depends on TASK-1",
+        "  - 依存: TASK-1",
+        "  - 対象: src/d.ts",
+        "  - フェーズ担当: implement=implementer",
+      ].join("\n"),
+    );
+
+    const compiled = compileChangeToConfig("add-compat-task-id-depends-on", {
+      openspecRoot: `${root}/openspec`,
+      overridesRoot: `${root}/task_configs/overrides`,
+    });
+    const tasks = compiled.tasks as Array<Record<string, unknown>>;
+    const byId = new Map(tasks.map((task) => [String(task.id), task]));
+    assertDeepEqual(byId.get("TASK-1")?.depends_on, ["0.A.1", "1.2"]);
+    assertDeepEqual(byId.get("T-foo")?.depends_on, ["TASK-1"]);
+  });
+});
+
 Deno.test("compileChangeToConfig fills default target paths", () => {
   withTempDir((root) => {
     writeChange(
@@ -418,6 +483,65 @@ Deno.test("updateTasksMarkdownCheckboxes updates only completed task lines", () 
         "- [x] 1.1 完了済みにしたい",
         "- [ ] 1.2 未完了のまま維持する",
         "- [x] T-003 すでに完了済み",
+      ].join("\n"),
+    );
+  });
+});
+
+Deno.test("updateTasksMarkdownCheckboxes supports dotted alpha task ids", () => {
+  withTempDir((root) => {
+    const tasksPath = `${root}/tasks.md`;
+    Deno.writeTextFileSync(
+      tasksPath,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 0.A.1 完了待ち",
+        "- [ ] 0.B.1 完了予定",
+      ].join("\n"),
+    );
+
+    const updatedCount = updateTasksMarkdownCheckboxes(tasksPath, ["0.B.1"]);
+    const updated = Deno.readTextFileSync(tasksPath);
+
+    assertDeepEqual(updatedCount, 1);
+    assertDeepEqual(
+      updated,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 0.A.1 完了待ち",
+        "- [x] 0.B.1 完了予定",
+      ].join("\n"),
+    );
+  });
+});
+
+Deno.test("updateTasksMarkdownCheckboxes supports TASK-1 and T-foo ids", () => {
+  withTempDir((root) => {
+    const tasksPath = `${root}/tasks.md`;
+    Deno.writeTextFileSync(
+      tasksPath,
+      [
+        "## 1. 実装タスク",
+        "- [ ] TASK-1 should complete",
+        "- [ ] T-foo should complete",
+        "- [ ] 1.2 should remain",
+      ].join("\n"),
+    );
+
+    const updatedCount = updateTasksMarkdownCheckboxes(tasksPath, [
+      "TASK-1",
+      "T-foo",
+    ]);
+    const updated = Deno.readTextFileSync(tasksPath);
+
+    assertDeepEqual(updatedCount, 2);
+    assertDeepEqual(
+      updated,
+      [
+        "## 1. 実装タスク",
+        "- [x] TASK-1 should complete",
+        "- [x] T-foo should complete",
+        "- [ ] 1.2 should remain",
       ].join("\n"),
     );
   });

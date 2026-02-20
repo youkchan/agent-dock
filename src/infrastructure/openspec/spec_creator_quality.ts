@@ -90,6 +90,12 @@ const VALIDATION_INTENT_PATTERNS = [
   { id: "lint", pattern: /\blint(?:ing)?\b|静的解析/u },
   { id: "regression", pattern: /\bregression\b|回帰/u },
 ] as const;
+const TASK_ID_TOKEN =
+  "(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\\d+(?:\\.[A-Za-z0-9_-]+)*)";
+const TASK_LINE_PATTERN = new RegExp(
+  `^\\s*-\\s*\\[[ xX]\\]\\s*(${TASK_ID_TOKEN})(?=\\s|$)`,
+  "iu",
+);
 
 export function assertSpecCreatorSemanticContracts(
   paths: SpecCreatorArtifactPaths,
@@ -905,8 +911,7 @@ function findTaskSection(markdown: string, taskId: string): TaskSection | null {
 
 function findAllTaskSections(markdown: string): TaskSection[] {
   const lines = markdown.split(/\r?\n/u);
-  const taskPattern =
-    /^\s*-\s*\[[ xX]\]\s*((?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*))\b/iu;
+  const taskPattern = TASK_LINE_PATTERN;
   const sections: TaskSection[] = [];
   let start = -1;
   let currentTaskId = "";

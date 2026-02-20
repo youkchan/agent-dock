@@ -8,8 +8,9 @@ import {
 } from "./template.ts";
 
 const TASK_HEADER_PATTERN = /^\s*-\s*\[[ xX]\]\s*(.+?)\s*$/;
-const TASK_ID_PREFIX_PATTERN =
-  /^(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*)/i;
+const TASK_ID_TOKEN =
+  "(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\\d+(?:\\.[A-Za-z0-9_-]+)*)";
+const TASK_ID_PREFIX_PATTERN = new RegExp(`^${TASK_ID_TOKEN}`, "i");
 const CHECKBOX_ITEM_PATTERN = /^\s*-\s*\[[ xX]\]\s*.+$/m;
 const SPEC_CREATOR_CHANGE_ROOT = path.join("openspec", "changes");
 

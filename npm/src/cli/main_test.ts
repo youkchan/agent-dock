@@ -1489,6 +1489,75 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
   }
 });
 
+Deno.test("main spec-creator polish --no-run succeeds with dotted alpha task ids", () => {
+  const changeId = uniqueChangeId("update-polish-dotted-alpha-task-ids");
+  const polishedChangeId = revisedChangeId(changeId);
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  withTemporaryChangeDir(changeId, () => {
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/proposal.md`,
+      "# proposal\n- keep dotted alpha task ids\n",
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/tasks.md`,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 0.A.1 先行タスク",
+        "  - 依存: なし",
+        "  - 対象: src/a.ts",
+        "  - フェーズ担当: implement=implementer; review=code-reviewer",
+        "  - 成果物: src/a.ts を更新する",
+        "- [ ] 0.B.1 後続タスク",
+        "  - 依存: 0.A.1",
+        "  - 対象: src/b.ts",
+        "  - フェーズ担当: implement=implementer; review=code-reviewer",
+        "  - 成果物: src/b.ts を更新する",
+      ].join("\n"),
+    );
+
+    const buffer = createIoBuffer();
+    withFakeOpenSpecValidate("pass", () => {
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        changeId,
+        "--mode",
+        "preserve-supplement",
+        "--no-run",
+        "--output",
+        outputPath,
+      ], buffer.io);
+      if (exitCode !== 0) {
+        throw new Error(
+          `spec-creator polish should succeed for dotted alpha task ids: ${buffer.state.stderr}`,
+        );
+      }
+    });
+
+    if (buffer.state.stderr.includes("duplicate task_id in tasks.md: 0")) {
+      throw new Error(
+        `spec-creator polish should not collapse dotted alpha task ids: ${buffer.state.stderr}`,
+      );
+    }
+
+    const revisedCodeSummaryPath =
+      `openspec/changes/${polishedChangeId}/code_summary.md`;
+    const revisedCodeSummary = Deno.readTextFileSync(revisedCodeSummaryPath);
+    if (!revisedCodeSummary.includes("## task_id: 0.A.1")) {
+      throw new Error("code_summary should include task_id: 0.A.1");
+    }
+    if (!revisedCodeSummary.includes("## task_id: 0.B.1")) {
+      throw new Error("code_summary should include task_id: 0.B.1");
+    }
+
+    try {
+      Deno.removeSync(outputPath);
+    } catch {
+      // noop
+    }
+  });
+});
+
 Deno.test("main spec-creator polish preserve-supplement keeps source spec path set", () => {
   const changeId = uniqueChangeId("update-polish-preserve-spec-paths");
   const polishedChangeId = revisedChangeId(changeId);

@@ -223,6 +223,12 @@ const GLOBAL_USAGE = [
   "",
   "use '<command> --help' for command details",
 ].join("\n");
+const TASK_ID_TOKEN =
+  "(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\\d+(?:\\.[A-Za-z0-9_-]+)*)";
+const TASK_LINE_PATTERN = new RegExp(
+  `^\\s*-\\s*\\[[ xX]\\]\\s*(${TASK_ID_TOKEN})(?=\\s|$)`,
+  "iu",
+);
 
 export function buildSkeletonSummary(): string {
   const domain = createDomainModule();
@@ -1825,8 +1831,7 @@ function normalizeTaskPersonaPolicyCoverage(
   lines: string[],
   tasksPath: string,
 ): boolean {
-  const taskPattern =
-    /^\s*-\s*\[[ xX]\]\s*((?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*))\b/iu;
+  const taskPattern = TASK_LINE_PATTERN;
   const headingPattern = /^##\s+/u;
   const personaPolicyPattern = /^\s*-\s*persona_policy\s*:/u;
   const phaseAssignmentsPattern =
@@ -2027,11 +2032,10 @@ function findTaskSectionRange(
   taskId: string,
 ): { start: number; end: number } | null {
   const startPattern = new RegExp(
-    `^\\s*-\\s*\\[[ xX]\\]\\s*${escapeRegex(taskId)}\\b`,
+    `^\\s*-\\s*\\[[ xX]\\]\\s*${escapeRegex(taskId)}(?=\\s|$)`,
     "u",
   );
-  const taskPattern =
-    /^\s*-\s*\[[ xX]\]\s*(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*)\b/iu;
+  const taskPattern = TASK_LINE_PATTERN;
   const headingPattern = /^##\s+/u;
   let start = -1;
   for (let index = 0; index < lines.length; index += 1) {
@@ -3154,7 +3158,7 @@ function collectExistingTaskOutputPhaseAssignments(
   }
 
   const lines = text.replaceAll(/\r\n?/gu, "\n").split("\n");
-  const taskHeaderPattern = /^\s*-\s*\[[ xX]\]\s*(\S+)/u;
+  const taskHeaderPattern = TASK_LINE_PATTERN;
   const phaseAssignmentsPattern =
     /^\s*-\s*(?:フェーズ担当|phase assignments)\s*:\s*(.+?)\s*$/u;
   const assignmentsByTask = new Map<string, string>();

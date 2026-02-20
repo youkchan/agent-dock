@@ -14,12 +14,18 @@ export class OpenSpecCompileError extends Error {
   }
 }
 
-const TASK_ID_PATTERN =
-  /(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*)/gi;
-const TASK_ID_FULL_PATTERN =
-  /^(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*)$/i;
-const TASK_CHECKBOX_SYNC_PATTERN =
-  /^(\s*-\s*\[)([ xX])(\]\s*)((?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*))(.*)$/i;
+const TASK_ID_TOKEN =
+  "(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\\d+(?:\\.[A-Za-z0-9_-]+)*)";
+const TASK_ID_PATTERN = new RegExp(TASK_ID_TOKEN, "gi");
+const TASK_ID_FULL_PATTERN = new RegExp(`^${TASK_ID_TOKEN}$`, "i");
+const TASK_CHECKBOX_SYNC_PATTERN = new RegExp(
+  `^(\\s*-\\s*\\[)([ xX])(\\]\\s*)(${TASK_ID_TOKEN})(.*)$`,
+  "i",
+);
+const TASK_ID_WITH_TITLE_PATTERN = new RegExp(
+  `^(?<task_id>${TASK_ID_TOKEN})\\s+(?<title>.+)$`,
+  "i",
+);
 const MARKDOWN_HEADING_PATTERN = /^\s*(#{2,6})\s+(.+?)\s*$/;
 const IMPLEMENTATION_SECTION_HEADING_PATTERN =
   /^(?:1\.\s*)?(?:実装タスク|implementation(?:\s+tasks?)?)$/i;
@@ -578,9 +584,7 @@ function extractTaskIdAndTitle(
   autoIdCounter: number,
 ): [string, string] {
   const stripped = rawHeader.trim();
-  const matched =
-    /^(?<task_id>(?:T-[A-Za-z0-9_-]+|TASK-[A-Za-z0-9_-]+|\d+(?:\.\d+)*))\s+(?<title>.+)$/i
-      .exec(stripped);
+  const matched = TASK_ID_WITH_TITLE_PATTERN.exec(stripped);
   if (matched?.groups) {
     return [matched.groups.task_id.trim(), matched.groups.title.trim()];
   }
@@ -604,7 +608,7 @@ function parseDependencyValue(
   }
   throw new OpenSpecCompileError(
     `dependency parse failed at ${options.tasksPath}:${options.lineNo}. ` +
-      "use task ids like T-001/TASK-1/1.1 or 'none'.",
+      "use task ids like T-001/TASK-1/1.2/0.A.1 or 'none'.",
   );
 }
 
