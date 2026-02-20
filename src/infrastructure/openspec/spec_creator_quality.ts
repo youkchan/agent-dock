@@ -3,12 +3,21 @@ import path from "node:path";
 export type SpecCreatorGuardPhase = "post-generate" | "post-run";
 
 export interface SpecCreatorArtifactPaths {
+  changeDir?: string;
   proposalPath: string;
   tasksPath: string;
   designPath: string;
   codeSummaryPath: string;
   deltaSpecPath: string;
   deltaSpecPaths?: string[];
+}
+
+export type SpecCreatorPolishMode = "preserve-supplement" | "regenerate";
+
+export interface SpecCreatorQualityOptions {
+  emitReviewContractToArtifacts?: boolean;
+  polishMode?: SpecCreatorPolishMode;
+  sourcePaths?: SpecCreatorArtifactPaths;
 }
 
 export interface SpecCreatorQualityViolation {
@@ -67,12 +76,27 @@ export const REQUIRED_REVIEW_CONTRACT_IDS = [
   "RC-12",
 ] as const;
 const REVIEW_CONTRACT_ID_PATTERN = /\bRC-(?:0[1-9]|1[0-2])\b/gu;
+const TASK_TARGET_PATHS_PATTERN =
+  /^\s*-\s*(?:対象|Target paths)\s*:\s*(.+?)\s*$/imu;
+const NOTIFICATION_PATTERN = /通知|notify|notification|alert|webhook/iu;
+const SCENARIO_HEADER_PATTERN = /^####\s+(?:Scenario\b|シナリオ\b)/iu;
+const REQUIREMENT_HEADER_PATTERN = /^###\s+(?:Requirement\b|要件\b)/iu;
+const VALIDATION_INTENT_PATTERNS = [
+  { id: "unit", pattern: /\bunit(?:\s+tests?)?\b|単体テスト/u },
+  {
+    id: "integration",
+    pattern: /\bintegration(?:\s+tests?)?\b|結合テスト|統合テスト/u,
+  },
+  { id: "lint", pattern: /\blint(?:ing)?\b|静的解析/u },
+  { id: "regression", pattern: /\bregression\b|回帰/u },
+] as const;
 
 export function assertSpecCreatorSemanticContracts(
   paths: SpecCreatorArtifactPaths,
   phase: SpecCreatorGuardPhase,
+  options: SpecCreatorQualityOptions = {},
 ): void {
-  const violations = collectSpecCreatorQualityViolations(paths);
+  const violations = collectSpecCreatorQualityViolations(paths, options);
   if (violations.length === 0) {
     return;
   }
@@ -88,7 +112,10 @@ export function assertSpecCreatorSemanticContracts(
 
 export function collectSpecCreatorQualityViolations(
   paths: SpecCreatorArtifactPaths,
+  options: SpecCreatorQualityOptions = {},
 ): SpecCreatorQualityViolation[] {
+  const emitReviewContractToArtifacts =
+    options.emitReviewContractToArtifacts ?? true;
   const artifacts = loadArtifacts(paths);
   const violations: SpecCreatorQualityViolation[] = [];
   const allSpecText = artifacts.specs.map((item) => item.text).join("\n");
@@ -117,8 +144,18 @@ export function collectSpecCreatorQualityViolations(
     paths.proposalPath,
     artifacts.proposal,
   );
-  pushRequiredReviewContractCoverage(violations, paths, artifacts);
-  pushReviewContractTraceability(violations, paths, artifacts);
+  if (emitReviewContractToArtifacts) {
+    pushRequiredReviewContractCoverage(violations, paths, artifacts);
+    pushReviewContractTraceability(violations, paths, artifacts);
+  }
+  if (options.polishMode === "preserve-supplement") {
+    pushPreserveSupplementRegressionGuards(
+      violations,
+      paths,
+      artifacts,
+      options.sourcePaths,
+    );
+  }
 
   if (PERSONA_DIR_PATTERN.test(combined)) {
     pushRunSpecCreatorCoverage(violations, paths, artifacts);
@@ -516,6 +553,283 @@ function pushReviewContractTraceability(
   });
 }
 
+function pushPreserveSupplementRegressionGuards(
+  violations: SpecCreatorQualityViolation[],
+  paths: SpecCreatorArtifactPaths,
+  artifacts: LoadedArtifacts,
+  sourcePaths: SpecCreatorArtifactPaths | undefined,
+): void {
+  if (sourcePaths === undefined) {
+    return;
+  }
+  const sourceArtifacts = loadArtifactsForComparison(sourcePaths);
+  pushCapabilityPathDrift(
+    violations,
+    paths,
+    sourcePaths,
+  );
+  pushTaskScopeRegression(
+    violations,
+    paths,
+    artifacts,
+    sourceArtifacts,
+  );
+  pushValidationStrengthRegression(
+    violations,
+    paths,
+    artifacts,
+    sourceArtifacts,
+  );
+  pushScenarioStrengthRegression(
+    violations,
+    paths,
+    artifacts,
+    sourceArtifacts,
+  );
+}
+
+function pushCapabilityPathDrift(
+  violations: SpecCreatorQualityViolation[],
+  paths: SpecCreatorArtifactPaths,
+  sourcePaths: SpecCreatorArtifactPaths,
+): void {
+  const source = collectSpecRelativePathSet(sourcePaths, { existingOnly: true });
+  if (source.length === 0) {
+    return;
+  }
+  const revised = collectSpecRelativePathSet(paths, { existingOnly: true });
+  if (revised.length === source.length) {
+    let differs = false;
+    for (let index = 0; index < source.length; index += 1) {
+      if (source[index] !== revised[index]) {
+        differs = true;
+        break;
+      }
+    }
+    if (!differs) {
+      return;
+    }
+  }
+
+  const revisedSet = new Set(revised);
+  const sourceSet = new Set(source);
+  const missing = source.filter((item) => !revisedSet.has(item));
+  const extra = revised.filter((item) => !sourceSet.has(item));
+  const details: string[] = [];
+  if (missing.length > 0) {
+    details.push(`missing: ${missing.join(", ")}`);
+  }
+  if (extra.length > 0) {
+    details.push(`extra: ${extra.join(", ")}`);
+  }
+  violations.push({
+    rule_id: "capability_path_drift",
+    file: firstDeltaSpecPath(paths),
+    line: 1,
+    message:
+      `preserve-supplement must keep specs/**/spec.md relative path set aligned with source change (${
+        details.join("; ")
+      })`,
+  });
+}
+
+function pushTaskScopeRegression(
+  violations: SpecCreatorQualityViolation[],
+  paths: SpecCreatorArtifactPaths,
+  artifacts: LoadedArtifacts,
+  sourceArtifacts: LoadedArtifacts,
+): void {
+  const sourceImplementationCount = countImplementationTaskTargets(
+    sourceArtifacts.tasks,
+  );
+  if (sourceImplementationCount <= 0) {
+    return;
+  }
+  const revisedImplementationCount = countImplementationTaskTargets(
+    artifacts.tasks,
+  );
+  if (revisedImplementationCount > 0) {
+    return;
+  }
+  violations.push({
+    rule_id: "task_scope_regression",
+    file: paths.tasksPath,
+    line: 1,
+    message:
+      `implementation target paths disappeared into doc-only scope (${sourceImplementationCount} -> ${revisedImplementationCount})`,
+  });
+}
+
+function countImplementationTaskTargets(tasksText: string): number {
+  const sections = findAllTaskSections(tasksText);
+  let count = 0;
+  for (const section of sections) {
+    const targetLine = TASK_TARGET_PATHS_PATTERN.exec(section.text)?.[1] ?? "";
+    TASK_TARGET_PATHS_PATTERN.lastIndex = 0;
+    if (targetLine.length === 0) {
+      continue;
+    }
+    const targets = targetLine.split(",").map((item) => item.trim()).filter((
+      item,
+    ) => item.length > 0);
+    if (targets.some((item) => isImplementationTargetPath(item))) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function isImplementationTargetPath(target: string): boolean {
+  const normalized = target.trim().toLowerCase();
+  if (
+    normalized.length === 0 ||
+    normalized === "none" ||
+    normalized === "(none)" ||
+    normalized === "なし"
+  ) {
+    return false;
+  }
+  if (normalized === "*") {
+    return true;
+  }
+  if (normalized.endsWith(".md") || normalized.endsWith("/**/spec.md")) {
+    return false;
+  }
+  return true;
+}
+
+function pushValidationStrengthRegression(
+  violations: SpecCreatorQualityViolation[],
+  paths: SpecCreatorArtifactPaths,
+  artifacts: LoadedArtifacts,
+  sourceArtifacts: LoadedArtifacts,
+): void {
+  const sourceText = joinArtifactsForRegressionScan(sourceArtifacts);
+  const revisedText = joinArtifactsForRegressionScan(artifacts);
+  const missingIntents = VALIDATION_INTENT_PATTERNS.filter((item) =>
+    item.pattern.test(sourceText) && !item.pattern.test(revisedText)
+  ).map((item) => item.id);
+  if (missingIntents.length === 0) {
+    return;
+  }
+  violations.push({
+    rule_id: "validation_strength_regression",
+    file: paths.tasksPath,
+    line: 1,
+    message:
+      `explicit validation intents were removed: ${missingIntents.join(", ")}`,
+  });
+}
+
+function pushScenarioStrengthRegression(
+  violations: SpecCreatorQualityViolation[],
+  paths: SpecCreatorArtifactPaths,
+  artifacts: LoadedArtifacts,
+  sourceArtifacts: LoadedArtifacts,
+): void {
+  const sourceSpecText = sourceArtifacts.specs.map((item) => item.text).join(
+    "\n",
+  );
+  const sourceLine = findNotificationScenarioLine(sourceSpecText);
+  if (sourceLine === null) {
+    return;
+  }
+  const revisedSpecText = artifacts.specs.map((item) => item.text).join("\n");
+  if (findNotificationScenarioLine(revisedSpecText) !== null) {
+    return;
+  }
+  violations.push({
+    rule_id: "scenario_strength_regression",
+    file: firstDeltaSpecPath(paths),
+    line: sourceLine,
+    message:
+      "explicit notification scenario wording was weakened or removed",
+  });
+}
+
+function findNotificationScenarioLine(text: string): number | null {
+  const lines = text.split(/\r?\n/u);
+  let insideScenario = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (SCENARIO_HEADER_PATTERN.test(line)) {
+      insideScenario = true;
+      continue;
+    }
+    if (insideScenario && REQUIREMENT_HEADER_PATTERN.test(line)) {
+      insideScenario = false;
+      continue;
+    }
+    if (!insideScenario) {
+      continue;
+    }
+    if (NOTIFICATION_PATTERN.test(line)) {
+      return index + 1;
+    }
+  }
+  return null;
+}
+
+function collectSpecRelativePathSet(
+  paths: SpecCreatorArtifactPaths,
+  options: {
+    existingOnly?: boolean;
+  } = {},
+): string[] {
+  const baseDir = typeof paths.changeDir === "string"
+    ? path.resolve(paths.changeDir)
+    : null;
+  const candidates = options.existingOnly
+    ? allDeltaSpecPaths(paths).filter((specPath) => isFile(specPath))
+    : allDeltaSpecPaths(paths);
+  const normalized = candidates.map((specPath) =>
+    normalizeSpecRelativePath(specPath, baseDir)
+  );
+  const unique = [...new Set(normalized)];
+  unique.sort((left, right) => left.localeCompare(right));
+  return unique;
+}
+
+function isFile(filePath: string): boolean {
+  try {
+    return Deno.statSync(filePath).isFile;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeSpecRelativePath(specPath: string, changeDir: string | null): string {
+  const resolved = path.resolve(specPath);
+  if (changeDir !== null) {
+    const relative = path.relative(changeDir, resolved);
+    if (
+      relative.length > 0 &&
+      relative !== "." &&
+      !relative.startsWith("..") &&
+      !path.isAbsolute(relative)
+    ) {
+      return relative.replaceAll("\\", "/");
+    }
+  }
+  const normalized = resolved.replaceAll("\\", "/");
+  const marker = "/specs/";
+  const markerIndex = normalized.lastIndexOf(marker);
+  if (markerIndex >= 0) {
+    return normalized.slice(markerIndex + 1);
+  }
+  return path.basename(resolved);
+}
+
+function joinArtifactsForRegressionScan(artifacts: LoadedArtifacts): string {
+  return [
+    artifacts.proposal,
+    artifacts.tasks,
+    artifacts.design,
+    artifacts.codeSummary,
+    ...artifacts.specs.map((item) => item.text),
+  ].join("\n");
+}
+
 function loadArtifacts(paths: SpecCreatorArtifactPaths): LoadedArtifacts {
   const specs = allDeltaSpecPaths(paths).map((specPath) => ({
     path: specPath,
@@ -526,6 +840,22 @@ function loadArtifacts(paths: SpecCreatorArtifactPaths): LoadedArtifacts {
     tasks: readText(paths.tasksPath),
     design: readTextOptional(paths.designPath),
     codeSummary: readText(paths.codeSummaryPath),
+    specs,
+  };
+}
+
+function loadArtifactsForComparison(
+  paths: SpecCreatorArtifactPaths,
+): LoadedArtifacts {
+  const specs = allDeltaSpecPaths(paths).map((specPath) => ({
+    path: specPath,
+    text: readTextOptional(specPath),
+  }));
+  return {
+    proposal: readTextOptional(paths.proposalPath),
+    tasks: readTextOptional(paths.tasksPath),
+    design: readTextOptional(paths.designPath),
+    codeSummary: readTextOptional(paths.codeSummaryPath),
     specs,
   };
 }

@@ -166,6 +166,46 @@ function withTempArtifactsAndExtraSpecs(
   }
 }
 
+function writeArtifactsAt(
+  root: string,
+  files: {
+    proposal: string;
+    tasks: string;
+    design: string;
+    codeSummary: string;
+    specs: Record<string, string>;
+  },
+): SpecCreatorArtifactPaths {
+  const proposalPath = `${root}/proposal.md`;
+  const tasksPath = `${root}/tasks.md`;
+  const designPath = `${root}/design.md`;
+  const codeSummaryPath = `${root}/code_summary.md`;
+  Deno.mkdirSync(root, { recursive: true });
+  Deno.writeTextFileSync(proposalPath, files.proposal);
+  Deno.writeTextFileSync(tasksPath, files.tasks);
+  Deno.writeTextFileSync(designPath, files.design);
+  Deno.writeTextFileSync(codeSummaryPath, files.codeSummary);
+
+  const specPaths = Object.entries(files.specs).map(([relative, content]) => {
+    const specPath = `${root}/${relative}`;
+    Deno.mkdirSync(path.dirname(specPath), { recursive: true });
+    Deno.writeTextFileSync(specPath, content);
+    return specPath;
+  }).sort((left, right) => left.localeCompare(right));
+  if (specPaths.length === 0) {
+    throw new Error("writeArtifactsAt requires at least one spec file");
+  }
+  return {
+    changeDir: root,
+    proposalPath,
+    tasksPath,
+    designPath,
+    codeSummaryPath,
+    deltaSpecPath: specPaths[0],
+    deltaSpecPaths: specPaths,
+  };
+}
+
 function hasRule(
   violations: Array<{ rule_id: string }>,
   ruleId: string,
@@ -296,6 +336,39 @@ Deno.test("quality guard detects review contract gaps between tasks 1.3 and spec
     const violations = collectSpecCreatorQualityViolations(paths);
     if (!hasRule(violations, "review_contract_coverage")) {
       throw new Error("expected review_contract_coverage violation");
+    }
+  });
+});
+
+Deno.test("quality guard skips RC coverage rules when emitReviewContractToArtifacts=false", () => {
+  withTempArtifacts({
+    tasksPath: [
+      "## 1. tasks",
+      "- [ ] 1.3 review contract",
+      "  - outcome: RC omitted intentionally",
+      '  - persona_policy: {"phase_order":["implement","review"]}',
+    ].join("\n"),
+    codeSummaryPath: [
+      "# code_summary",
+      "",
+      "## task_id: 1.3",
+      "",
+      "- no RC trace lines",
+    ].join("\n"),
+    deltaSpecPath: [
+      "## ADDED Requirements",
+      "### Requirement: baseline",
+      "The system SHALL keep generated artifacts aligned.",
+    ].join("\n"),
+  }, (paths) => {
+    const violations = collectSpecCreatorQualityViolations(paths, {
+      emitReviewContractToArtifacts: false,
+    });
+    if (hasRule(violations, "review_contract_coverage")) {
+      throw new Error("review_contract_coverage should be skipped");
+    }
+    if (hasRule(violations, "review_contract_traceability")) {
+      throw new Error("review_contract_traceability should be skipped");
     }
   });
 });
@@ -437,4 +510,271 @@ Deno.test("quality guard scans all delta spec files, not only first one", () => 
       }
     },
   );
+});
+
+Deno.test("quality guard detects capability path drift in preserve-supplement mode", () => {
+  const root = Deno.makeTempDirSync();
+  try {
+    const sourcePaths = writeArtifactsAt(`${root}/source`, {
+      proposal: "# proposal\n",
+      tasks: [
+        "## 1. tasks",
+        "- [ ] 1.1 implement",
+        "  - Target paths: src/app.ts",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+      ].join("\n"),
+      design: "# design\n",
+      codeSummary: "# code_summary\n",
+      specs: {
+        "specs/auth/spec.md":
+          "## ADDED Requirements\n#### Scenario: auth\n- THEN keep auth path\n",
+        "specs/billing/spec.md":
+          "## ADDED Requirements\n#### Scenario: billing\n- THEN keep billing path\n",
+      },
+    });
+    const revisedPaths = writeArtifactsAt(`${root}/revised`, {
+      proposal: "# proposal\n",
+      tasks: [
+        "## 1. tasks",
+        "- [ ] 1.1 implement",
+        "  - Target paths: src/app.ts",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+      ].join("\n"),
+      design: "# design\n",
+      codeSummary: "# code_summary\n",
+      specs: {
+        "specs/auth/spec.md":
+          "## ADDED Requirements\n#### Scenario: auth\n- THEN keep auth path\n",
+      },
+    });
+    const violations = collectSpecCreatorQualityViolations(revisedPaths, {
+      emitReviewContractToArtifacts: false,
+      polishMode: "preserve-supplement",
+      sourcePaths,
+    });
+    if (!hasRule(violations, "capability_path_drift")) {
+      throw new Error("expected capability_path_drift violation");
+    }
+  } finally {
+    Deno.removeSync(root, { recursive: true });
+  }
+});
+
+Deno.test("quality guard detects task scope regression in preserve-supplement mode", () => {
+  const root = Deno.makeTempDirSync();
+  try {
+    const sourcePaths = writeArtifactsAt(`${root}/source`, {
+      proposal: "# proposal\n",
+      tasks: [
+        "## 1. tasks",
+        "- [ ] 1.1 implement",
+        "  - Target paths: src/server.ts",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+      ].join("\n"),
+      design: "# design\n",
+      codeSummary: "# code_summary\n",
+      specs: {
+        "specs/server/spec.md":
+          "## ADDED Requirements\n#### Scenario: server\n- THEN keep server path\n",
+      },
+    });
+    const revisedPaths = writeArtifactsAt(`${root}/revised`, {
+      proposal: "# proposal\n",
+      tasks: [
+        "## 1. tasks",
+        "- [ ] 1.1 docs only",
+        "  - Target paths: openspec/changes/revised/proposal.md",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+      ].join("\n"),
+      design: "# design\n",
+      codeSummary: "# code_summary\n",
+      specs: {
+        "specs/server/spec.md":
+          "## ADDED Requirements\n#### Scenario: server\n- THEN keep server path\n",
+      },
+    });
+    const violations = collectSpecCreatorQualityViolations(revisedPaths, {
+      emitReviewContractToArtifacts: false,
+      polishMode: "preserve-supplement",
+      sourcePaths,
+    });
+    if (!hasRule(violations, "task_scope_regression")) {
+      throw new Error("expected task_scope_regression violation");
+    }
+  } finally {
+    Deno.removeSync(root, { recursive: true });
+  }
+});
+
+Deno.test("quality guard detects validation strength regression in preserve-supplement mode", () => {
+  const root = Deno.makeTempDirSync();
+  try {
+    const sourcePaths = writeArtifactsAt(`${root}/source`, {
+      proposal: "- validation: unit integration lint regression\n",
+      tasks: [
+        "## 1. tasks",
+        "- [ ] 1.1 validation",
+        "  - Target paths: src/server.ts",
+        "  - Description: unit integration lint regression",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+      ].join("\n"),
+      design: "# design\n",
+      codeSummary: "# code_summary\n",
+      specs: {
+        "specs/server/spec.md":
+          "## ADDED Requirements\n#### Scenario: validation\n- THEN run unit and integration tests\n",
+      },
+    });
+    const revisedPaths = writeArtifactsAt(`${root}/revised`, {
+      proposal: "- validation: smoke\n",
+      tasks: [
+        "## 1. tasks",
+        "- [ ] 1.1 validation",
+        "  - Target paths: src/server.ts",
+        "  - Description: smoke only",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+      ].join("\n"),
+      design: "# design\n",
+      codeSummary: "# code_summary\n",
+      specs: {
+        "specs/server/spec.md":
+          "## ADDED Requirements\n#### Scenario: validation\n- THEN run smoke checks\n",
+      },
+    });
+    const violations = collectSpecCreatorQualityViolations(revisedPaths, {
+      emitReviewContractToArtifacts: false,
+      polishMode: "preserve-supplement",
+      sourcePaths,
+    });
+    if (!hasRule(violations, "validation_strength_regression")) {
+      throw new Error("expected validation_strength_regression violation");
+    }
+  } finally {
+    Deno.removeSync(root, { recursive: true });
+  }
+});
+
+Deno.test("quality guard detects notification scenario weakening in preserve-supplement mode", () => {
+  const root = Deno.makeTempDirSync();
+  try {
+    const sourcePaths = writeArtifactsAt(`${root}/source`, {
+      proposal: "# proposal\n",
+      tasks: [
+        "## 1. tasks",
+        "- [ ] 1.1 notifications",
+        "  - Target paths: src/notify.ts",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+      ].join("\n"),
+      design: "# design\n",
+      codeSummary: "# code_summary\n",
+      specs: {
+        "specs/notify/spec.md": [
+          "## ADDED Requirements",
+          "### Requirement: notify",
+          "#### Scenario: notify users",
+          "- THEN send notification to each subscriber",
+        ].join("\n"),
+      },
+    });
+    const revisedPaths = writeArtifactsAt(`${root}/revised`, {
+      proposal: "# proposal\n",
+      tasks: [
+        "## 1. tasks",
+        "- [ ] 1.1 notifications",
+        "  - Target paths: src/notify.ts",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+      ].join("\n"),
+      design: "# design\n",
+      codeSummary: "# code_summary\n",
+      specs: {
+        "specs/notify/spec.md": [
+          "## ADDED Requirements",
+          "### Requirement: notify",
+          "#### Scenario: notify users",
+          "- THEN persist status only",
+        ].join("\n"),
+      },
+    });
+    const violations = collectSpecCreatorQualityViolations(revisedPaths, {
+      emitReviewContractToArtifacts: false,
+      polishMode: "preserve-supplement",
+      sourcePaths,
+    });
+    if (!hasRule(violations, "scenario_strength_regression")) {
+      throw new Error("expected scenario_strength_regression violation");
+    }
+  } finally {
+    Deno.removeSync(root, { recursive: true });
+  }
+});
+
+Deno.test("quality guard passes preserve-supplement when supplemented without weakening", () => {
+  const root = Deno.makeTempDirSync();
+  try {
+    const sourcePaths = writeArtifactsAt(`${root}/source`, {
+      proposal: "- validation: unit integration lint regression\n",
+      tasks: [
+        "## 1. tasks",
+        "- [ ] 1.1 notifications",
+        "  - Target paths: src/notify.ts",
+        "  - Description: unit integration lint regression",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+      ].join("\n"),
+      design: "# design\n",
+      codeSummary: "# code_summary\n",
+      specs: {
+        "specs/notify/spec.md": [
+          "## ADDED Requirements",
+          "### Requirement: notify",
+          "#### Scenario: notify users",
+          "- THEN send notification to each subscriber",
+        ].join("\n"),
+      },
+    });
+    const revisedPaths = writeArtifactsAt(`${root}/revised`, {
+      proposal: [
+        "- validation: unit integration lint regression",
+        "- supplement: preserve wording and add telemetry",
+      ].join("\n"),
+      tasks: [
+        "## 1. tasks",
+        "- [ ] 1.1 notifications",
+        "  - Target paths: src/notify.ts, src/telemetry.ts",
+        "  - Description: unit integration lint regression with telemetry",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+      ].join("\n"),
+      design: "# design\n",
+      codeSummary: "# code_summary\n",
+      specs: {
+        "specs/notify/spec.md": [
+          "## ADDED Requirements",
+          "### Requirement: notify",
+          "#### Scenario: notify users",
+          "- THEN send notification to each subscriber",
+          "- AND log audit event",
+        ].join("\n"),
+      },
+    });
+    const violations = collectSpecCreatorQualityViolations(revisedPaths, {
+      emitReviewContractToArtifacts: false,
+      polishMode: "preserve-supplement",
+      sourcePaths,
+    }).filter((violation) =>
+      [
+        "capability_path_drift",
+        "task_scope_regression",
+        "validation_strength_regression",
+        "scenario_strength_regression",
+      ].includes(violation.rule_id)
+    );
+    if (violations.length > 0) {
+      throw new Error(
+        `expected no preserve regressions, got: ${
+          violations.map((violation) => violation.rule_id).join(", ")
+        }`,
+      );
+    }
+  } finally {
+    Deno.removeSync(root, { recursive: true });
+  }
 });

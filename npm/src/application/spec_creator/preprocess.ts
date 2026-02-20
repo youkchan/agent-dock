@@ -41,6 +41,15 @@ export interface SpecCreatorTaskConfig extends SpecCreatorTaskConfigTemplate {
   };
 }
 
+export interface NormalizeSpecContextOptions {
+  includeReviewContractInContext?: boolean;
+}
+
+export interface BuildSpecCreatorTaskConfigOptions {
+  includeReviewContractInContext?: boolean;
+  includeReviewContractInTaskDescription?: boolean;
+}
+
 const DEFAULT_SPEC_CREATOR_PERSONAS = [
   "spec-planner",
   "spec-reviewer",
@@ -165,12 +174,20 @@ export function collectSpecContextInteractive(
 export function buildSpecCreatorTaskConfig(
   changeId: string,
   specContext: SpecContext,
+  options: BuildSpecCreatorTaskConfigOptions = {},
 ): SpecCreatorTaskConfig {
+  const includeReviewContractInContext =
+    options.includeReviewContractInContext ?? true;
+  const includeReviewContractInTaskDescription =
+    options.includeReviewContractInTaskDescription ?? true;
   const normalizedSpecContext = normalizeSpecContextForReviewContract(
     specContext,
+    { includeReviewContractInContext },
   );
   const template = createSpecCreatorTaskConfigTemplate(changeId);
-  const contextText = buildSpecContextPromptSection(normalizedSpecContext);
+  const contextText = buildSpecContextPromptSection(normalizedSpecContext, {
+    includeReviewContractInContext,
+  });
   const tasks = template.tasks.map((task) => ({
     ...task,
     target_paths: [...task.target_paths],
@@ -185,6 +202,7 @@ export function buildSpecCreatorTaskConfig(
         task.id,
         task.description,
         normalizedSpecContext.language,
+        { includeReviewContractInTaskDescription },
       )
     }\n\n${contextText}`,
   }));
@@ -204,12 +222,17 @@ export function buildSpecCreatorTaskConfig(
 
 export function normalizeSpecContextForReviewContract(
   specContext: SpecContext,
+  options: NormalizeSpecContextOptions = {},
 ): SpecContext {
+  const includeReviewContractInContext =
+    options.includeReviewContractInContext ?? true;
   return {
-    requirements_text: ensureRequiredReviewContractInRequirementsText(
-      specContext.requirements_text,
-      specContext.language,
-    ),
+    requirements_text: includeReviewContractInContext
+      ? ensureRequiredReviewContractInRequirementsText(
+        specContext.requirements_text,
+        specContext.language,
+      )
+      : specContext.requirements_text.trim(),
     language: specContext.language,
     runtime_stack: specContext.runtime_stack,
     persona_policy: {
@@ -240,34 +263,51 @@ export function ensureRequiredReviewContractInRequirementsText(
   ].join("\n").trim();
 }
 
-function buildSpecContextPromptSection(specContext: SpecContext): string {
+function buildSpecContextPromptSection(
+  specContext: SpecContext,
+  options: {
+    includeReviewContractInContext: boolean;
+  },
+): string {
   const activePersonas = specContext.persona_policy.active_personas.length > 0
     ? specContext.persona_policy.active_personas.join(", ")
     : "(none)";
   const requirementsLines = toPromptMultilineBlock(
     specContext.requirements_text,
   );
-  const contractLines = REQUIRED_REVIEW_CONTRACT_ITEMS_BY_LANG[
-    specContext.language
-  ];
-
-  return [
+  const lines = [
     "spec_context:",
     "- requirements_text: |",
     ...requirementsLines.map((line) => `  ${line}`),
-    "- required_review_contract: |",
-    ...contractLines.map((line) => `  - ${line}`),
+  ];
+  if (options.includeReviewContractInContext) {
+    const contractLines = REQUIRED_REVIEW_CONTRACT_ITEMS_BY_LANG[
+      specContext.language
+    ];
+    lines.push(
+      "- required_review_contract: |",
+      ...contractLines.map((line) => `  - ${line}`),
+    );
+  }
+  lines.push(
     `- language: ${specContext.language}`,
     `- runtime_stack: ${specContext.runtime_stack} (TypeScript-only runtime, use src/**/*.ts)`,
     `- active_personas: ${activePersonas}`,
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 function withTaskReviewContractDescription(
   taskId: string,
   description: string,
   language: SpecCreatorLanguage,
+  options: {
+    includeReviewContractInTaskDescription: boolean;
+  },
 ): string {
+  if (!options.includeReviewContractInTaskDescription) {
+    return description;
+  }
   if (taskId !== "1.3") {
     return description;
   }

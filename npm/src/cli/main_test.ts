@@ -1370,6 +1370,22 @@ Deno.test("main spec-creator polish rejects --feedback without value", () => {
   }
 });
 
+Deno.test("main spec-creator polish rejects invalid --mode value", () => {
+  const buffer = createIoBuffer();
+  const exitCode = main(
+    ["spec-creator", "polish", "sample-change-id", "--mode", "invalid-mode"],
+    buffer.io,
+  );
+  if (exitCode !== 1) {
+    throw new Error("spec-creator polish should reject invalid mode");
+  }
+  if (!buffer.state.stderr.includes("argument --mode: invalid choice")) {
+    throw new Error(
+      `stderr should include mode choice error: ${buffer.state.stderr}`,
+    );
+  }
+});
+
 Deno.test("main spec-creator polish uses existing markdown context without interactive TTY", () => {
   const changeId = uniqueChangeId("update-polish-context");
   const polishedChangeId = revisedChangeId(changeId);
@@ -1388,6 +1404,8 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
         "spec-creator",
         "polish",
         changeId,
+        "--mode",
+        "regenerate",
         "--no-run",
         "--output",
         outputPath,
@@ -1471,6 +1489,165 @@ Deno.test("main spec-creator polish uses existing markdown context without inter
   }
 });
 
+Deno.test("main spec-creator polish preserve-supplement keeps source spec path set", () => {
+  const changeId = uniqueChangeId("update-polish-preserve-spec-paths");
+  const polishedChangeId = revisedChangeId(changeId);
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  withTemporaryChangeDir(changeId, () => {
+    Deno.mkdirSync(`openspec/changes/${changeId}/specs/auth`, {
+      recursive: true,
+    });
+    Deno.mkdirSync(`openspec/changes/${changeId}/specs/billing`, {
+      recursive: true,
+    });
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/proposal.md`,
+      "# proposal\n- preserve specs\n",
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/tasks.md`,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 1.1 実装を反映する",
+        "  - 依存: なし",
+        "  - 対象: src/app.ts",
+        "  - フェーズ担当: implement=implementer; review=code-reviewer",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+        "  - 成果物: src/app.ts を更新する",
+      ].join("\n"),
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/code_summary.md`,
+      "# code_summary\n\n## task_id: 1.1\n",
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/specs/auth/spec.md`,
+      "## ADDED Requirements\n#### Scenario: auth\n- THEN keep auth capability\n",
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/specs/billing/spec.md`,
+      "## ADDED Requirements\n#### Scenario: billing\n- THEN keep billing capability\n",
+    );
+
+    const buffer = createIoBuffer();
+    withFakeOpenSpecValidate("pass", () => {
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        changeId,
+        "--mode",
+        "preserve-supplement",
+        "--no-run",
+        "--output",
+        outputPath,
+      ], buffer.io);
+      if (exitCode !== 0) {
+        throw new Error(
+          `spec-creator polish preserve mode should succeed: ${buffer.state.stderr}`,
+        );
+      }
+    });
+
+    const revisedAuthSpec =
+      `openspec/changes/${polishedChangeId}/specs/auth/spec.md`;
+    const revisedBillingSpec =
+      `openspec/changes/${polishedChangeId}/specs/billing/spec.md`;
+    if (!fileExists(revisedAuthSpec)) {
+      throw new Error("revised auth spec should be preserved");
+    }
+    if (!fileExists(revisedBillingSpec)) {
+      throw new Error("revised billing spec should be preserved");
+    }
+    const defaultSpecPath =
+      `openspec/changes/${polishedChangeId}/specs/${polishedChangeId}/spec.md`;
+    if (fileExists(defaultSpecPath)) {
+      throw new Error(
+        "preserve-supplement should not drift to fallback capability path",
+      );
+    }
+
+    try {
+      Deno.removeSync(outputPath);
+    } catch {
+      // noop
+    }
+  });
+});
+
+Deno.test("main spec-creator polish keeps notification scenarios from source in preserve-supplement mode", () => {
+  const changeId = uniqueChangeId("update-polish-notification-scenario");
+  const polishedChangeId = revisedChangeId(changeId);
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  withTemporaryChangeDir(changeId, () => {
+    Deno.mkdirSync(`openspec/changes/${changeId}/specs/alerts`, {
+      recursive: true,
+    });
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/proposal.md`,
+      "# proposal\n",
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/tasks.md`,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 1.1 通知を実装する",
+        "  - 依存: なし",
+        "  - 対象: src/notify.ts",
+        "  - フェーズ担当: implement=implementer; review=code-reviewer",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+        "  - 成果物: src/notify.ts を更新する",
+      ].join("\n"),
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/code_summary.md`,
+      "# code_summary\n\n## task_id: 1.1\n",
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/specs/alerts/spec.md`,
+      [
+        "## ADDED Requirements",
+        "### Requirement: notify users",
+        "#### Scenario: send notification",
+        "- THEN send notification to each subscribed user",
+      ].join("\n"),
+    );
+
+    const buffer = createIoBuffer();
+    withFakeOpenSpecValidate("pass", () => {
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        changeId,
+        "--mode",
+        "preserve-supplement",
+        "--no-run",
+        "--output",
+        outputPath,
+      ], buffer.io);
+      if (exitCode !== 0) {
+        throw new Error(
+          `spec-creator polish preserve mode should succeed: ${buffer.state.stderr}`,
+        );
+      }
+    });
+
+    const revisedSpecPath =
+      `openspec/changes/${polishedChangeId}/specs/alerts/spec.md`;
+    const revisedSpec = Deno.readTextFileSync(revisedSpecPath);
+    if (!revisedSpec.includes("send notification")) {
+      throw new Error(
+        "notification scenario wording should be preserved from source",
+      );
+    }
+
+    try {
+      Deno.removeSync(outputPath);
+    } catch {
+      // noop
+    }
+  });
+});
+
 Deno.test("main spec-creator polish quotes checklist lines in human notes", () => {
   const changeId = uniqueChangeId("update-polish-quote-checklist");
   const polishedChangeId = revisedChangeId(changeId);
@@ -1494,6 +1671,8 @@ Deno.test("main spec-creator polish quotes checklist lines in human notes", () =
         "spec-creator",
         "polish",
         changeId,
+        "--mode",
+        "regenerate",
         "--no-run",
         "--output",
         outputPath,
@@ -1530,6 +1709,91 @@ Deno.test("main spec-creator polish quotes checklist lines in human notes", () =
       throw new Error(
         "human notes should not include top-level checklist items parsed as task ids",
       );
+    }
+
+    try {
+      Deno.removeSync(outputPath);
+    } catch {
+      // noop
+    }
+  });
+});
+
+Deno.test("main spec-creator polish --emit-review-contract-to-artifacts=false does not inject RC text", () => {
+  const changeId = uniqueChangeId("update-polish-no-rc-injection");
+  const polishedChangeId = revisedChangeId(changeId);
+  const outputPath = `task_configs/spec_creator/${changeId}.json`;
+  withTemporaryChangeDir(changeId, () => {
+    Deno.mkdirSync(`openspec/changes/${changeId}/specs/alpha`, {
+      recursive: true,
+    });
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/proposal.md`,
+      "# proposal\n",
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/tasks.md`,
+      [
+        "## 1. 実装タスク",
+        "- [ ] 1.3 既存レビュータスク",
+        "  - 依存: なし",
+        "  - 対象: src/a.ts",
+        "  - フェーズ担当: implement=implementer; review=code-reviewer",
+        '  - persona_policy: {"phase_order":["implement","review"]}',
+        "  - 成果物: src/a.ts を更新する",
+      ].join("\n"),
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/code_summary.md`,
+      "# code_summary\n\n## task_id: 1.3\n- note: existing summary only\n",
+    );
+    Deno.writeTextFileSync(
+      `openspec/changes/${changeId}/specs/alpha/spec.md`,
+      [
+        "## ADDED Requirements",
+        "### Requirement: alpha",
+        "#### Scenario: alpha",
+        "- THEN keep baseline",
+      ].join("\n"),
+    );
+
+    const buffer = createIoBuffer();
+    withFakeOpenSpecValidate("pass", () => {
+      const exitCode = main([
+        "spec-creator",
+        "polish",
+        changeId,
+        "--mode",
+        "preserve-supplement",
+        "--emit-review-contract-to-artifacts=false",
+        "--no-run",
+        "--output",
+        outputPath,
+      ], buffer.io);
+      if (exitCode !== 0) {
+        throw new Error(
+          `spec-creator polish should succeed without RC injection: ${buffer.state.stderr}`,
+        );
+      }
+    });
+
+    const revisedTasks = Deno.readTextFileSync(
+      `openspec/changes/${polishedChangeId}/tasks.md`,
+    );
+    const revisedCodeSummary = Deno.readTextFileSync(
+      `openspec/changes/${polishedChangeId}/code_summary.md`,
+    );
+    const revisedSpec = Deno.readTextFileSync(
+      `openspec/changes/${polishedChangeId}/specs/alpha/spec.md`,
+    );
+    if (revisedTasks.includes("RC-01")) {
+      throw new Error("tasks.md should not inject RC lines when disabled");
+    }
+    if (revisedCodeSummary.includes("review_contract_traceability")) {
+      throw new Error("code_summary should not inject RC traceability section");
+    }
+    if (revisedSpec.includes("### Requirement (RC-01)")) {
+      throw new Error("spec should not inject RC requirement blocks");
     }
 
     try {
@@ -2239,6 +2503,119 @@ Deno.test({
         ) {
           throw new Error(
             "state should keep validation_retry_exhausted:missing_judgment reason",
+          );
+        }
+      });
+    } finally {
+      try {
+        Deno.removeSync(workerRoot, { recursive: true });
+      } catch {
+        // noop
+      }
+      try {
+        Deno.removeSync(outputPath);
+      } catch {
+        // noop
+      }
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "main spec-creator polish blocks when implementation tasks are downgraded in preserve-supplement mode",
+  ignore: !hasBashRunPermission,
+  fn: () => {
+    const changeId = uniqueChangeId("update-polish-task-scope-regression");
+    const outputPath = `task_configs/spec_creator/${changeId}.json`;
+    const workerRoot = Deno.makeTempDirSync();
+    const workerPath = `${workerRoot}/downgrade_tasks_worker.sh`;
+    const stateDir = `${workerRoot}/state`;
+    Deno.writeTextFileSync(
+      workerPath,
+      [
+        "#!/bin/sh",
+        "set -eu",
+        'payload="$(/bin/cat)"',
+        'if printf "%s" "$payload" | /usr/bin/grep -q \'"mode":"execute"\'; then',
+        '  change_id="${OPENSPEC_CHANGE_ID:-}"',
+        '  target_path="openspec/changes/${change_id}/tasks.md"',
+        '  if [ -f "$target_path" ]; then',
+        '    tmp_path="${target_path}.tmp"',
+        '    /usr/bin/awk -v change_id="$change_id" \'{ gsub(/src\\/app\\.ts/, "openspec/changes/" change_id "/proposal.md"); print }\' "$target_path" > "$tmp_path"',
+        '    /bin/mv "$tmp_path" "$target_path"',
+        "  fi",
+        "fi",
+        "echo 'RESULT: completed'",
+        "echo 'SUMMARY: force task scope downgrade'",
+        "echo 'CHANGED_FILES: src/app.ts'",
+        "echo 'CHECKS: deno test src'",
+        "echo 'JUDGMENT: pass'",
+      ].join("\n"),
+    );
+    Deno.chmodSync(workerPath, 0o755);
+
+    const buffer = createIoBuffer();
+    try {
+      withTemporaryChangeDir(changeId, () => {
+        Deno.mkdirSync(`openspec/changes/${changeId}/specs/alpha`, {
+          recursive: true,
+        });
+        Deno.writeTextFileSync(
+          `openspec/changes/${changeId}/proposal.md`,
+          "# proposal\n",
+        );
+        Deno.writeTextFileSync(
+          `openspec/changes/${changeId}/tasks.md`,
+          [
+            "## 1. 実装タスク",
+            "- [ ] 1.1 実装を行う",
+            "  - 依存: なし",
+            "  - 対象: src/app.ts",
+            "  - フェーズ担当: implement=implementer; review=code-reviewer",
+            '  - persona_policy: {"phase_order":["implement","review"]}',
+            "  - 成果物: src/app.ts を更新する",
+          ].join("\n"),
+        );
+        Deno.writeTextFileSync(
+          `openspec/changes/${changeId}/code_summary.md`,
+          "# code_summary\n\n## task_id: 1.1\n",
+        );
+        Deno.writeTextFileSync(
+          `openspec/changes/${changeId}/specs/alpha/spec.md`,
+          "## ADDED Requirements\n#### Scenario: alpha\n- THEN keep behavior\n",
+        );
+
+        withFakeOpenSpecValidate("pass", () => {
+          withEnvValue("ORCHESTRATOR_PROVIDER", "mock", () => {
+            withEnvValue("TEAMMATE_ADAPTER", "subprocess", () => {
+              withEnvValue("SPEC_CREATOR_QUALITY_MAX_RETRIES", "0", () => {
+                withEnvValue("TEAMMATE_COMMAND", `/bin/sh '${workerPath}'`, () => {
+                  const exitCode = main([
+                    "spec-creator",
+                    "polish",
+                    changeId,
+                    "--mode",
+                    "preserve-supplement",
+                    "--output",
+                    outputPath,
+                    "--state-dir",
+                    stateDir,
+                  ], buffer.io);
+                  if (exitCode !== 1) {
+                    throw new Error(
+                      "spec-creator polish should fail on task scope regression",
+                    );
+                  }
+                });
+              });
+            });
+          });
+        });
+
+        if (!buffer.state.stderr.includes("task_scope_regression")) {
+          throw new Error(
+            `stderr should include task_scope_regression: ${buffer.state.stderr}`,
           );
         }
       });

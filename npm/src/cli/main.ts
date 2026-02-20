@@ -54,6 +54,7 @@ import {
   assertSpecCreatorSemanticContracts,
   collectSpecCreatorQualityViolations,
   REQUIRED_REVIEW_CONTRACT_IDS,
+  type SpecCreatorQualityOptions,
   type SpecCreatorQualityViolation,
 } from "../infrastructure/openspec/spec_creator_quality.ts";
 import {
@@ -97,6 +98,8 @@ interface SpecCreatorPreprocessArgs {
   changeId: string | null;
 }
 
+type SpecCreatorPolishMode = "preserve-supplement" | "regenerate";
+
 interface SpecCreatorArgs {
   changeId: string | null;
   output: string | null;
@@ -105,6 +108,8 @@ interface SpecCreatorArgs {
   stateDir: string | null;
   resume: boolean;
   personaDir: string | null;
+  mode: SpecCreatorPolishMode;
+  emitReviewContractToArtifacts: boolean;
 }
 
 interface SpecCreatorPolishArgs {
@@ -116,6 +121,8 @@ interface SpecCreatorPolishArgs {
   stateDir: string | null;
   resume: boolean;
   personaDir: string | null;
+  mode: SpecCreatorPolishMode;
+  emitReviewContractToArtifacts: boolean;
 }
 
 interface RunArgs {
@@ -193,11 +200,13 @@ const SPEC_CREATOR_PREPROCESS_USAGE = [
 
 const SPEC_CREATOR_USAGE = [
   "usage: spec-creator polish <change_id> [--feedback TEXT] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--apply-on-post-run-fail] [--persona-dir DIR]",
+  "                                 [--mode preserve-supplement|regenerate] [--emit-review-contract-to-artifacts]",
   "       spec-creator [--change-id CHANGE_ID] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--apply-on-post-run-fail] [--persona-dir DIR]  (deprecated)",
 ].join("\n");
 
 const SPEC_CREATOR_POLISH_USAGE = [
   "usage: spec-creator polish <change_id> [--feedback TEXT] [--output PATH] [--state-dir DIR] [--resume] [--no-run] [--apply-on-post-run-fail] [--persona-dir DIR]",
+  "                                 [--mode preserve-supplement|regenerate] [--emit-review-contract-to-artifacts]",
 ].join("\n");
 
 const DEFAULT_WRAPPER_RUNTIME = "ts";
@@ -550,6 +559,8 @@ function parseSpecCreatorArgs(argv: string[]): SpecCreatorArgs {
     stateDir: null,
     resume: false,
     personaDir: null,
+    mode: "regenerate",
+    emitReviewContractToArtifacts: true,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -618,6 +629,8 @@ function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
     stateDir: null,
     resume: false,
     personaDir: null,
+    mode: "preserve-supplement",
+    emitReviewContractToArtifacts: false,
   };
 
   for (let index = 1; index < argv.length; index += 1) {
@@ -654,6 +667,41 @@ function parseSpecCreatorPolishArgs(argv: string[]): SpecCreatorPolishArgs {
         next,
       );
       index += 1;
+      continue;
+    }
+    if (arg === "--mode") {
+      parsed.mode = parseSpecCreatorPolishMode(
+        requireOptionValue(arg, next),
+      );
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--mode=")) {
+      parsed.mode = parseSpecCreatorPolishMode(
+        requireOptionValue("--mode", arg.slice("--mode=".length)),
+      );
+      continue;
+    }
+    if (arg === "--emit-review-contract-to-artifacts") {
+      if (next !== undefined && !next.startsWith("--")) {
+        parsed.emitReviewContractToArtifacts = parseBooleanFlagValue(
+          "--emit-review-contract-to-artifacts",
+          next,
+        );
+        index += 1;
+      } else {
+        parsed.emitReviewContractToArtifacts = true;
+      }
+      continue;
+    }
+    if (arg.startsWith("--emit-review-contract-to-artifacts=")) {
+      parsed.emitReviewContractToArtifacts = parseBooleanFlagValue(
+        "--emit-review-contract-to-artifacts",
+        requireOptionValue(
+          "--emit-review-contract-to-artifacts",
+          arg.slice("--emit-review-contract-to-artifacts=".length),
+        ),
+      );
       continue;
     }
     if (arg === "--no-run") {
@@ -906,6 +954,29 @@ function parseTeammateAdapter(raw: string): "subprocess" | "template" {
   );
 }
 
+function parseSpecCreatorPolishMode(raw: string): SpecCreatorPolishMode {
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "preserve-supplement" || normalized === "regenerate") {
+    return normalized;
+  }
+  throw new Error(
+    `argument --mode: invalid choice: '${raw}' (choose from 'preserve-supplement', 'regenerate')`,
+  );
+}
+
+function parseBooleanFlagValue(option: string, raw: string): boolean {
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0") {
+    return false;
+  }
+  throw new Error(
+    `argument ${option}: invalid boolean value: '${raw}' (use true/false)`,
+  );
+}
+
 function compileOpenSpecCommand(argv: string[], io: CliIO): number {
   const args = parseCompileOpenSpecArgs(argv);
   const payload = compileChangeToConfig(args.changeId, {
@@ -1005,6 +1076,10 @@ function specCreatorPolishCommand(argv: string[], io: CliIO): number {
     args.changeId,
     revisedChangeId,
     args.feedback,
+    {
+      mode: args.mode,
+      emitReviewContractToArtifacts: args.emitReviewContractToArtifacts,
+    },
     "spec-creator polish",
   );
   return runSpecCreatorWorkflow(args, context, io);
@@ -1044,6 +1119,10 @@ function buildSpecCreatorPolishContextFromMarkdown(
   sourceChangeId: string,
   outputChangeId: string,
   feedbackRaw: string | null,
+  options: {
+    mode: SpecCreatorPolishMode;
+    emitReviewContractToArtifacts: boolean;
+  },
   commandLabel: string,
 ): SpecCreatorContextPayload {
   const markdownContexts = collectSpecCreatorPolishMarkdownContexts(
@@ -1063,14 +1142,19 @@ function buildSpecCreatorPolishContextFromMarkdown(
     persona_policy: {
       active_personas: [...SPEC_CREATOR_POLISH_ACTIVE_PERSONAS],
     },
-  });
+  }, { includeReviewContractInContext: false });
 
   return {
     change_id: outputChangeId,
-    spec_context: specContext,
-    task_config: buildSpecCreatorTaskConfig(outputChangeId, specContext),
+    spec_context: structuredClone(specContext),
+    task_config: buildSpecCreatorTaskConfig(outputChangeId, specContext, {
+      includeReviewContractInContext: false,
+      includeReviewContractInTaskDescription: false,
+    }),
     polish: {
       sourceChangeId,
+      mode: options.mode,
+      emitReviewContractToArtifacts: options.emitReviewContractToArtifacts,
     },
   };
 }
@@ -1083,11 +1167,17 @@ function runSpecCreatorWorkflow(
     stateDir: string | null;
     resume: boolean;
     personaDir: string | null;
+    mode: SpecCreatorPolishMode;
+    emitReviewContractToArtifacts: boolean;
   },
   context: SpecCreatorContextPayload,
   io: CliIO,
 ): number {
-  const paths = resolveSpecCreatorArtifactPaths(context.change_id);
+  const paths = resolveSpecCreatorArtifactPaths(context.change_id, {
+    sourceChangeId: context.polish?.sourceChangeId,
+    preserveSourceSpecPaths: args.mode === "preserve-supplement",
+  });
+  const qualityOptions = resolveSpecCreatorQualityOptions(args, context);
   const outputPath = path.resolve(
     args.output ?? defaultSpecCreatorOutputPath(context.change_id),
   );
@@ -1110,9 +1200,16 @@ function runSpecCreatorWorkflow(
       stagedPaths,
       "post-generate",
       io,
+      {
+        emitReviewContractToArtifacts: args.emitReviewContractToArtifacts,
+      },
     );
     assertNoForbiddenSpecCreatorCommands(stagedPaths, "post-generate");
-    assertSpecCreatorSemanticContracts(stagedPaths, "post-generate");
+    assertSpecCreatorSemanticContracts(
+      stagedPaths,
+      "post-generate",
+      qualityOptions,
+    );
     runStagedStrictValidate(context.change_id, stagingRoot);
     for (const artifactPath of listSpecCreatorArtifactPaths(paths)) {
       io.stdout(`[spec-creator] wrote ${artifactPath}\n`);
@@ -1144,7 +1241,10 @@ function runSpecCreatorWorkflow(
     let attempt = 0;
     const qualityRetryCountsByFile = new Map<string, number>();
     while (true) {
-      const preRunViolations = collectSpecCreatorQualityViolations(stagedPaths);
+      const preRunViolations = collectSpecCreatorQualityViolations(
+        stagedPaths,
+        qualityOptions,
+      );
       const qualityTargetSelection = selectQualityTargetFile(
         preRunViolations,
         qualityRetryCountsByFile,
@@ -1239,9 +1339,21 @@ function runSpecCreatorWorkflow(
       }
 
       try {
-        normalizeSpecCreatorReviewContractCoverage(stagedPaths, "post-run", io);
+        normalizeSpecCreatorReviewContractCoverage(
+          stagedPaths,
+          "post-run",
+          io,
+          {
+            emitReviewContractToArtifacts: args
+              .emitReviewContractToArtifacts,
+          },
+        );
         assertNoForbiddenSpecCreatorCommands(stagedPaths, "post-run");
-        assertSpecCreatorSemanticContracts(stagedPaths, "post-run");
+        assertSpecCreatorSemanticContracts(
+          stagedPaths,
+          "post-run",
+          qualityOptions,
+        );
         runSpecCreatorPostAuditGate(context.change_id, io, stagingRoot);
         applyStagedArtifactsAtomically({
           stagingRoot,
@@ -1303,6 +1415,23 @@ function runSpecCreatorWorkflow(
   }
 }
 
+function resolveSpecCreatorQualityOptions(
+  args: {
+    mode: SpecCreatorPolishMode;
+    emitReviewContractToArtifacts: boolean;
+  },
+  context: SpecCreatorContextPayload,
+): SpecCreatorQualityOptions {
+  const sourcePaths = args.mode === "preserve-supplement"
+    ? resolveSpecCreatorPolishSourceArtifactPaths(context.polish?.sourceChangeId)
+    : null;
+  return {
+    emitReviewContractToArtifacts: args.emitReviewContractToArtifacts,
+    polishMode: args.mode,
+    sourcePaths: sourcePaths ?? undefined,
+  };
+}
+
 export interface SpecCreatorArtifactPaths {
   changeId: string;
   changeDir: string;
@@ -1320,14 +1449,23 @@ interface SpecCreatorContextPayload {
   task_config: SpecCreatorTaskConfig;
   polish?: {
     sourceChangeId?: string;
+    mode?: SpecCreatorPolishMode;
+    emitReviewContractToArtifacts?: boolean;
   };
 }
 
 function resolveSpecCreatorArtifactPaths(
   changeId: string,
+  options: {
+    sourceChangeId?: string;
+    preserveSourceSpecPaths?: boolean;
+  } = {},
 ): SpecCreatorArtifactPaths {
   const changeDir = path.resolve("openspec", "changes", changeId);
-  const deltaSpecPaths = collectDeltaSpecPaths(changeDir, changeId);
+  const deltaSpecPaths = collectDeltaSpecPaths(changeDir, changeId, {
+    sourceChangeId: options.sourceChangeId,
+    preserveSourceSpecPaths: options.preserveSourceSpecPaths ?? false,
+  });
   return {
     changeId,
     changeDir,
@@ -1349,7 +1487,23 @@ function writeSpecCreatorArtifacts(
 ): void {
   const { context, paths, outputPath } = options;
   const lang = context.spec_context.language;
+  if (context.polish?.mode === "preserve-supplement") {
+    writeSpecCreatorArtifactsPreserveSupplement({ context, paths, lang });
+  } else {
+    writeSpecCreatorArtifactsRegenerate({ context, paths, lang });
+  }
 
+  writeTaskConfigFile(context.task_config, outputPath);
+}
+
+function writeSpecCreatorArtifactsRegenerate(
+  options: {
+    context: SpecCreatorContextPayload;
+    paths: SpecCreatorArtifactPaths;
+    lang: "ja" | "en";
+  },
+): void {
+  const { context, paths, lang } = options;
   writeProposalMarkdown({
     proposalPath: paths.proposalPath,
     lang,
@@ -1399,7 +1553,7 @@ function writeSpecCreatorArtifacts(
       lang,
     });
   }
-  for (const deltaSpecPath of paths.deltaSpecPaths) {
+  for (const deltaSpecPath of collectAllDeltaSpecPaths(paths)) {
     writeDeltaSpecMarkdown({
       specPath: deltaSpecPath,
       lang,
@@ -1407,8 +1561,108 @@ function writeSpecCreatorArtifacts(
       requirementsText: context.spec_context.requirements_text,
     });
   }
+}
 
-  writeTaskConfigFile(context.task_config, outputPath);
+function writeSpecCreatorArtifactsPreserveSupplement(
+  options: {
+    context: SpecCreatorContextPayload;
+    paths: SpecCreatorArtifactPaths;
+    lang: "ja" | "en";
+  },
+): void {
+  const { context, paths, lang } = options;
+  const sourcePaths = resolveSpecCreatorPolishSourceArtifactPaths(
+    context.polish?.sourceChangeId,
+  );
+  if (sourcePaths !== null) {
+    copyFileContentIfExists(sourcePaths.proposalPath, paths.proposalPath);
+    copyFileContentIfExists(sourcePaths.tasksPath, paths.tasksPath);
+    copyFileContentIfExists(sourcePaths.designPath, paths.designPath);
+    copyFileContentIfExists(sourcePaths.codeSummaryPath, paths.codeSummaryPath);
+    for (const targetSpecPath of collectAllDeltaSpecPaths(paths)) {
+      const relative = path.relative(paths.changeDir, targetSpecPath);
+      if (
+        relative.length === 0 || relative === "." || relative.startsWith("..")
+      ) {
+        continue;
+      }
+      const sourceSpecPath = path.join(sourcePaths.changeDir, relative);
+      copyFileContentIfExists(sourceSpecPath, targetSpecPath);
+    }
+  }
+
+  if (!isFile(paths.proposalPath)) {
+    writeProposalMarkdown({
+      proposalPath: paths.proposalPath,
+      lang,
+      whyMarkdown: asBulletLines([
+        context.spec_context.requirements_text,
+      ]),
+      whatChangesMarkdown: asBulletLines([
+        lang === "ja"
+          ? "spec creator の固定 task_config テンプレートを使う"
+          : "Use fixed task_config template for spec creator",
+        lang === "ja"
+          ? "tasks.md と code_summary.md を整合生成する"
+          : "Generate aligned tasks.md and code_summary.md",
+      ]),
+      impactMarkdown: asBulletLines([
+        context.spec_context.requirements_text,
+      ]),
+    });
+  }
+  if (!isFile(paths.tasksPath)) {
+    const preservedOutputPhaseAssignmentsPath =
+      resolveSpecCreatorPreservedOutputPhaseAssignmentsPath(context, paths);
+    const preservedOutputPhaseAssignments =
+      collectExistingTaskOutputPhaseAssignments(
+        preservedOutputPhaseAssignmentsPath,
+      );
+    writeTasksMarkdown({
+      tasksPath: paths.tasksPath,
+      lang,
+      implementationMarkdown: buildImplementationMarkdownForSpecCreator(
+        context.task_config.tasks,
+        lang,
+        { preservedOutputPhaseAssignments },
+      ),
+      humanNotesMarkdown: buildHumanNotesMarkdownForSpecCreator(
+        context.spec_context,
+        lang,
+      ),
+    });
+  }
+  if (!isFile(paths.codeSummaryPath)) {
+    writeCodeSummaryMarkdown({
+      tasksPath: paths.tasksPath,
+      outputPath: paths.codeSummaryPath,
+    });
+  }
+  if (shouldGenerateDesignMarkdown(context) && !isFile(paths.designPath)) {
+    writeDesignMarkdownStub({
+      designPath: paths.designPath,
+      lang,
+    });
+  }
+  for (const deltaSpecPath of collectAllDeltaSpecPaths(paths)) {
+    if (isFile(deltaSpecPath)) {
+      continue;
+    }
+    writeDeltaSpecMarkdown({
+      specPath: deltaSpecPath,
+      lang,
+      requirementName: `${context.change_id} generated baseline`,
+      requirementsText: context.spec_context.requirements_text,
+    });
+  }
+}
+
+function copyFileContentIfExists(sourcePath: string, targetPath: string): void {
+  if (!isFile(sourcePath)) {
+    return;
+  }
+  Deno.mkdirSync(path.dirname(targetPath), { recursive: true });
+  Deno.copyFileSync(sourcePath, targetPath);
 }
 
 function resolveSpecCreatorPreservedOutputPhaseAssignmentsPath(
@@ -1430,26 +1684,57 @@ function resolveSpecCreatorPreservedOutputPhaseAssignmentsPath(
   return paths.tasksPath;
 }
 
+function resolveSpecCreatorPolishSourceArtifactPaths(
+  sourceChangeId: string | undefined,
+): SpecCreatorArtifactPaths | null {
+  if (sourceChangeId === undefined) {
+    return null;
+  }
+  const sourceChangeDir = resolveSpecCreatorChangeDir(sourceChangeId);
+  if (!isDirectory(sourceChangeDir)) {
+    return null;
+  }
+  return resolveSpecCreatorArtifactPaths(sourceChangeId);
+}
+
 export function normalizeSpecCreatorReviewContractCoverageForTest(
   paths: SpecCreatorArtifactPaths,
+  options: {
+    emitReviewContractToArtifacts?: boolean;
+  } = {},
 ): void {
-  normalizeSpecCreatorReviewContractCoverage(paths, "post-run", null);
+  normalizeSpecCreatorReviewContractCoverage(paths, "post-run", null, {
+    emitReviewContractToArtifacts:
+      options.emitReviewContractToArtifacts ?? true,
+  });
 }
 
 function normalizeSpecCreatorReviewContractCoverage(
   paths: SpecCreatorArtifactPaths,
   phase: "post-generate" | "post-run",
   io: CliIO | null,
+  options: {
+    emitReviewContractToArtifacts: boolean;
+  },
 ): void {
-  const tasksResult = normalizeTasksReviewContractCoverage(paths.tasksPath);
-  const codeSummaryResult = normalizeCodeSummaryReviewContractCoverage(
-    paths.codeSummaryPath,
-    tasksResult.language,
+  const tasksResult = normalizeTasksReviewContractCoverage(
+    paths.tasksPath,
+    {
+      emitReviewContractToArtifacts: options.emitReviewContractToArtifacts,
+    },
   );
-  const specsResult = normalizeDeltaSpecReviewContractCoverage(
-    paths,
-    tasksResult.language,
-  );
+  const codeSummaryResult = options.emitReviewContractToArtifacts
+    ? normalizeCodeSummaryReviewContractCoverage(
+      paths.codeSummaryPath,
+      tasksResult.language,
+    )
+    : { changed: false };
+  const specsResult = options.emitReviewContractToArtifacts
+    ? normalizeDeltaSpecReviewContractCoverage(
+      paths,
+      tasksResult.language,
+    )
+    : { changed: false };
   if (
     !tasksResult.changed &&
     !specsResult.changed &&
@@ -1468,56 +1753,61 @@ function normalizeSpecCreatorReviewContractCoverage(
 
 function normalizeTasksReviewContractCoverage(
   tasksPath: string,
+  options: {
+    emitReviewContractToArtifacts: boolean;
+  },
 ): { changed: boolean; language: "ja" | "en" } {
   const original = Deno.readTextFileSync(tasksPath);
   const language = detectReviewContractLanguage(original);
   const lines = original.split(/\r?\n/u);
   let changed = false;
 
-  let sectionRange = findTaskSectionRange(lines, "1.3");
-  if (sectionRange === null) {
-    const insertionIndex = findImplementationSectionEnd(lines);
-    lines.splice(
-      insertionIndex,
-      0,
-      buildTask13HeaderLine(language),
-      ...buildTaskReviewContractLines(
-        [...REQUIRED_REVIEW_CONTRACT_IDS],
-        language,
-      ),
-    );
-    changed = true;
-    sectionRange = findTaskSectionRange(lines, "1.3");
-  }
+  if (options.emitReviewContractToArtifacts) {
+    let sectionRange = findTaskSectionRange(lines, "1.3");
+    if (sectionRange === null) {
+      const insertionIndex = findImplementationSectionEnd(lines);
+      lines.splice(
+        insertionIndex,
+        0,
+        buildTask13HeaderLine(language),
+        ...buildTaskReviewContractLines(
+          [...REQUIRED_REVIEW_CONTRACT_IDS],
+          language,
+        ),
+      );
+      changed = true;
+      sectionRange = findTaskSectionRange(lines, "1.3");
+    }
 
-  if (sectionRange === null) {
-    throw new Error(
-      `failed to normalize review contract coverage: missing task 1.3 section in ${tasksPath}`,
-    );
-  }
+    if (sectionRange === null) {
+      throw new Error(
+        `failed to normalize review contract coverage: missing task 1.3 section in ${tasksPath}`,
+      );
+    }
 
-  const originalSectionLines = lines.slice(
-    sectionRange.start,
-    sectionRange.end,
-  );
-  const sectionWithoutContractLines = originalSectionLines.filter(
-    (line, index) => index === 0 || !isReviewContractTraceLine(line),
-  );
-  const insertionIndex = findTaskReviewContractInsertIndex(
-    sectionWithoutContractLines,
-  );
-  const rewrittenSectionLines = [
-    ...sectionWithoutContractLines.slice(0, insertionIndex),
-    ...buildTaskReviewContractLines(REQUIRED_REVIEW_CONTRACT_IDS, language),
-    ...sectionWithoutContractLines.slice(insertionIndex),
-  ];
-  if (!areStringArraysEqual(originalSectionLines, rewrittenSectionLines)) {
-    lines.splice(
+    const originalSectionLines = lines.slice(
       sectionRange.start,
-      sectionRange.end - sectionRange.start,
-      ...rewrittenSectionLines,
+      sectionRange.end,
     );
-    changed = true;
+    const sectionWithoutContractLines = originalSectionLines.filter(
+      (line, index) => index === 0 || !isReviewContractTraceLine(line),
+    );
+    const insertionIndex = findTaskReviewContractInsertIndex(
+      sectionWithoutContractLines,
+    );
+    const rewrittenSectionLines = [
+      ...sectionWithoutContractLines.slice(0, insertionIndex),
+      ...buildTaskReviewContractLines(REQUIRED_REVIEW_CONTRACT_IDS, language),
+      ...sectionWithoutContractLines.slice(insertionIndex),
+    ];
+    if (!areStringArraysEqual(originalSectionLines, rewrittenSectionLines)) {
+      lines.splice(
+        sectionRange.start,
+        sectionRange.end - sectionRange.start,
+        ...rewrittenSectionLines,
+      );
+      changed = true;
+    }
   }
 
   if (normalizeTaskPersonaPolicyCoverage(lines, tasksPath)) {
@@ -2185,7 +2475,7 @@ function listSpecCreatorArtifactPaths(
     paths.tasksPath,
     paths.codeSummaryPath,
     ...(isFile(paths.designPath) ? [paths.designPath] : []),
-    ...collectDeltaSpecPaths(paths.changeDir, paths.changeId),
+    ...collectAllDeltaSpecPaths(paths),
   ];
   const seen = new Set<string>();
   const unique: string[] = [];
@@ -2207,7 +2497,7 @@ function listSpecCreatorArtifactPathsForApply(
     paths.tasksPath,
     paths.codeSummaryPath,
     paths.designPath,
-    ...collectDeltaSpecPaths(paths.changeDir, paths.changeId),
+    ...collectAllDeltaSpecPaths(paths),
   ];
   const seen = new Set<string>();
   const unique: string[] = [];
@@ -2269,7 +2559,14 @@ function shouldGenerateDesignMarkdown(
   return true;
 }
 
-function collectDeltaSpecPaths(changeDir: string, changeId: string): string[] {
+function collectDeltaSpecPaths(
+  changeDir: string,
+  changeId: string,
+  options: {
+    sourceChangeId?: string;
+    preserveSourceSpecPaths?: boolean;
+  } = {},
+): string[] {
   const specsRoot = path.join(changeDir, "specs");
   const discovered: string[] = [];
   if (isDirectory(specsRoot)) {
@@ -2278,6 +2575,21 @@ function collectDeltaSpecPaths(changeDir: string, changeId: string): string[] {
   discovered.sort((left, right) => left.localeCompare(right));
   if (discovered.length > 0) {
     return discovered;
+  }
+  if (options.preserveSourceSpecPaths && options.sourceChangeId !== undefined) {
+    const sourceChangeDir = resolveSpecCreatorChangeDir(options.sourceChangeId);
+    const sourceSpecsRoot = path.join(sourceChangeDir, "specs");
+    const sourceSpecPaths: string[] = [];
+    if (isDirectory(sourceSpecsRoot)) {
+      walkSpecFiles(sourceSpecsRoot, sourceSpecPaths);
+    }
+    sourceSpecPaths.sort((left, right) => left.localeCompare(right));
+    if (sourceSpecPaths.length > 0) {
+      return sourceSpecPaths.map((sourceSpecPath) => {
+        const relative = path.relative(sourceChangeDir, sourceSpecPath);
+        return path.join(changeDir, relative);
+      });
+    }
   }
   return [path.join(specsRoot, changeId, "spec.md")];
 }
